@@ -42,22 +42,27 @@ function isHtml(content: string): boolean {
   return /<[a-z][\s\S]*>/i.test(content)
 }
 
-// Konversi Markdown → HTML (sync, pakai marked)
+// Setup marked sekali saja (marked v18 compatible)
+marked.use({
+  gfm: true,
+  breaks: true,
+  renderer: {
+    image({ href, title, text }: { href: string; title: string | null; text: string }) {
+      if (!href || href === "null") return ""
+      const titleAttr = title ? ` title="${title}"` : ""
+      return `<img src="${href}" alt="${text}"${titleAttr} class="rounded-xl w-full my-4" loading="lazy" />`
+    },
+    heading({ text, depth }: { text: string; depth: number }) {
+      const id = text.toLowerCase().replace(/<[^>]+>/g, "").replace(/[^\w\s-]/g, "").trim().replace(/\s+/g, "-")
+      return `<h${depth} id="${id}">${text}</h${depth}>\n`
+    },
+  },
+})
+
+// Konversi Markdown → HTML
 function markdownToHtml(content: string): string {
   if (isHtml(content)) return content // sudah HTML, skip konversi
-  // Konfigurasi marked: GFM + tables + line breaks
-  marked.use({
-    gfm: true,
-    breaks: true,
-  } as any)
-  const renderer = new marked.Renderer()
-  // Fix image rendering - pastikan src valid
-  renderer.image = ({ href, title, text }: { href: string; title: string | null; text: string }) => {
-    if (!href || href === "null") return ""
-    const titleAttr = title ? ` title="${title}"` : ""
-    return `<img src="${href}" alt="${text}"${titleAttr} class="rounded-xl w-full my-4" loading="lazy" />`
-  }
-  return marked.parse(content, { renderer }) as string
+  return marked.parse(content) as string
 }
 
 function calcReadingTime(content: string): number {
