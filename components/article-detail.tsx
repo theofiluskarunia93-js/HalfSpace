@@ -11,6 +11,7 @@ import {
   Share2, Twitter, Facebook, Link2, Check,
   BookOpen, ArrowUp, User
 } from "lucide-react"
+import { marked } from "marked"
 
 // ─── Types ─────────────────────────────────────────────────────────────────
 interface Article {
@@ -35,8 +36,25 @@ interface TocItem {
 }
 
 // ─── Helpers ───────────────────────────────────────────────────────────────
+
+// Deteksi apakah string adalah HTML atau Markdown
+function isHtml(content: string): boolean {
+  return /<[a-z][\s\S]*>/i.test(content)
+}
+
+// Konversi Markdown → HTML (sync, pakai marked)
+function markdownToHtml(content: string): string {
+  if (isHtml(content)) return content // sudah HTML, skip konversi
+  // Konfigurasi marked: GFM (GitHub Flavored Markdown) + breaks
+  marked.setOptions({ gfm: true, breaks: true } as any)
+  return marked.parse(content) as string
+}
+
 function calcReadingTime(content: string): number {
-  const text = content.replace(/<[^>]+>/g, "")
+  // Strip HTML tags dan Markdown syntax untuk word count yang akurat
+  const text = content
+    .replace(/<[^>]+>/g, "")
+    .replace(/[#*_~`>[\]()!]/g, "")
   const words = text.trim().split(/\s+/).filter(Boolean).length
   return Math.max(1, Math.ceil(words / 200))
 }
@@ -404,7 +422,7 @@ function RelatedArticles({ currentId, categorySlug }: { currentId: string; categ
         .limit(3)
 
       if (categorySlug) {
-        const { data: cat } = await supabase.from("categories").select("id").eq("slug", categorySlug).single()
+        const { data: cat } = await supabase.from("categories").select("id").eq("slug", categorySlug).maybeSingle()
         if (cat) query = query.eq("category_id", cat.id)
       }
 
@@ -544,19 +562,32 @@ export function ArticleDetail({ articleId }: ArticleDetailProps) {
 
   useEffect(() => {
     async function fetchArticle() {
-      const { data } = await supabase
+      // Coba fetch dengan filter status published dulu
+      let { data, error } = await supabase
         .from("articles")
         .select("*, categories(name, slug)")
         .eq("id", articleId)
         .eq("status", "published")
-        .single()
+        .maybeSingle()
+
+      // Fallback: jika tidak ditemukan (RLS / nilai status berbeda), fetch tanpa filter status
+      if (!data) {
+        const fallback = await supabase
+          .from("articles")
+          .select("*, categories(name, slug)")
+          .eq("id", articleId)
+          .maybeSingle()
+        data = fallback.data
+      }
 
       if (data) {
         setArticle(data as Article)
         await trackArticleView(articleId)
 
         if (data.content) {
-          const injected = injectHeadingIds(data.content)
+          // Konversi Markdown → HTML terlebih dahulu (jika konten masih Markdown)
+          const html = markdownToHtml(data.content)
+          const injected = injectHeadingIds(html)
           setProcessedContent(injected)
           setToc(extractToc(injected))
         }
