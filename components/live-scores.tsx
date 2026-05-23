@@ -1,11 +1,13 @@
 "use client"
 
 import { useState, useEffect, useRef, useCallback } from "react"
-import { RefreshCw, WifiOff, Clock, ChevronLeft, ChevronRight } from "lucide-react"
+import { RefreshCw, WifiOff, Clock, ChevronDown, ChevronLeft, ChevronRight, AlertCircle } from "lucide-react"
 
-// ─── Interval refresh adaptif ──────────────────────────────────────────────
-const REFRESH_LIVE_MS  = 2 * 60 * 1000
-const REFRESH_IDLE_MS  = 30 * 60 * 1000
+// ─── Interval refresh ─────────────────────────────────────────────────────
+// Hanya fetch setiap 15 menit jika ada pertandingan live/upcoming
+// Jika tidak ada pertandingan sama sekali, tidak perlu fetch ulang (data tersimpan lokal)
+const REFRESH_WITH_MATCHES_MS = 15 * 60 * 1000  // 15 menit jika ada pertandingan
+const NO_REFRESH_WHEN_EMPTY = true               // jika kosong, stop polling
 
 // ─── Status config ─────────────────────────────────────────────────────────
 const STATUS_CFG: Record<string, { label: string; live: boolean; cls: string }> = {
@@ -28,6 +30,66 @@ const STATUS_CFG: Record<string, { label: string; live: boolean; cls: string }> 
   WO:    { label: "WO",    live: false, cls: "bg-muted text-muted-foreground" },
 }
 
+// ─── Liga yang tersedia untuk dropdown filter ─────────────────────────────
+const LEAGUES = [
+  { id: 39,  slug: "premier-league", name: "Premier League",    flag: "🏴󠁧󠁢󠁥󠁮󠁧󠁿" },
+  { id: 140, slug: "la-liga",        name: "La Liga",           flag: "🇪🇸" },
+  { id: 135, slug: "serie-a",        name: "Serie A",           flag: "🇮🇹" },
+  { id: 78,  slug: "bundesliga",     name: "Bundesliga",        flag: "🇩🇪" },
+  { id: 61,  slug: "ligue-1",        name: "Ligue 1",           flag: "🇫🇷" },
+  { id: 2,   slug: "champions-league", name: "Champions League", flag: "🏆" },
+  { id: 3,   slug: "europa-league",  name: "Europa League",     flag: "🌍" },
+]
+
+// ─── Storage key untuk cache lokal ────────────────────────────────────────
+const CACHE_KEY = (leagueSlug: string) => `livescores_cache_${leagueSlug}`
+const CACHE_TTL_EMPTY_MS  = 6 * 60 * 60 * 1000  // 6 jam jika tidak ada pertandingan
+const CACHE_TTL_ACTIVE_MS = 15 * 60 * 1000        // 15 menit jika ada pertandingan
+
+// ─── Dummy data fallback (saat API limit tercapai) ────────────────────────
+const DUMMY_FIXTURES: Fixture[] = [
+  {
+    fixture: { id: 9001, date: new Date(Date.now() + 2 * 3600_000).toISOString(), status: { short: "NS", elapsed: null } },
+    teams: {
+      home: { id: 40, name: "Liverpool", logo: "https://media.api-sports.io/football/teams/40.png" },
+      away: { id: 42, name: "Arsenal", logo: "https://media.api-sports.io/football/teams/42.png" },
+    },
+    goals: { home: null, away: null },
+  },
+  {
+    fixture: { id: 9002, date: new Date(Date.now() + 3 * 3600_000).toISOString(), status: { short: "NS", elapsed: null } },
+    teams: {
+      home: { id: 50, name: "Manchester City", logo: "https://media.api-sports.io/football/teams/50.png" },
+      away: { id: 66, name: "Aston Villa", logo: "https://media.api-sports.io/football/teams/66.png" },
+    },
+    goals: { home: null, away: null },
+  },
+  {
+    fixture: { id: 9003, date: new Date(Date.now() + 4 * 3600_000).toISOString(), status: { short: "NS", elapsed: null } },
+    teams: {
+      home: { id: 47, name: "Tottenham", logo: "https://media.api-sports.io/football/teams/47.png" },
+      away: { id: 33, name: "Manchester United", logo: "https://media.api-sports.io/football/teams/33.png" },
+    },
+    goals: { home: null, away: null },
+  },
+  {
+    fixture: { id: 9004, date: new Date(Date.now() + 5 * 3600_000).toISOString(), status: { short: "NS", elapsed: null } },
+    teams: {
+      home: { id: 49, name: "Chelsea", logo: "https://media.api-sports.io/football/teams/49.png" },
+      away: { id: 51, name: "Brighton", logo: "https://media.api-sports.io/football/teams/51.png" },
+    },
+    goals: { home: null, away: null },
+  },
+  {
+    fixture: { id: 9005, date: new Date(Date.now() + 6 * 3600_000).toISOString(), status: { short: "NS", elapsed: null } },
+    teams: {
+      home: { id: 34, name: "Newcastle", logo: "https://media.api-sports.io/football/teams/34.png" },
+      away: { id: 48, name: "West Ham", logo: "https://media.api-sports.io/football/teams/48.png" },
+    },
+    goals: { home: null, away: null },
+  },
+]
+
 // ─── Types ─────────────────────────────────────────────────────────────────
 interface Fixture {
   fixture: {
@@ -35,7 +97,6 @@ interface Fixture {
     date: string
     status: { short: string; elapsed: number | null }
   }
-  league: { id: number; name: string; logo: string }
   teams: {
     home: { id: number; name: string; logo: string }
     away: { id: number; name: string; logo: string }
@@ -43,17 +104,41 @@ interface Fixture {
   goals: { home: number | null; away: number | null }
 }
 
-interface LeagueGroup {
-  leagueId: number
-  leagueName: string
-  leagueLogo: string
-  fixtures: Fixture[]
-}
-
 interface ApiResponse {
   mode: "live" | "schedule"
-  groups: LeagueGroup[]
+  fixtures: Fixture[]
   fetchedAt: string
+  isDummy?: boolean
+}
+
+interface CachedData {
+  data: ApiResponse
+  cachedAt: number
+  hasMatches: boolean
+}
+
+// ─── Cache lokal (localStorage-based) ────────────────────────────────────
+function readCache(leagueSlug: string): CachedData | null {
+  try {
+    const raw = localStorage.getItem(CACHE_KEY(leagueSlug))
+    if (!raw) return null
+    const parsed: CachedData = JSON.parse(raw)
+    const age = Date.now() - parsed.cachedAt
+    const ttl = parsed.hasMatches ? CACHE_TTL_ACTIVE_MS : CACHE_TTL_EMPTY_MS
+    if (age > ttl) return null // expired
+    return parsed
+  } catch {
+    return null
+  }
+}
+
+function writeCache(leagueSlug: string, data: ApiResponse, hasMatches: boolean) {
+  try {
+    const payload: CachedData = { data, cachedAt: Date.now(), hasMatches }
+    localStorage.setItem(CACHE_KEY(leagueSlug), JSON.stringify(payload))
+  } catch {
+    // storage penuh / private mode, abaikan
+  }
 }
 
 // ─── Helpers ───────────────────────────────────────────────────────────────
@@ -79,6 +164,20 @@ function formatDateLabel(dateStr: string): string {
   return d.toLocaleDateString("id-ID", { day: "numeric", month: "short", timeZone: "Asia/Jakarta" })
 }
 
+// ─── Deteksi apakah error adalah API limit ─────────────────────────────────
+function isRateLimitError(err: string): boolean {
+  const lower = err.toLowerCase()
+  return (
+    lower.includes("rate limit") ||
+    lower.includes("quota") ||
+    lower.includes("429") ||
+    lower.includes("limit reached") ||
+    lower.includes("too many requests") ||
+    lower.includes("request limit") ||
+    lower.includes("exceeded")
+  )
+}
+
 // ─── Logo ──────────────────────────────────────────────────────────────────
 function Logo({ src, alt, size = 6 }: { src: string; alt: string; size?: number }) {
   const [err, setErr] = useState(false)
@@ -99,7 +198,7 @@ function Logo({ src, alt, size = 6 }: { src: string; alt: string; size?: number 
   )
 }
 
-// ─── Match Card — shared by mobile & desktop, size via props ───────────────
+// ─── Match Card ────────────────────────────────────────────────────────────
 function MatchCard({
   fixture,
   cardWidth = "w-[140px]",
@@ -108,6 +207,7 @@ function MatchCard({
   scoreFontCls = "text-sm",
   timeFontCls = "text-xs",
   timeLabelCls = "text-[9px]",
+  isDummy = false,
 }: {
   fixture: Fixture
   cardWidth?: string
@@ -116,6 +216,7 @@ function MatchCard({
   scoreFontCls?: string
   timeFontCls?: string
   timeLabelCls?: string
+  isDummy?: boolean
 }) {
   const short = fixture.fixture.status.short
   const cfg = STATUS_CFG[short] ?? { label: short, live: false, cls: "bg-muted text-muted-foreground" }
@@ -128,7 +229,7 @@ function MatchCard({
     <div
       className={`flex flex-col items-center justify-between rounded-xl border border-border bg-card px-3 py-3 snap-start flex-shrink-0 ${cardWidth} gap-2 transition-colors hover:border-primary/40 hover:bg-secondary/40 ${
         cfg.live ? "border-primary/30 bg-primary/5" : ""
-      }`}
+      } ${isDummy ? "opacity-75" : ""}`}
     >
       {/* Status badge */}
       <span
@@ -172,9 +273,9 @@ function MatchCard({
   )
 }
 
-// ─── League Strip — used for BOTH mobile & desktop ─────────────────────────
-function LeagueStrip({
-  group,
+// ─── Scrollable Match Strip ────────────────────────────────────────────────
+function MatchStrip({
+  fixtures,
   cardWidth,
   logoSize,
   teamFontCls,
@@ -182,11 +283,9 @@ function LeagueStrip({
   timeFontCls,
   timeLabelCls,
   scrollStep = 160,
-  headerLogoSize = 4,
-  headerFontCls = "text-xs",
-  cardAreaPy = "py-3",
+  isDummy = false,
 }: {
-  group: LeagueGroup
+  fixtures: Fixture[]
   cardWidth?: string
   logoSize?: number
   teamFontCls?: string
@@ -194,17 +293,11 @@ function LeagueStrip({
   timeFontCls?: string
   timeLabelCls?: string
   scrollStep?: number
-  headerLogoSize?: number
-  headerFontCls?: string
-  cardAreaPy?: string
+  isDummy?: boolean
 }) {
   const scrollRef = useRef<HTMLDivElement>(null)
   const [canLeft, setCanLeft] = useState(false)
   const [canRight, setCanRight] = useState(true)
-
-  const liveCount = group.fixtures.filter(
-    (f) => STATUS_CFG[f.fixture.status.short]?.live
-  ).length
 
   const updateArrows = () => {
     const el = scrollRef.current
@@ -219,149 +312,266 @@ function LeagueStrip({
     updateArrows()
     el.addEventListener("scroll", updateArrows, { passive: true })
     return () => el.removeEventListener("scroll", updateArrows)
-  }, [group.fixtures])
+  }, [fixtures])
 
   const scroll = (dir: "left" | "right") => {
     scrollRef.current?.scrollBy({ left: dir === "left" ? -scrollStep : scrollStep, behavior: "smooth" })
   }
 
   return (
-    <div className="overflow-hidden rounded-xl border border-border bg-card">
-      {/* League header */}
-      <div className="flex items-center gap-2 border-b border-border bg-secondary/40 px-3 py-2">
-        <Logo src={group.leagueLogo} alt={group.leagueName} size={headerLogoSize} />
-        <span className={`${headerFontCls} font-bold uppercase tracking-wide text-foreground flex-1 truncate`}>
-          {group.leagueName}
+    <div className="relative">
+      <button
+        onClick={() => scroll("left")}
+        disabled={!canLeft}
+        className={`absolute left-0 top-0 bottom-0 z-10 flex items-center px-1 bg-gradient-to-r from-card via-card/80 to-transparent transition-opacity ${
+          canLeft ? "opacity-100" : "opacity-0 pointer-events-none"
+        }`}
+        aria-label="Scroll kiri"
+      >
+        <span className="flex h-6 w-6 items-center justify-center rounded-full border border-border bg-card shadow-sm hover:border-primary hover:text-primary transition-colors">
+          <ChevronLeft className="h-3.5 w-3.5" />
         </span>
-        {liveCount > 0 && (
-          <span className="flex items-center gap-1 rounded-full bg-primary/20 px-2 py-0.5 text-[10px] font-bold text-primary flex-shrink-0">
-            <span className="h-1.5 w-1.5 animate-pulse rounded-full bg-primary" />
-            {liveCount} LIVE
-          </span>
-        )}
+      </button>
+
+      <div
+        ref={scrollRef}
+        className="flex gap-2 overflow-x-auto scroll-smooth snap-x snap-mandatory px-8 py-3"
+        style={{ scrollbarWidth: "none", msOverflowStyle: "none" }}
+      >
+        {fixtures.map((f) => (
+          <MatchCard
+            key={f.fixture.id}
+            fixture={f}
+            cardWidth={cardWidth}
+            logoSize={logoSize}
+            teamFontCls={teamFontCls}
+            scoreFontCls={scoreFontCls}
+            timeFontCls={timeFontCls}
+            timeLabelCls={timeLabelCls}
+            isDummy={isDummy}
+          />
+        ))}
       </div>
 
-      {/* Scroll area */}
-      <div className="relative">
-        {/* Left button */}
-        <button
-          onClick={() => scroll("left")}
-          disabled={!canLeft}
-          className={`absolute left-0 top-0 bottom-0 z-10 flex items-center px-1 bg-gradient-to-r from-card via-card/80 to-transparent transition-opacity ${
-            canLeft ? "opacity-100" : "opacity-0 pointer-events-none"
-          }`}
-          aria-label="Scroll left"
-        >
-          <span className="flex h-6 w-6 items-center justify-center rounded-full border border-border bg-card shadow-sm hover:border-primary hover:text-primary transition-colors">
-            <ChevronLeft className="h-3.5 w-3.5" />
-          </span>
-        </button>
-
-        <div
-          ref={scrollRef}
-          className={`flex gap-2 overflow-x-auto scroll-smooth snap-x snap-mandatory px-8 ${cardAreaPy}`}
-          style={{ scrollbarWidth: "none", msOverflowStyle: "none" }}
-        >
-          {group.fixtures.map((f) => (
-            <MatchCard
-              key={f.fixture.id}
-              fixture={f}
-              cardWidth={cardWidth}
-              logoSize={logoSize}
-              teamFontCls={teamFontCls}
-              scoreFontCls={scoreFontCls}
-              timeFontCls={timeFontCls}
-              timeLabelCls={timeLabelCls}
-            />
-          ))}
-        </div>
-
-        {/* Right button */}
-        <button
-          onClick={() => scroll("right")}
-          disabled={!canRight}
-          className={`absolute right-0 top-0 bottom-0 z-10 flex items-center px-1 bg-gradient-to-l from-card via-card/80 to-transparent transition-opacity ${
-            canRight ? "opacity-100" : "opacity-0 pointer-events-none"
-          }`}
-          aria-label="Scroll right"
-        >
-          <span className="flex h-6 w-6 items-center justify-center rounded-full border border-border bg-card shadow-sm hover:border-primary hover:text-primary transition-colors">
-            <ChevronRight className="h-3.5 w-3.5" />
-          </span>
-        </button>
-      </div>
+      <button
+        onClick={() => scroll("right")}
+        disabled={!canRight}
+        className={`absolute right-0 top-0 bottom-0 z-10 flex items-center px-1 bg-gradient-to-l from-card via-card/80 to-transparent transition-opacity ${
+          canRight ? "opacity-100" : "opacity-0 pointer-events-none"
+        }`}
+        aria-label="Scroll kanan"
+      >
+        <span className="flex h-6 w-6 items-center justify-center rounded-full border border-border bg-card shadow-sm hover:border-primary hover:text-primary transition-colors">
+          <ChevronRight className="h-3.5 w-3.5" />
+        </span>
+      </button>
     </div>
   )
 }
 
 // ─── Skeleton ──────────────────────────────────────────────────────────────
-function SkeletonStrip({ cardCount = 3 }: { cardCount?: number }) {
+function SkeletonStrip({ cardCount = 5 }: { cardCount?: number }) {
   return (
-    <div className="overflow-hidden rounded-xl border border-border bg-card animate-pulse">
-      <div className="flex items-center gap-2 border-b border-border bg-secondary/40 px-3 py-2">
-        <div className="h-4 w-4 rounded-full bg-muted" />
-        <div className="h-3 w-28 rounded bg-muted" />
-      </div>
-      <div className="flex gap-2 px-8 py-3">
-        {Array.from({ length: cardCount }).map((_, i) => (
-          <div key={i} className="flex-shrink-0 rounded-xl bg-muted" style={{ width: 100, height: 110 }} />
-        ))}
-      </div>
+    <div className="flex gap-2 px-8 py-3 animate-pulse">
+      {Array.from({ length: cardCount }).map((_, i) => (
+        <div key={i} className="flex-shrink-0 rounded-xl bg-muted" style={{ width: 120, height: 130 }} />
+      ))}
+    </div>
+  )
+}
+
+// ─── League Dropdown ───────────────────────────────────────────────────────
+function LeagueDropdown({
+  value,
+  onChange,
+}: {
+  value: string
+  onChange: (slug: string) => void
+}) {
+  const [open, setOpen] = useState(false)
+  const selected = LEAGUES.find((l) => l.slug === value) ?? LEAGUES[0]
+  const ref = useRef<HTMLDivElement>(null)
+
+  useEffect(() => {
+    const handler = (e: MouseEvent) => {
+      if (ref.current && !ref.current.contains(e.target as Node)) setOpen(false)
+    }
+    document.addEventListener("mousedown", handler)
+    return () => document.removeEventListener("mousedown", handler)
+  }, [])
+
+  return (
+    <div ref={ref} className="relative">
+      <button
+        onClick={() => setOpen((o) => !o)}
+        className="flex items-center gap-2 rounded-lg border border-border bg-secondary/50 px-3 py-1.5 text-sm font-medium text-foreground hover:border-primary/50 hover:bg-secondary transition-colors"
+      >
+        <span>{selected.flag}</span>
+        <span className="hidden sm:inline">{selected.name}</span>
+        <ChevronDown className={`h-3.5 w-3.5 text-muted-foreground transition-transform ${open ? "rotate-180" : ""}`} />
+      </button>
+
+      {open && (
+        <div className="absolute right-0 top-full z-50 mt-1 min-w-[200px] overflow-hidden rounded-xl border border-border bg-card shadow-lg">
+          {LEAGUES.map((league) => (
+            <button
+              key={league.slug}
+              onClick={() => { onChange(league.slug); setOpen(false) }}
+              className={`flex w-full items-center gap-2.5 px-3 py-2.5 text-sm transition-colors hover:bg-secondary/60 ${
+                league.slug === value ? "bg-primary/10 text-primary font-semibold" : "text-foreground"
+              }`}
+            >
+              <span className="text-base">{league.flag}</span>
+              <span>{league.name}</span>
+              {league.slug === value && <span className="ml-auto text-primary">✓</span>}
+            </button>
+          ))}
+        </div>
+      )}
+    </div>
+  )
+}
+
+// ─── Banner: dummy mode ────────────────────────────────────────────────────
+function DummyBanner() {
+  return (
+    <div className="flex items-center gap-2 rounded-lg border border-amber-500/30 bg-amber-500/10 px-3 py-2 text-xs text-amber-500">
+      <AlertCircle className="h-3.5 w-3.5 flex-shrink-0" />
+      <span>Maaf, data sedang tidak dapat dimuat saat ini. Mohon tunggu beberapa saat lagi.</span>
     </div>
   )
 }
 
 // ─── Main Component ────────────────────────────────────────────────────────
 export function LiveScores() {
+  const [selectedLeague, setSelectedLeague] = useState("premier-league")
   const [data, setData] = useState<ApiResponse | null>(null)
   const [isLoading, setIsLoading] = useState(true)
-  const [error, setError] = useState<string | null>(null)
   const [isRefreshing, setIsRefreshing] = useState(false)
+  const [isDummy, setIsDummy] = useState(false)
+  const [fetchedAt, setFetchedAt] = useState<Date | null>(null)
   const intervalRef = useRef<NodeJS.Timeout | null>(null)
 
   const fetchData = useCallback(async (silent = false) => {
+    // Cek cache lokal dulu
+    const cached = readCache(selectedLeague)
+    if (cached && !silent) {
+      // Pakai data dari cache, tidak perlu hit API
+      setData(cached.data)
+      setIsDummy(cached.data.isDummy ?? false)
+      setFetchedAt(new Date(cached.cachedAt))
+      setIsLoading(false)
+      return
+    }
+
     if (!silent) setIsLoading(true)
     else setIsRefreshing(true)
-    setError(null)
+
     try {
-      const res = await fetch("/api/live-scores", { cache: "no-store" })
+      const leagueObj = LEAGUES.find((l) => l.slug === selectedLeague)
+      const leagueId = leagueObj?.id ?? 39
+
+      const res = await fetch(`/api/live-scores?league=${leagueId}`, { cache: "no-store" })
       const json = await res.json()
-      if (!res.ok) throw new Error(json.error || `HTTP ${res.status}`)
+
+      // Cek apakah error kuota API
+      if (!res.ok) {
+        const errMsg = json.error ?? `HTTP ${res.status}`
+        if (isRateLimitError(errMsg)) {
+          // Fallback ke dummy data
+          const dummyResponse: ApiResponse = {
+            mode: "schedule",
+            fixtures: DUMMY_FIXTURES,
+            fetchedAt: new Date().toISOString(),
+            isDummy: true,
+          }
+          setData(dummyResponse)
+          setIsDummy(true)
+          setFetchedAt(new Date())
+          // Simpan dummy ke cache dengan TTL pendek (jangan override cache valid)
+          writeCache(selectedLeague, dummyResponse, true)
+          return
+        }
+        throw new Error(errMsg)
+      }
+
+      const hasMatches = (json.fixtures?.length ?? 0) > 0
       setData(json)
+      setIsDummy(false)
+      setFetchedAt(new Date())
+      writeCache(selectedLeague, json, hasMatches)
     } catch (e: any) {
-      setError(e.message ?? "Gagal memuat data")
+      const errMsg = e.message ?? "Gagal memuat data"
+      if (isRateLimitError(errMsg)) {
+        // Fallback dummy jika belum ada data
+        if (!data) {
+          const dummyResponse: ApiResponse = {
+            mode: "schedule",
+            fixtures: DUMMY_FIXTURES,
+            fetchedAt: new Date().toISOString(),
+            isDummy: true,
+          }
+          setData(dummyResponse)
+          setIsDummy(true)
+          setFetchedAt(new Date())
+        }
+      }
+      // Jika sudah ada data sebelumnya, biarkan (tetap tampilkan data lama)
     } finally {
       setIsLoading(false)
       setIsRefreshing(false)
     }
-  }, [])
+  }, [selectedLeague, data])
 
-  useEffect(() => { fetchData() }, [fetchData])
+  // Fetch awal saat liga berubah
+  useEffect(() => {
+    setIsLoading(true)
+    setData(null)
+    setIsDummy(false)
+    fetchData()
+  }, [selectedLeague])
 
+  // Setup auto-refresh berdasarkan kondisi
   useEffect(() => {
     if (intervalRef.current) clearInterval(intervalRef.current)
-    const isLive = data?.mode === "live"
-    intervalRef.current = setInterval(() => fetchData(true), isLive ? REFRESH_LIVE_MS : REFRESH_IDLE_MS)
+
+    const hasMatches = (data?.fixtures?.length ?? 0) > 0
+    const isDummyMode = data?.isDummy ?? false
+
+    // Jika tidak ada pertandingan atau mode dummy, stop polling
+    if (!hasMatches || isDummyMode) return
+
+    // Hanya refresh setiap 15 menit jika ada pertandingan real
+    intervalRef.current = setInterval(() => fetchData(true), REFRESH_WITH_MATCHES_MS)
     return () => { if (intervalRef.current) clearInterval(intervalRef.current) }
-  }, [data?.mode, fetchData])
+  }, [data, fetchData])
 
   const isLiveMode = data?.mode === "live"
-  const groups = data?.groups ?? []
-  const fetchedAt = data?.fetchedAt ? new Date(data.fetchedAt) : null
+  const fixtures = data?.fixtures ?? []
+  const hasLive = fixtures.some((f) => STATUS_CFG[f.fixture.status.short]?.live)
+
+  // Hitung next refresh
+  const getNextRefreshLabel = () => {
+    const hasMatches = fixtures.length > 0 && !isDummy
+    if (!hasMatches) return null
+    return `Auto-refresh 15 mnt`
+  }
 
   return (
     <section className="border-y border-border bg-card py-4">
       <div className="mx-auto max-w-7xl px-4">
 
         {/* ── Header ── */}
-        <div className="mb-4 flex items-center justify-between gap-4">
-          <div className="flex items-center gap-3">
+        <div className="mb-4 flex items-center justify-between gap-3 flex-wrap">
+          <div className="flex items-center gap-3 flex-wrap">
             <h2
               className="text-xl font-bold uppercase tracking-tight text-foreground"
               style={{ fontFamily: "var(--font-oswald)" }}
             >
               {isLiveMode ? "Live Scores" : "Jadwal Pertandingan"}
             </h2>
+
+            {/* Mode badges */}
             {isLiveMode && (
               <span className="flex items-center gap-1.5 rounded-full bg-primary/15 px-2.5 py-0.5 text-xs font-bold text-primary">
                 <span className="h-1.5 w-1.5 animate-pulse rounded-full bg-primary" />
@@ -374,64 +584,75 @@ export function LiveScores() {
                 24 jam ke depan
               </span>
             )}
+            {hasLive && (
+              <span className="flex items-center gap-1 rounded-full bg-primary/20 px-2 py-0.5 text-[10px] font-bold text-primary">
+                <span className="h-1.5 w-1.5 animate-pulse rounded-full bg-primary" />
+                {fixtures.filter((f) => STATUS_CFG[f.fixture.status.short]?.live).length} LIVE
+              </span>
+            )}
           </div>
+
           <div className="flex items-center gap-2">
+            {/* Next refresh info */}
+            {getNextRefreshLabel() && (
+              <span className="hidden text-xs text-muted-foreground sm:block">
+                {getNextRefreshLabel()}
+              </span>
+            )}
+
+            {/* Update time */}
             {fetchedAt && (
               <span className="hidden text-xs text-muted-foreground sm:block">
                 Update {fetchedAt.toLocaleTimeString("id-ID", { hour: "2-digit", minute: "2-digit" })}
               </span>
             )}
+
+            {/* Refresh button */}
             <button
               onClick={() => fetchData(true)}
-              disabled={isRefreshing}
+              disabled={isRefreshing || isLoading}
               title="Refresh"
               className="flex h-7 w-7 items-center justify-center rounded-md border border-border text-muted-foreground transition-colors hover:border-primary hover:text-primary disabled:opacity-40"
             >
               <RefreshCw className={`h-3.5 w-3.5 ${isRefreshing ? "animate-spin" : ""}`} />
             </button>
+
+            {/* ── Dropdown filter liga ── */}
+            <LeagueDropdown value={selectedLeague} onChange={setSelectedLeague} />
           </div>
         </div>
 
+        {/* ── Dummy banner ── */}
+        {isDummy && !isLoading && (
+          <div className="mb-3">
+            <DummyBanner />
+          </div>
+        )}
+
         {/* ── Content ── */}
-        {error ? (
-          <div className="flex items-start gap-3 rounded-xl border border-dashed border-border bg-secondary/30 p-6 text-sm">
-            <WifiOff className="mt-0.5 h-5 w-5 flex-shrink-0 text-destructive" />
-            <div className="flex-1">
-              <p className="font-semibold text-foreground">Gagal memuat data</p>
-              <p className="mt-0.5 text-muted-foreground">{error}</p>
+        <div className="overflow-hidden rounded-xl border border-border bg-card">
+          {isLoading ? (
+            <>
+              <div className="flex items-center gap-2 border-b border-border bg-secondary/40 px-3 py-2 animate-pulse">
+                <div className="h-4 w-24 rounded bg-muted" />
+              </div>
+              <SkeletonStrip cardCount={5} />
+            </>
+          ) : fixtures.length === 0 ? (
+            <div className="flex flex-col items-center justify-center gap-2 py-12 text-center">
+              <Clock className="h-8 w-8 text-muted-foreground/40" />
+              <p className="font-medium text-foreground">Tidak ada pertandingan</p>
+              <p className="text-sm text-muted-foreground">
+                Tidak ada jadwal dalam 24 jam ke depan untuk{" "}
+                {LEAGUES.find((l) => l.slug === selectedLeague)?.name ?? "liga ini"}
+              </p>
             </div>
-            <button
-              onClick={() => fetchData()}
-              className="flex-shrink-0 rounded-md border border-border px-3 py-1.5 text-xs transition-colors hover:border-primary hover:text-primary"
-            >
-              Coba lagi
-            </button>
-          </div>
-        ) : isLoading ? (
-          <>
-            {/* Mobile skeleton */}
-            <div className="flex flex-col gap-3 md:hidden">
-              {[3, 3, 2].map((c, i) => <SkeletonStrip key={i} cardCount={c} />)}
-            </div>
-            {/* Desktop skeleton */}
-            <div className="hidden md:flex md:flex-col gap-3">
-              {[5, 5, 4].map((c, i) => <SkeletonStrip key={i} cardCount={c} />)}
-            </div>
-          </>
-        ) : groups.length === 0 ? (
-          <div className="flex flex-col items-center justify-center gap-2 rounded-xl border border-dashed border-border bg-secondary/30 py-12 text-center">
-            <Clock className="h-8 w-8 text-muted-foreground/40" />
-            <p className="font-medium text-foreground">Tidak ada pertandingan</p>
-            <p className="text-sm text-muted-foreground">Tidak ada jadwal dalam 24 jam ke depan untuk liga yang dipantau</p>
-          </div>
-        ) : (
-          <>
-            {/* ── Mobile strips ── */}
-            <div className="flex flex-col gap-3 md:hidden">
-              {groups.map((group) => (
-                <LeagueStrip
-                  key={group.leagueId}
-                  group={group}
+          ) : (
+            <>
+              {/* Mobile */}
+              <div className="md:hidden">
+                <MatchStrip
+                  fixtures={fixtures}
                   cardWidth="w-[100px]"
                   logoSize={5}
                   teamFontCls="text-[9px]"
@@ -439,19 +660,14 @@ export function LiveScores() {
                   timeFontCls="text-[10px]"
                   timeLabelCls="text-[8px]"
                   scrollStep={110}
-                  headerLogoSize={3}
-                  headerFontCls="text-[11px]"
-                  cardAreaPy="py-2"
+                  isDummy={isDummy}
                 />
-              ))}
-            </div>
+              </div>
 
-            {/* ── Desktop strips ── */}
-            <div className="hidden md:flex md:flex-col gap-3">
-              {groups.map((group) => (
-                <LeagueStrip
-                  key={group.leagueId}
-                  group={group}
+              {/* Desktop */}
+              <div className="hidden md:block">
+                <MatchStrip
+                  fixtures={fixtures}
                   cardWidth="w-[120px]"
                   logoSize={6}
                   teamFontCls="text-[10px]"
@@ -459,14 +675,12 @@ export function LiveScores() {
                   timeFontCls="text-[11px]"
                   timeLabelCls="text-[9px]"
                   scrollStep={130}
-                  headerLogoSize={4}
-                  headerFontCls="text-xs"
-                  cardAreaPy="py-2"
+                  isDummy={isDummy}
                 />
-              ))}
-            </div>
-          </>
-        )}
+              </div>
+            </>
+          )}
+        </div>
 
       </div>
     </section>
