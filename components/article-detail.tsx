@@ -45,9 +45,19 @@ function isHtml(content: string): boolean {
 // Konversi Markdown → HTML (sync, pakai marked)
 function markdownToHtml(content: string): string {
   if (isHtml(content)) return content // sudah HTML, skip konversi
-  // Konfigurasi marked: GFM (GitHub Flavored Markdown) + breaks
-  marked.setOptions({ gfm: true, breaks: true } as any)
-  return marked.parse(content) as string
+  // Konfigurasi marked: GFM + tables + line breaks
+  marked.use({
+    gfm: true,
+    breaks: true,
+  } as any)
+  const renderer = new marked.Renderer()
+  // Fix image rendering - pastikan src valid
+  renderer.image = ({ href, title, text }: { href: string; title: string | null; text: string }) => {
+    if (!href || href === "null") return ""
+    const titleAttr = title ? ` title="${title}"` : ""
+    return `<img src="${href}" alt="${text}"${titleAttr} class="rounded-xl w-full my-4" loading="lazy" />`
+  }
+  return marked.parse(content, { renderer }) as string
 }
 
 function calcReadingTime(content: string): number {
@@ -740,6 +750,10 @@ export function ArticleDetail({ articleId }: ArticleDetailProps) {
                     prose-code:text-primary prose-code:bg-secondary prose-code:rounded prose-code:px-1 prose-code:py-0.5 prose-code:text-sm prose-code:before:content-none prose-code:after:content-none
                     prose-ul:text-foreground/90 prose-ol:text-foreground/90
                     prose-li:my-1
+                    prose-table:w-full prose-table:border-collapse
+                    prose-th:border prose-th:border-border prose-th:bg-secondary/60 prose-th:px-3 prose-th:py-2 prose-th:text-left prose-th:text-sm prose-th:font-semibold
+                    prose-td:border prose-td:border-border prose-td:px-3 prose-td:py-2 prose-td:text-sm
+                    prose-tr:even:bg-secondary/20
                     dark:prose-invert"
                   dangerouslySetInnerHTML={{ __html: processedContent || article.content || "" }}
                   itemProp="articleBody"

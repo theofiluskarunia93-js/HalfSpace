@@ -179,6 +179,11 @@ export function CreateArticleView({ onBack, articleId }: CreateArticleViewProps)
     insertAtCursor(`\n![deskripsi gambar](${url})\n`)
   }
 
+  const handleH1 = () => insertAtCursor("\n# ")
+  const handleH2 = () => insertAtCursor("\n## ")
+  const handleH3 = () => insertAtCursor("\n### ")
+  const handleTable = () => insertAtCursor("\n| Kolom 1 | Kolom 2 | Kolom 3 |\n|---------|---------|---------|\n| Data 1  | Data 2  | Data 3  |\n")
+
   const toolbarButtons = [
     { icon: Bold,      label: "Bold",   action: handleBold },
     { icon: Italic,    label: "Italic", action: handleItalic },
@@ -381,7 +386,21 @@ export function CreateArticleView({ onBack, articleId }: CreateArticleViewProps)
             <div>
               <label className="mb-2 block text-sm font-medium text-foreground">Content</label>
               {/* Toolbar */}
-              <div className="flex gap-1 rounded-t-md border border-b-0 border-border bg-secondary/50 p-2">
+              <div className="flex flex-wrap gap-1 rounded-t-md border border-b-0 border-border bg-secondary/50 p-2">
+                {/* Heading buttons */}
+                {[["H1", handleH1], ["H2", handleH2], ["H3", handleH3]].map(([label, action]) => (
+                  <button
+                    key={label as string}
+                    type="button"
+                    title={`Heading ${(label as string).slice(1)}`}
+                    onClick={action as () => void}
+                    className="h-8 px-2 rounded text-xs font-bold text-muted-foreground hover:text-foreground hover:bg-secondary transition-colors"
+                  >
+                    {label as string}
+                  </button>
+                ))}
+                <div className="w-px bg-border mx-1" />
+                {/* Icon buttons */}
                 {toolbarButtons.map(({ icon: Icon, label, action }) => (
                   <Button
                     key={label}
@@ -395,7 +414,17 @@ export function CreateArticleView({ onBack, articleId }: CreateArticleViewProps)
                     <Icon className="h-4 w-4" />
                   </Button>
                 ))}
-                <span className="ml-2 flex items-center text-xs text-muted-foreground">Markdown didukung</span>
+                {/* Table button */}
+                <button
+                  type="button"
+                  title="Insert Table"
+                  onClick={handleTable}
+                  className="h-8 px-2 rounded text-xs text-muted-foreground hover:text-foreground hover:bg-secondary transition-colors"
+                >
+                  Table
+                </button>
+                <div className="w-px bg-border mx-1" />
+                <span className="flex items-center text-xs text-muted-foreground">Markdown</span>
               </div>
               <textarea
                 ref={contentRef}
