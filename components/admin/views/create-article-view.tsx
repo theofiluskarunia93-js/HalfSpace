@@ -1,7 +1,7 @@
 "use client"
 
 import { useState, useEffect, useRef } from "react"
-import { ArrowLeft, Save, Image as ImageIcon, Bold, Italic, List, Link2, X, Plus } from "lucide-react"
+import { ArrowLeft, Save, Image as ImageIcon, Bold, Italic, List, Link2, X, Plus, Eye } from "lucide-react"
 import { Button } from "@/components/ui/button"
 import { Input } from "@/components/ui/input"
 import { createClient } from "@/lib/supabase/client"
@@ -26,6 +26,10 @@ export function CreateArticleView({ onBack, articleId }: CreateArticleViewProps)
   const [message, setMessage] = useState<{ type: "success" | "error"; text: string } | null>(null)
   const [featuredImagePreview, setFeaturedImagePreview] = useState<string | null>(null)
   const [featuredImageUrl, setFeaturedImageUrl] = useState<string | null>(null)
+
+  // Tab state: "write" | "preview"
+  const [editorTab, setEditorTab] = useState<"write" | "preview">("write")
+  const [previewHtml, setPreviewHtml] = useState("")
 
   // Tag states
   const [tags, setTags] = useState<string[]>([])
@@ -108,6 +112,20 @@ export function CreateArticleView({ onBack, articleId }: CreateArticleViewProps)
     setShowSuggestions(true)
   }, [tagInput, allTags, tags])
 
+  // Generate markdown preview ketika tab Preview dibuka
+  useEffect(() => {
+    if (editorTab !== "preview") return
+    // Lazy load marked hanya saat preview dibuka
+    import("marked").then(({ marked }) => {
+      try {
+        const html = marked.parse(content || "") as string
+        setPreviewHtml(html)
+      } catch {
+        setPreviewHtml("<p>Gagal merender preview.</p>")
+      }
+    })
+  }, [editorTab, content])
+
   const generateSlug = (text: string) =>
     text.toLowerCase().trim().replace(/[^a-z0-9]+/g, "-").replace(/(^-|-$)/g, "")
 
@@ -140,12 +158,25 @@ export function CreateArticleView({ onBack, articleId }: CreateArticleViewProps)
     const start = el.selectionStart
     const end = el.selectionEnd
     const selected = content.slice(start, end)
-    const newContent =
-      content.slice(0, start) + before + selected + after + content.slice(end)
+    const newContent = content.slice(0, start) + before + selected + after + content.slice(end)
     setContent(newContent)
     setTimeout(() => {
       el.focus()
       el.setSelectionRange(start + before.length, end + before.length)
+    }, 0)
+  }
+
+  const insertAtLineStart = (prefix: string) => {
+    const el = contentRef.current
+    if (!el) return
+    const start = el.selectionStart
+    // Cari awal baris
+    const lineStart = content.lastIndexOf("\n", start - 1) + 1
+    const newContent = content.slice(0, lineStart) + prefix + content.slice(lineStart)
+    setContent(newContent)
+    setTimeout(() => {
+      el.focus()
+      el.setSelectionRange(lineStart + prefix.length, lineStart + prefix.length)
     }, 0)
   }
 
@@ -171,25 +202,43 @@ export function CreateArticleView({ onBack, articleId }: CreateArticleViewProps)
     const url = window.prompt("Masukkan URL:", "https://")
     if (!url) return
     const linkText = selected || "teks link"
-    wrapSelection(`[${linkText}](`, `${url})`)
+    if (selected) {
+      wrapSelection(`[${linkText}](`, `${url})`)
+    } else {
+      insertAtCursor(`[${linkText}](${url})`)
+    }
   }
   const handleImageInsert = () => {
     const url = window.prompt("Masukkan URL gambar:", "https://")
     if (!url) return
-    insertAtCursor(`\n![deskripsi gambar](${url})\n`)
+    const alt = window.prompt("Deskripsi gambar (alt text):", "deskripsi gambar") || "gambar"
+    insertAtCursor(`\n![${alt}](${url})\n`)
   }
 
-  const handleH1 = () => insertAtCursor("\n# ")
-  const handleH2 = () => insertAtCursor("\n## ")
-  const handleH3 = () => insertAtCursor("\n### ")
-  const handleTable = () => insertAtCursor("\n| Kolom 1 | Kolom 2 | Kolom 3 |\n|---------|---------|---------|\n| Data 1  | Data 2  | Data 3  |\n")
+  // Heading: insert di awal baris jika sudah ada teks, atau insert baru
+  const handleH1 = () => insertAtLineStart("# ")
+  const handleH2 = () => insertAtLineStart("## ")
+  const handleH3 = () => insertAtLineStart("### ")
+  const handleTable = () =>
+    insertAtCursor(
+      "\n| Kolom 1 | Kolom 2 | Kolom 3 |\n|---------|---------|----------|\n| Data 1  | Data 2  | Data 3   |\n| Data 4  | Data 5  | Data 6   |\n"
+    )
+  const handleQuote = () => insertAtLineStart("> ")
+  const handleCode = () => wrapSelection("`", "`")
+  const handleHr = () => insertAtCursor("\n\n---\n\n")
 
-  const toolbarButtons = [
-    { icon: Bold,      label: "Bold",   action: handleBold },
-    { icon: Italic,    label: "Italic", action: handleItalic },
-    { icon: List,      label: "List",   action: handleList },
-    { icon: Link2,     label: "Link",   action: handleLink },
-    { icon: ImageIcon, label: "Image",  action: handleImageInsert },
+  const headingButtons = [
+    { label: "H1", title: "Heading 1 (judul besar)", action: handleH1 },
+    { label: "H2", title: "Heading 2 (sub judul)", action: handleH2 },
+    { label: "H3", title: "Heading 3 (sub-sub judul)", action: handleH3 },
+  ]
+
+  const iconButtons = [
+    { icon: Bold,      label: "Bold (teks tebal)",   action: handleBold },
+    { icon: Italic,    label: "Italic (teks miring)", action: handleItalic },
+    { icon: List,      label: "Bullet list",          action: handleList },
+    { icon: Link2,     label: "Sisipkan link",        action: handleLink },
+    { icon: ImageIcon, label: "Sisipkan gambar",      action: handleImageInsert },
   ]
 
   const handleFeaturedImageUpload = async (e: React.ChangeEvent<HTMLInputElement>) => {
@@ -384,56 +433,163 @@ export function CreateArticleView({ onBack, articleId }: CreateArticleViewProps)
             </div>
 
             <div>
-              <label className="mb-2 block text-sm font-medium text-foreground">Content</label>
-              {/* Toolbar */}
-              <div className="flex flex-wrap gap-1 rounded-t-md border border-b-0 border-border bg-secondary/50 p-2">
-                {/* Heading buttons */}
-                {[["H1", handleH1], ["H2", handleH2], ["H3", handleH3]].map(([label, action]) => (
+              <div className="mb-2 flex items-center justify-between">
+                <label className="text-sm font-medium text-foreground">Content</label>
+                {/* Write / Preview toggle */}
+                <div className="flex rounded-lg border border-border overflow-hidden text-xs">
                   <button
-                    key={label as string}
                     type="button"
-                    title={`Heading ${(label as string).slice(1)}`}
-                    onClick={action as () => void}
-                    className="h-8 px-2 rounded text-xs font-bold text-muted-foreground hover:text-foreground hover:bg-secondary transition-colors"
+                    onClick={() => setEditorTab("write")}
+                    className={`px-3 py-1.5 transition-colors ${
+                      editorTab === "write"
+                        ? "bg-primary text-primary-foreground font-medium"
+                        : "text-muted-foreground hover:bg-secondary/60"
+                    }`}
                   >
-                    {label as string}
+                    ✏️ Tulis
                   </button>
-                ))}
-                <div className="w-px bg-border mx-1" />
-                {/* Icon buttons */}
-                {toolbarButtons.map(({ icon: Icon, label, action }) => (
-                  <Button
-                    key={label}
+                  <button
                     type="button"
-                    variant="ghost"
-                    size="icon"
-                    title={label}
-                    onClick={action}
-                    className="h-8 w-8 text-muted-foreground hover:text-foreground"
+                    onClick={() => setEditorTab("preview")}
+                    className={`px-3 py-1.5 transition-colors flex items-center gap-1 ${
+                      editorTab === "preview"
+                        ? "bg-primary text-primary-foreground font-medium"
+                        : "text-muted-foreground hover:bg-secondary/60"
+                    }`}
                   >
-                    <Icon className="h-4 w-4" />
-                  </Button>
-                ))}
-                {/* Table button */}
-                <button
-                  type="button"
-                  title="Insert Table"
-                  onClick={handleTable}
-                  className="h-8 px-2 rounded text-xs text-muted-foreground hover:text-foreground hover:bg-secondary transition-colors"
-                >
-                  Table
-                </button>
-                <div className="w-px bg-border mx-1" />
-                <span className="flex items-center text-xs text-muted-foreground">Markdown</span>
+                    <Eye className="h-3 w-3" />
+                    Preview
+                  </button>
+                </div>
               </div>
-              <textarea
-                ref={contentRef}
-                placeholder="Write your article content here... (supports Markdown)"
-                value={content}
-                onChange={(e) => setContent(e.target.value)}
-                rows={15}
-                className="w-full rounded-b-md border border-border bg-secondary/50 px-4 py-3 font-mono text-sm text-foreground placeholder:text-muted-foreground focus:border-primary focus:outline-none focus:ring-1 focus:ring-primary"
-              />
+
+              {editorTab === "write" ? (
+                <>
+                  {/* Toolbar */}
+                  <div className="flex flex-wrap items-center gap-1 rounded-t-md border border-b-0 border-border bg-secondary/50 p-2">
+                    {/* Heading buttons */}
+                    {headingButtons.map(({ label, title, action }) => (
+                      <button
+                        key={label}
+                        type="button"
+                        title={title}
+                        onClick={action}
+                        className="h-8 min-w-[2rem] px-2 rounded text-xs font-bold text-muted-foreground hover:text-foreground hover:bg-border transition-colors"
+                      >
+                        {label}
+                      </button>
+                    ))}
+
+                    <div className="w-px h-5 bg-border mx-1" />
+
+                    {/* Icon buttons */}
+                    {iconButtons.map(({ icon: Icon, label, action }) => (
+                      <Button
+                        key={label}
+                        type="button"
+                        variant="ghost"
+                        size="icon"
+                        title={label}
+                        onClick={action}
+                        className="h-8 w-8 text-muted-foreground hover:text-foreground"
+                      >
+                        <Icon className="h-4 w-4" />
+                      </Button>
+                    ))}
+
+                    <div className="w-px h-5 bg-border mx-1" />
+
+                    {/* Extra buttons */}
+                    <button
+                      type="button"
+                      title="Insert Table"
+                      onClick={handleTable}
+                      className="h-8 px-2 rounded text-xs text-muted-foreground hover:text-foreground hover:bg-border transition-colors"
+                    >
+                      ⊞ Tabel
+                    </button>
+                    <button
+                      type="button"
+                      title="Blockquote"
+                      onClick={handleQuote}
+                      className="h-8 px-2 rounded text-xs text-muted-foreground hover:text-foreground hover:bg-border transition-colors"
+                    >
+                      ❝ Quote
+                    </button>
+                    <button
+                      type="button"
+                      title="Inline code"
+                      onClick={handleCode}
+                      className="h-8 px-2 rounded text-xs font-mono text-muted-foreground hover:text-foreground hover:bg-border transition-colors"
+                    >
+                      {"</>"}
+                    </button>
+                    <button
+                      type="button"
+                      title="Garis pembatas (HR)"
+                      onClick={handleHr}
+                      className="h-8 px-2 rounded text-xs text-muted-foreground hover:text-foreground hover:bg-border transition-colors"
+                    >
+                      — HR
+                    </button>
+
+                    <div className="w-px h-5 bg-border mx-1" />
+                    <span className="flex items-center text-xs text-muted-foreground/60 italic">Markdown</span>
+                  </div>
+
+                  {/* Textarea */}
+                  <textarea
+                    ref={contentRef}
+                    placeholder={`Tulis konten artikel di sini... (format Markdown)\n\nContoh:\n# Judul Besar\n## Sub Judul\n\nParagraf teks biasa di sini.\n\n| Kolom 1 | Kolom 2 |\n|---------|----------|\n| Data 1  | Data 2  |\n\n![alt text](https://url-gambar.com/gambar.jpg)`}
+                    value={content}
+                    onChange={(e) => setContent(e.target.value)}
+                    rows={20}
+                    className="w-full rounded-b-md border border-border bg-secondary/50 px-4 py-3 font-mono text-sm text-foreground placeholder:text-muted-foreground/50 focus:border-primary focus:outline-none focus:ring-1 focus:ring-primary resize-y"
+                  />
+
+                  {/* Markdown quick-reference */}
+                  <div className="mt-2 rounded-lg border border-border bg-secondary/30 px-4 py-3">
+                    <p className="mb-1.5 text-xs font-semibold text-muted-foreground">Panduan Markdown:</p>
+                    <div className="grid grid-cols-2 gap-x-6 gap-y-0.5 text-xs text-muted-foreground font-mono">
+                      <span># Judul H1</span>
+                      <span>**teks tebal**</span>
+                      <span>## Judul H2</span>
+                      <span>_teks miring_</span>
+                      <span>### Judul H3</span>
+                      <span>[link](https://url)</span>
+                      <span>- item list</span>
+                      <span>![alt](https://img)</span>
+                      <span>{'| A | B |'} + {'|---|---|'}</span>
+                      <span>{'> blockquote'}</span>
+                    </div>
+                  </div>
+                </>
+              ) : (
+                /* Preview panel */
+                <div className="rounded-b-md border border-border bg-background min-h-[400px]">
+                  {!content.trim() ? (
+                    <div className="flex items-center justify-center h-40 text-sm text-muted-foreground">
+                      Belum ada konten untuk dipreview.
+                    </div>
+                  ) : (
+                    <div
+                      className="prose prose-sm max-w-none p-6
+                        prose-headings:font-bold prose-headings:text-foreground
+                        prose-h1:text-2xl prose-h2:text-xl prose-h3:text-lg
+                        prose-h2:border-b prose-h2:border-border prose-h2:pb-2
+                        prose-p:text-foreground/90 prose-p:leading-relaxed
+                        prose-a:text-primary prose-strong:font-semibold
+                        prose-img:rounded-xl prose-img:w-full
+                        prose-table:w-full prose-table:border-collapse
+                        prose-th:border prose-th:border-border prose-th:bg-secondary/60 prose-th:px-3 prose-th:py-2 prose-th:text-left prose-th:text-sm prose-th:font-semibold
+                        prose-td:border prose-td:border-border prose-td:px-3 prose-td:py-2 prose-td:text-sm
+                        prose-tr:even:bg-secondary/20
+                        prose-blockquote:border-l-primary prose-blockquote:bg-secondary/50 prose-blockquote:rounded-r-lg"
+                      dangerouslySetInnerHTML={{ __html: previewHtml }}
+                    />
+                  )}
+                </div>
+              )}
             </div>
           </div>
         </div>
@@ -545,7 +701,7 @@ export function CreateArticleView({ onBack, articleId }: CreateArticleViewProps)
                 <div className="text-center">
                   <ImageIcon className="mx-auto mb-2 h-8 w-8 text-muted-foreground" />
                   <p className="text-sm text-muted-foreground">Click to upload</p>
-                  <p className="text-xs text-muted-foreground">or drag and drop</p>
+                  <p className="text-xs text-muted-foreground">atau drag and drop</p>
                 </div>
               )}
             </div>
@@ -559,7 +715,7 @@ export function CreateArticleView({ onBack, articleId }: CreateArticleViewProps)
             )}
           </div>
 
-          {/* SEO Settings — tersambung ke state & DB */}
+          {/* SEO Settings */}
           <div className="rounded-xl border border-border bg-card p-6">
             <h3 className="mb-1 font-semibold text-foreground">SEO Settings</h3>
             <p className="mb-4 text-xs text-muted-foreground">Kosongkan untuk menggunakan judul & excerpt artikel</p>

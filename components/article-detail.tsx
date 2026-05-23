@@ -37,36 +37,62 @@ interface TocItem {
 
 // ─── Helpers ───────────────────────────────────────────────────────────────
 
-// Deteksi apakah string adalah HTML atau Markdown
+/**
+ * Deteksi apakah konten adalah HTML murni (bukan Markdown).
+ * Cek apakah dimulai dengan tag HTML block-level seperti <p>, <div>, <h1>, dsb.
+ * Ini lebih akurat daripada regex umum yang bisa salah deteksi konten Markdown
+ * yang kebetulan mengandung karakter < (seperti URL atau simbol).
+ */
 function isHtml(content: string): boolean {
-  return /<[a-z][\s\S]*>/i.test(content)
+  const trimmed = content.trim()
+  // Konten HTML murni biasanya dimulai dengan tag block-level
+  return /^<(p|div|h[1-6]|ul|ol|li|blockquote|pre|table|section|article|header|footer|main|figure|figcaption|br)\b/i.test(trimmed)
 }
 
-// Setup marked sekali saja (marked v18 compatible)
+// Setup marked sekali saja di module level (marked v18 compatible)
 marked.use({
-  gfm: true,
-  breaks: true,
+  gfm: true,       // GitHub Flavored Markdown: tabel, strikethrough, dll
+  breaks: true,    // Newline tunggal jadi <br>
   renderer: {
+    // Custom renderer untuk gambar — pastikan src valid
     image({ href, title, text }: { href: string; title: string | null; text: string }) {
-      if (!href || href === "null") return ""
+      if (!href || href === "null" || href === "undefined") return ""
+      const safeHref = href.trim()
+      const safeAlt = text || ""
       const titleAttr = title ? ` title="${title}"` : ""
-      return `<img src="${href}" alt="${text}"${titleAttr} class="rounded-xl w-full my-4" loading="lazy" />`
+      return `<img src="${safeHref}" alt="${safeAlt}"${titleAttr} class="rounded-xl w-full my-6" loading="lazy" decoding="async" />`
     },
+    // Custom renderer untuk heading — inject id untuk TOC anchor
     heading({ text, depth }: { text: string; depth: number }) {
-      const id = text.toLowerCase().replace(/<[^>]+>/g, "").replace(/[^\w\s-]/g, "").trim().replace(/\s+/g, "-")
+      const cleanText = text.replace(/<[^>]+>/g, "")
+      const id = cleanText
+        .toLowerCase()
+        .replace(/[^\w\s-]/g, "")
+        .trim()
+        .replace(/\s+/g, "-")
       return `<h${depth} id="${id}">${text}</h${depth}>\n`
     },
   },
 })
 
-// Konversi Markdown → HTML
-function markdownToHtml(content: string): string {
-  if (isHtml(content)) return content // sudah HTML, skip konversi
-  return marked.parse(content) as string
+/**
+ * Konversi konten dari CMS ke HTML siap render.
+ * Jika sudah HTML → langsung pakai.
+ * Jika Markdown → parse dengan marked.
+ */
+function contentToHtml(content: string): string {
+  if (!content) return ""
+  if (isHtml(content)) return content
+  try {
+    return marked.parse(content) as string
+  } catch (e) {
+    console.error("marked parse error:", e)
+    // Fallback: tampilkan sebagai plain text dalam paragraf
+    return content.split("\n\n").map(p => `<p>${p}</p>`).join("")
+  }
 }
 
 function calcReadingTime(content: string): number {
-  // Strip HTML tags dan Markdown syntax untuk word count yang akurat
   const text = content
     .replace(/<[^>]+>/g, "")
     .replace(/[#*_~`>[\]()!]/g, "")
@@ -74,30 +100,32 @@ function calcReadingTime(content: string): number {
   return Math.max(1, Math.ceil(words / 200))
 }
 
-function extractToc(content: string): TocItem[] {
-  const matches = [...content.matchAll(/<h([2-3])[^>]*id="([^"]*)"[^>]*>(.*?)<\/h[2-3]>/gi)]
-  if (matches.length === 0) {
-    // fallback: parse tanpa id
-    const raw = [...content.matchAll(/<h([2-3])[^>]*>(.*?)<\/h[2-3]>/gi)]
-    return raw.map((m, i) => ({
+function extractToc(html: string): TocItem[] {
+  // Coba parse heading dengan id (hasil dari custom renderer kita)
+  const withId = [...html.matchAll(/<h([2-3])[^>]*id="([^"]*)"[^>]*>(.*?)<\/h[2-3]>/gi)]
+  if (withId.length > 0) {
+    return withId.map((m) => ({
       level: parseInt(m[1]),
-      id: `heading-${i}`,
-      text: m[2].replace(/<[^>]+>/g, ""),
+      id: m[2],
+      text: m[3].replace(/<[^>]+>/g, ""),
     }))
   }
-  return matches.map((m) => ({
+  // Fallback: heading tanpa id
+  const raw = [...html.matchAll(/<h([2-3])[^>]*>(.*?)<\/h[2-3]>/gi)]
+  return raw.map((m, i) => ({
     level: parseInt(m[1]),
-    id: m[2],
-    text: m[3].replace(/<[^>]+>/g, ""),
+    id: `heading-${i}`,
+    text: m[2].replace(/<[^>]+>/g, ""),
   }))
 }
 
-// Inject id ke heading jika belum ada
-function injectHeadingIds(content: string): string {
+/** Inject id ke heading yang belum punya id (untuk konten HTML legacy) */
+function injectHeadingIds(html: string): string {
   let i = 0
-  return content.replace(/<h([2-3])([^>]*)>/gi, (match, level, attrs) => {
-    if (attrs.includes("id=")) return match
-    return `<h${level}${attrs} id="heading-${i++}">`
+  return html.replace(/<h([2-3])([^>]*)>/gi, (match, level, attrs) => {
+    if (/id=/i.test(attrs)) return match
+    const id = `heading-${i++}`
+    return `<h${level}${attrs} id="${id}">`
   })
 }
 
@@ -114,9 +142,7 @@ function ArticleSchema({ article }: { article: Article }) {
     "@type": "NewsArticle",
     "headline": article.title,
     "description": article.excerpt ?? "",
-    "image": article.featured_image_url
-      ? [article.featured_image_url]
-      : [],
+    "image": article.featured_image_url ? [article.featured_image_url] : [],
     "datePublished": article.published_at || article.created_at,
     "dateModified": article.created_at,
     "author": {
@@ -138,7 +164,6 @@ function ArticleSchema({ article }: { article: Article }) {
     },
     "articleSection": article.categories?.name ?? "Umum",
   }
-
   return (
     <script
       type="application/ld+json"
@@ -318,7 +343,7 @@ function ShareButtons({ title }: { title: string }) {
       setCopied(true)
       setTimeout(() => setCopied(false), 2000)
     } catch {
-      // fallback
+      // fallback silent
     }
   }
 
@@ -427,7 +452,7 @@ function RelatedArticles({ currentId, categorySlug }: { currentId: string; categ
   const supabase = createClient()
 
   useEffect(() => {
-    async function fetch() {
+    async function fetchRelated() {
       let query = supabase
         .from("articles")
         .select("id, title, slug, excerpt, featured_image_url, featured_image_alt, author, views, published_at, created_at, categories(name, slug)")
@@ -445,7 +470,7 @@ function RelatedArticles({ currentId, categorySlug }: { currentId: string; categ
       setArticles((data as Article[]) || [])
       setIsLoading(false)
     }
-    fetch()
+    fetchRelated()
   }, [currentId, categorySlug])
 
   if (isLoading) {
@@ -506,7 +531,7 @@ function RelatedArticles({ currentId, categorySlug }: { currentId: string; categ
           <div className="p-4">
             {article.categories && (
               <span className="mb-2 inline-block rounded bg-primary/15 px-2 py-0.5 text-xs font-semibold text-primary">
-                {article.categories.name}
+                {(article.categories as any).name}
               </span>
             )}
             <h3 className="font-semibold text-foreground transition-colors group-hover:text-primary line-clamp-2 text-sm">
@@ -578,14 +603,14 @@ export function ArticleDetail({ articleId }: ArticleDetailProps) {
   useEffect(() => {
     async function fetchArticle() {
       // Coba fetch dengan filter status published dulu
-      let { data, error } = await supabase
+      let { data } = await supabase
         .from("articles")
         .select("*, categories(name, slug)")
         .eq("id", articleId)
         .eq("status", "published")
         .maybeSingle()
 
-      // Fallback: jika tidak ditemukan (RLS / nilai status berbeda), fetch tanpa filter status
+      // Fallback tanpa filter status (untuk preview draft atau perbedaan nilai status)
       if (!data) {
         const fallback = await supabase
           .from("articles")
@@ -600,13 +625,15 @@ export function ArticleDetail({ articleId }: ArticleDetailProps) {
         await trackArticleView(articleId)
 
         if (data.content) {
-          // Konversi Markdown → HTML terlebih dahulu (jika konten masih Markdown)
-          const html = markdownToHtml(data.content)
+          // Konversi konten (Markdown atau HTML) → HTML final
+          const html = contentToHtml(data.content)
+          // Inject id ke heading yang belum punya (untuk konten HTML lama)
           const injected = injectHeadingIds(html)
           setProcessedContent(injected)
           setToc(extractToc(injected))
         }
       }
+
       setIsLoading(false)
     }
     fetchArticle()
@@ -729,6 +756,10 @@ export function ArticleDetail({ articleId }: ArticleDetailProps) {
                         width={1200}
                         height={630}
                         itemProp="url"
+                        onError={(e) => {
+                          // Sembunyikan gambar jika gagal load
+                          ;(e.target as HTMLImageElement).style.display = "none"
+                        }}
                       />
                     </picture>
                     {article.featured_image_alt && (
@@ -745,17 +776,18 @@ export function ArticleDetail({ articleId }: ArticleDetailProps) {
                 <div
                   className="prose prose-sm sm:prose-base max-w-none
                     prose-headings:font-bold prose-headings:text-foreground prose-headings:scroll-mt-24
+                    prose-h1:text-2xl prose-h1:mt-8 prose-h1:mb-4
                     prose-h2:text-xl prose-h2:mt-8 prose-h2:mb-4 prose-h2:border-b prose-h2:border-border prose-h2:pb-2
                     prose-h3:text-lg prose-h3:mt-6 prose-h3:mb-3
                     prose-p:text-foreground/90 prose-p:leading-relaxed prose-p:mb-4
                     prose-a:text-primary prose-a:no-underline hover:prose-a:underline
                     prose-strong:text-foreground prose-strong:font-semibold
-                    prose-img:rounded-xl prose-img:w-full
+                    prose-img:rounded-xl prose-img:w-full prose-img:my-6
                     prose-blockquote:border-l-primary prose-blockquote:bg-secondary/50 prose-blockquote:rounded-r-lg prose-blockquote:py-1 prose-blockquote:not-italic
                     prose-code:text-primary prose-code:bg-secondary prose-code:rounded prose-code:px-1 prose-code:py-0.5 prose-code:text-sm prose-code:before:content-none prose-code:after:content-none
                     prose-ul:text-foreground/90 prose-ol:text-foreground/90
                     prose-li:my-1
-                    prose-table:w-full prose-table:border-collapse
+                    prose-table:w-full prose-table:border-collapse prose-table:my-4
                     prose-th:border prose-th:border-border prose-th:bg-secondary/60 prose-th:px-3 prose-th:py-2 prose-th:text-left prose-th:text-sm prose-th:font-semibold
                     prose-td:border prose-td:border-border prose-td:px-3 prose-td:py-2 prose-td:text-sm
                     prose-tr:even:bg-secondary/20
