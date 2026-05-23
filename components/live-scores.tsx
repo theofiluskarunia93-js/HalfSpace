@@ -412,7 +412,7 @@ function LeagueDropdown({
       </button>
 
       {open && (
-        <div className="absolute right-0 top-full z-50 mt-1 min-w-[200px] overflow-hidden rounded-xl border border-border bg-card shadow-lg">
+        <div className="absolute left-0 sm:left-auto sm:right-0 top-full z-50 mt-1 min-w-[200px] overflow-hidden rounded-xl border border-border bg-card shadow-lg">
           {LEAGUES.map((league) => (
             <button
               key={league.slug}
@@ -563,7 +563,7 @@ export function LiveScores() {
 
         {/* ── Header ── */}
         <div className="mb-4 flex items-center justify-between gap-3 flex-wrap">
-          <div className="flex items-center gap-3 flex-wrap">
+          <div className="flex items-center gap-3 flex-wrap min-w-0">
             <h2
               className="text-xl font-bold uppercase tracking-tight text-foreground"
               style={{ fontFamily: "var(--font-oswald)" }}
@@ -592,7 +592,7 @@ export function LiveScores() {
             )}
           </div>
 
-          <div className="flex items-center gap-2">
+          <div className="flex items-center gap-2 ml-auto">
             {/* Next refresh info */}
             {getNextRefreshLabel() && (
               <span className="hidden text-xs text-muted-foreground sm:block">
