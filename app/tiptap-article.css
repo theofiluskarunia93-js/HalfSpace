@@ -1,0 +1,105 @@
+.tiptap p.is-editor-empty:first-child::before {
+  content: attr(data-placeholder);
+  float: left;
+  color: oklch(0.45 0 0);       /* muted-foreground gelap */
+  pointer-events: none;
+  height: 0;
+}
+
+/* ── Tiptap: caret ───────────────────────────────────────── */
+
+.tiptap {
+  caret-color: oklch(0.87 0.29 142);   /* --primary neon green */
+}
+
+/* ── Tiptap: selection highlight — neon green ────────────── */
+
+.tiptap ::selection {
+  background-color: oklch(0.87 0.29 142 / 0.25);  /* primary 25% opacity */
+  color: oklch(0.98 0 0);                           /* --foreground */
+}
+
+.tiptap:focus {
+  outline: none;
+}
+
+/* ── ProseMirror: teks & overflow ────────────────────────── */
+
+.ProseMirror {
+  word-break: break-word;
+  white-space: pre-wrap;
+}
+
+/* ── ProseMirror: tabel ──────────────────────────────────── */
+
+.ProseMirror table {
+  border-collapse: collapse;
+  table-layout: fixed;
+  width: 100%;
+  overflow: hidden;
+  margin: 1rem 0;
+}
+
+.ProseMirror table td,
+.ProseMirror table th {
+  border: 1px solid oklch(0.25 0 0);    /* --border */
+  padding: 0.5rem 0.75rem;
+  vertical-align: top;
+  box-sizing: border-box;
+  min-width: 1em;
+  position: relative;
+}
+
+.ProseMirror table th {
+  background: oklch(0.18 0 0);          /* --secondary */
+  color: oklch(0.98 0 0);               /* --foreground */
+  font-weight: 600;
+  text-align: left;
+}
+
+/* Selected cell — neon green tint */
+.ProseMirror .selectedCell:after {
+  z-index: 2;
+  position: absolute;
+  content: "";
+  left: 0; right: 0; top: 0; bottom: 0;
+  background: oklch(0.87 0.29 142 / 0.15);  /* primary 15% */
+  pointer-events: none;
+}
+
+/* ── ArticleRenderer: prose overrides ───────────────────── */
+
+/* Gambar & caption */
+.prose figure {
+  margin: 2rem 0;
+}
+
+.prose figure figcaption {
+  margin-top: 0.5rem;
+  text-align: center;
+  font-size: 0.8125rem;
+  color: oklch(0.6 0 0);                /* --muted-foreground */
+  font-style: italic;
+}
+
+/* Link transition */
+.prose a {
+  transition: color 0.15s ease, text-decoration-color 0.15s ease;
+}
+
+/* Blockquote: hapus kutip otomatis browser */
+.prose blockquote::before,
+.prose blockquote::after {
+  content: none;
+}
+
+/* Drop cap opsional — tambah class "article-dropcap" ke wrapper */
+.article-dropcap > p:first-of-type::first-letter {
+  float: left;
+  font-size: 3.5rem;
+  line-height: 0.85;
+  margin-right: 0.1em;
+  margin-top: 0.05em;
+  font-weight: 700;
+  color: oklch(0.87 0.29 142);          /* --primary neon green */
+}

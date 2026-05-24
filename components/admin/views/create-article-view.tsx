@@ -1,255 +1,211 @@
 "use client"
 
-import { useState, useEffect, useRef } from "react"
-import { ArrowLeft, Save, Image as ImageIcon, Bold, Italic, List, Link2, X, Plus, Eye } from "lucide-react"
+/**
+ * components/admin/views/create-article-view.tsx
+ * CMS Editor — Tiptap + tiptap-markdown
+ *
+ * Tampilan minimalis Word-like, tema gelap sesuai website (neon green).
+ * Output ke Supabase: Markdown murni via editor.storage.markdown.getMarkdown()
+ */
+
+import { useState, useEffect, useRef, useCallback } from "react"
+import { useEditor, EditorContent } from "@tiptap/react"
+import StarterKit from "@tiptap/starter-kit"
+import { Markdown } from "tiptap-markdown"
+import {
+  ArrowLeft, Save, Image as ImageIcon, X, Plus, Eye,
+  Bold, Italic, List, ListOrdered, Link2, Quote,
+  Code2, Minus, Heading1, Heading2, Heading3,
+  Undo2, Redo2, Table as TableIcon,
+} from "lucide-react"
 import { Button } from "@/components/ui/button"
 import { Input } from "@/components/ui/input"
 import { createClient } from "@/lib/supabase/client"
+
+// ─── Types ───────────────────────────────────────────────────────────────────
 
 interface CreateArticleViewProps {
   onBack: () => void
   articleId?: string | null
 }
 
+// ─── Toolbar Button ───────────────────────────────────────────────────────────
+
+function ToolbarButton({
+  onClick, active, title, disabled, children,
+}: {
+  onClick: () => void
+  active?: boolean
+  title: string
+  disabled?: boolean
+  children: React.ReactNode
+}) {
+  return (
+    <button
+      type="button"
+      title={title}
+      disabled={disabled}
+      onClick={onClick}
+      className={[
+        "flex h-7 min-w-[1.75rem] items-center justify-center rounded px-1.5 text-sm transition-colors",
+        "disabled:pointer-events-none disabled:opacity-30",
+        active
+          ? "bg-primary/20 text-primary"               // aktif: neon green tint
+          : "text-muted-foreground hover:bg-secondary hover:text-foreground",
+      ].join(" ")}
+    >
+      {children}
+    </button>
+  )
+}
+
+function ToolbarSeparator() {
+  return <div className="mx-1 h-4 w-px bg-border" aria-hidden />
+}
+
+// ─── Main Component ───────────────────────────────────────────────────────────
+
 export function CreateArticleView({ onBack, articleId }: CreateArticleViewProps) {
   const isEditMode = !!articleId
+  const supabase   = createClient()
 
-  const [title, setTitle] = useState("")
-  const [category, setCategory] = useState("")
-  const [excerpt, setExcerpt] = useState("")
-  const [content, setContent] = useState("")
-  const [metaTitle, setMetaTitle] = useState("")
+  const [title,           setTitle]           = useState("")
+  const [category,        setCategory]        = useState("")
+  const [excerpt,         setExcerpt]         = useState("")
+  const [metaTitle,       setMetaTitle]       = useState("")
   const [metaDescription, setMetaDescription] = useState("")
-  const [categories, setCategories] = useState<any[]>([])
-  const [isLoading, setIsLoading] = useState(false)
-  const [isFetching, setIsFetching] = useState(isEditMode)
-  const [message, setMessage] = useState<{ type: "success" | "error"; text: string } | null>(null)
-  const [featuredImagePreview, setFeaturedImagePreview] = useState<string | null>(null)
-  const [featuredImageUrl, setFeaturedImageUrl] = useState<string | null>(null)
+  const [categories,      setCategories]      = useState<{ id: string; name: string }[]>([])
+  const [isLoading,       setIsLoading]       = useState(false)
+  const [isFetching,      setIsFetching]      = useState(isEditMode)
+  const [message,         setMessage]         = useState<{ type: "success" | "error"; text: string } | null>(null)
 
-  // Tab state: "write" | "preview"
-  const [editorTab, setEditorTab] = useState<"write" | "preview">("write")
+  const [featuredImagePreview, setFeaturedImagePreview] = useState<string | null>(null)
+  const [featuredImageUrl,     setFeaturedImageUrl]     = useState<string | null>(null)
+  const featuredImageRef = useRef<HTMLInputElement>(null)
+
+  const [tags,           setTags]           = useState<string[]>([])
+  const [tagInput,       setTagInput]       = useState("")
+  const [tagSuggestions, setTagSuggestions] = useState<string[]>([])
+  const [allTags,        setAllTags]        = useState<{ id: string; name: string; slug: string }[]>([])
+  const [showSuggestions,setShowSuggestions]= useState(false)
+  const tagInputRef = useRef<HTMLInputElement>(null)
+
+  const [editorTab,   setEditorTab]   = useState<"write" | "preview">("write")
   const [previewHtml, setPreviewHtml] = useState("")
 
-  // Tag states
-  const [tags, setTags] = useState<string[]>([])
-  const [tagInput, setTagInput] = useState("")
-  const [tagSuggestions, setTagSuggestions] = useState<string[]>([])
-  const [allTags, setAllTags] = useState<{ id: string; name: string; slug: string }[]>([])
-  const [showSuggestions, setShowSuggestions] = useState(false)
+  // ── Tiptap editor ──────────────────────────────────────────────────────────
+  const editor = useEditor({
+    extensions: [
+      StarterKit.configure({ codeBlock: false }),
+      Markdown.configure({
+        html: false,
+        transformCopiedText: true,
+        transformPastedText: true,
+      }),
+    ],
+    editorProps: {
+      attributes: {
+        // Tampilan di dalam area tulis: mengikuti dark theme website
+        class: [
+          "min-h-[540px] focus:outline-none",
+          // prose-invert agar cocok di dark background
+          "prose prose-invert prose-lg max-w-none",
+          "prose-headings:text-foreground prose-headings:font-semibold",
+          "prose-h1:text-2xl prose-h2:text-xl prose-h3:text-lg",
+          "prose-p:text-foreground/90 prose-p:leading-[1.8]",
+          "prose-a:text-primary prose-a:no-underline hover:prose-a:underline",
+          "prose-strong:text-foreground",
+          "prose-blockquote:border-l-primary prose-blockquote:text-foreground/70 prose-blockquote:italic",
+          "prose-code:bg-secondary prose-code:text-primary prose-code:rounded prose-code:px-1",
+          "prose-ul:text-foreground/90 prose-ol:text-foreground/90",
+          "prose-hr:border-border",
+          "prose-img:rounded-lg",
+        ].join(" "),
+      },
+    },
+    content: "",
+  })
 
-  const featuredImageRef = useRef<HTMLInputElement>(null)
-  const tagInputRef = useRef<HTMLInputElement>(null)
-  const contentRef = useRef<HTMLTextAreaElement>(null)
-  const supabase = createClient()
-
+  // ── Fetch meta (kategori + tags) ───────────────────────────────────────────
   useEffect(() => {
-    async function fetchCategories() {
-      const { data } = await supabase.from("categories").select("*").order("name")
-      if (data) setCategories(data)
+    async function fetchMeta() {
+      const [catRes, tagRes] = await Promise.all([
+        supabase.from("categories").select("*").order("name"),
+        supabase.from("tags").select("*").order("name"),
+      ])
+      if (catRes.data) setCategories(catRes.data)
+      if (tagRes.data)  setAllTags(tagRes.data)
     }
-    async function fetchAllTags() {
-      const { data } = await supabase.from("tags").select("*").order("name")
-      if (data) setAllTags(data)
-    }
-    fetchCategories()
-    fetchAllTags()
+    fetchMeta()
   }, [])
 
+  // ── Fetch artikel (edit mode) ──────────────────────────────────────────────
   useEffect(() => {
-    if (!articleId) return
-
+    if (!articleId || !editor) return
     async function fetchArticle() {
       setIsFetching(true)
-      const { data, error } = await supabase
-        .from("articles")
-        .select("*")
-        .eq("id", articleId)
-        .single()
-
-      if (!error && data) {
+      const { data } = await supabase.from("articles").select("*").eq("id", articleId).single()
+      if (data) {
         setTitle(data.title || "")
         setExcerpt(data.excerpt || "")
-        setContent(data.content || "")
         setCategory(data.category_id || "")
         setFeaturedImageUrl(data.featured_image_url || null)
         setFeaturedImagePreview(data.featured_image_url || null)
         setMetaTitle(data.meta_title || "")
         setMetaDescription(data.meta_description || "")
+        editor.commands.setContent(data.content || "")
       }
-
       const { data: articleTags } = await supabase
-        .from("article_tags")
-        .select("tags(name)")
-        .eq("article_id", articleId)
-
+        .from("article_tags").select("tags(name)").eq("article_id", articleId)
       if (articleTags) {
-        const tagNames = articleTags.map((at: any) => at.tags?.name).filter(Boolean)
-        setTags(tagNames)
+        setTags(articleTags.map((at: any) => at.tags?.name).filter(Boolean))
       }
-
       setIsFetching(false)
     }
-
     fetchArticle()
-  }, [articleId])
+  }, [articleId, editor])
 
-  // Filter tag suggestions
+  // ── Tag autocomplete ───────────────────────────────────────────────────────
   useEffect(() => {
-    if (tagInput.trim().length === 0) {
-      setTagSuggestions([])
-      setShowSuggestions(false)
-      return
-    }
+    if (!tagInput.trim()) { setTagSuggestions([]); setShowSuggestions(false); return }
     const filtered = allTags
       .map((t) => t.name)
-      .filter(
-        (name) =>
-          name.toLowerCase().includes(tagInput.toLowerCase()) &&
-          !tags.includes(name)
-      )
+      .filter((name) => name.toLowerCase().includes(tagInput.toLowerCase()) && !tags.includes(name))
     setTagSuggestions(filtered)
     setShowSuggestions(true)
   }, [tagInput, allTags, tags])
 
-  // Generate markdown preview ketika tab Preview dibuka
-  useEffect(() => {
-    if (editorTab !== "preview") return
-    // Lazy load marked hanya saat preview dibuka
-    import("marked").then(({ marked }) => {
-      try {
-        const html = marked.parse(content || "") as string
-        setPreviewHtml(html)
-      } catch {
-        setPreviewHtml("<p>Gagal merender preview.</p>")
-      }
-    })
-  }, [editorTab, content])
-
-  const generateSlug = (text: string) =>
-    text.toLowerCase().trim().replace(/[^a-z0-9]+/g, "-").replace(/(^-|-$)/g, "")
-
-  const addTag = (name: string) => {
+  const addTag    = (name: string) => {
     const trimmed = name.trim()
     if (!trimmed || tags.includes(trimmed)) return
-    setTags([...tags, trimmed])
-    setTagInput("")
-    setShowSuggestions(false)
+    setTags((prev) => [...prev, trimmed])
+    setTagInput(""); setShowSuggestions(false)
     tagInputRef.current?.focus()
   }
-
-  const removeTag = (name: string) => {
-    setTags(tags.filter((t) => t !== name))
-  }
-
+  const removeTag = (name: string) => setTags((prev) => prev.filter((t) => t !== name))
   const handleTagKeyDown = (e: React.KeyboardEvent<HTMLInputElement>) => {
-    if (e.key === "Enter" || e.key === ",") {
-      e.preventDefault()
-      addTag(tagInput)
-    } else if (e.key === "Backspace" && tagInput === "" && tags.length > 0) {
-      removeTag(tags[tags.length - 1])
-    }
+    if (e.key === "Enter" || e.key === ",") { e.preventDefault(); addTag(tagInput) }
+    else if (e.key === "Backspace" && tagInput === "" && tags.length > 0) removeTag(tags[tags.length - 1])
   }
 
-  // ─── Rich text toolbar handlers ────────────────────────────────────────
-  const wrapSelection = (before: string, after: string) => {
-    const el = contentRef.current
-    if (!el) return
-    const start = el.selectionStart
-    const end = el.selectionEnd
-    const selected = content.slice(start, end)
-    const newContent = content.slice(0, start) + before + selected + after + content.slice(end)
-    setContent(newContent)
-    setTimeout(() => {
-      el.focus()
-      el.setSelectionRange(start + before.length, end + before.length)
-    }, 0)
-  }
+  // ── Preview — identik konfigurasi dengan ArticleRenderer ──────────────────
+  useEffect(() => {
+    if (editorTab !== "preview" || !editor) return
+    const markdown = editor.storage.markdown.getMarkdown()
+    import("marked").then(({ marked }) => {
+      marked.use({ gfm: true, breaks: true })
+      try { setPreviewHtml(marked.parse(markdown) as string) }
+      catch { setPreviewHtml("<p>Gagal merender preview.</p>") }
+    })
+  }, [editorTab, editor])
 
-  const insertAtLineStart = (prefix: string) => {
-    const el = contentRef.current
-    if (!el) return
-    const start = el.selectionStart
-    // Cari awal baris
-    const lineStart = content.lastIndexOf("\n", start - 1) + 1
-    const newContent = content.slice(0, lineStart) + prefix + content.slice(lineStart)
-    setContent(newContent)
-    setTimeout(() => {
-      el.focus()
-      el.setSelectionRange(lineStart + prefix.length, lineStart + prefix.length)
-    }, 0)
-  }
-
-  const insertAtCursor = (text: string) => {
-    const el = contentRef.current
-    if (!el) return
-    const start = el.selectionStart
-    const newContent = content.slice(0, start) + text + content.slice(start)
-    setContent(newContent)
-    setTimeout(() => {
-      el.focus()
-      el.setSelectionRange(start + text.length, start + text.length)
-    }, 0)
-  }
-
-  const handleBold = () => wrapSelection("**", "**")
-  const handleItalic = () => wrapSelection("_", "_")
-  const handleList = () => insertAtCursor("\n- ")
-  const handleLink = () => {
-    const el = contentRef.current
-    if (!el) return
-    const selected = content.slice(el.selectionStart, el.selectionEnd)
-    const url = window.prompt("Masukkan URL:", "https://")
-    if (!url) return
-    const linkText = selected || "teks link"
-    if (selected) {
-      wrapSelection(`[${linkText}](`, `${url})`)
-    } else {
-      insertAtCursor(`[${linkText}](${url})`)
-    }
-  }
-  const handleImageInsert = () => {
-    const url = window.prompt("Masukkan URL gambar:", "https://")
-    if (!url) return
-    const alt = window.prompt("Deskripsi gambar (alt text):", "deskripsi gambar") || "gambar"
-    insertAtCursor(`\n![${alt}](${url})\n`)
-  }
-
-  // Heading: insert di awal baris jika sudah ada teks, atau insert baru
-  const handleH1 = () => insertAtLineStart("# ")
-  const handleH2 = () => insertAtLineStart("## ")
-  const handleH3 = () => insertAtLineStart("### ")
-  const handleTable = () =>
-    insertAtCursor(
-      "\n| Kolom 1 | Kolom 2 | Kolom 3 |\n|---------|---------|----------|\n| Data 1  | Data 2  | Data 3   |\n| Data 4  | Data 5  | Data 6   |\n"
-    )
-  const handleQuote = () => insertAtLineStart("> ")
-  const handleCode = () => wrapSelection("`", "`")
-  const handleHr = () => insertAtCursor("\n\n---\n\n")
-
-  const headingButtons = [
-    { label: "H1", title: "Heading 1 (judul besar)", action: handleH1 },
-    { label: "H2", title: "Heading 2 (sub judul)", action: handleH2 },
-    { label: "H3", title: "Heading 3 (sub-sub judul)", action: handleH3 },
-  ]
-
-  const iconButtons = [
-    { icon: Bold,      label: "Bold (teks tebal)",   action: handleBold },
-    { icon: Italic,    label: "Italic (teks miring)", action: handleItalic },
-    { icon: List,      label: "Bullet list",          action: handleList },
-    { icon: Link2,     label: "Sisipkan link",        action: handleLink },
-    { icon: ImageIcon, label: "Sisipkan gambar",      action: handleImageInsert },
-  ]
-
+  // ── Featured image ─────────────────────────────────────────────────────────
   const handleFeaturedImageUpload = async (e: React.ChangeEvent<HTMLInputElement>) => {
-    const file = e.target.files?.[0]
-    if (!file) return
-
+    const file = e.target.files?.[0]; if (!file) return
     const reader = new FileReader()
     reader.onload = (ev) => setFeaturedImagePreview(ev.target?.result as string)
     reader.readAsDataURL(file)
-
-    const fileExt = file.name.split(".").pop()
+    const fileExt  = file.name.split(".").pop()
     const fileName = `featured-${Date.now()}.${fileExt}`
     const { data, error } = await supabase.storage.from("media").upload(fileName, file, { upsert: true })
     if (!error && data) {
@@ -258,115 +214,93 @@ export function CreateArticleView({ onBack, articleId }: CreateArticleViewProps)
     }
   }
 
-  const syncTags = async (articleId: string) => {
-    const tagIds: string[] = []
+  // ── Toolbar actions ────────────────────────────────────────────────────────
+  const handleInsertImage = useCallback(() => {
+    if (!editor) return
+    const url = window.prompt("URL gambar:", "https://"); if (!url || url === "https://") return
+    const alt = window.prompt("Alt text:", "") || ""
+    editor.chain().focus().setImage({ src: url, alt }).run()
+  }, [editor])
 
+  const handleInsertLink = useCallback(() => {
+    if (!editor) return
+    const url = window.prompt("URL:", "https://"); if (!url || url === "https://") return
+    editor.chain().focus().setLink({ href: url }).run()
+  }, [editor])
+
+  const handleInsertTable = useCallback(() => {
+    if (!editor) return
+    editor.chain().focus().insertContent(
+      "\n| Kolom 1 | Kolom 2 | Kolom 3 |\n|---------|---------|----------|\n| Data 1  | Data 2  | Data 3   |\n"
+    ).run()
+  }, [editor])
+
+  // ── Save / Publish ─────────────────────────────────────────────────────────
+  const generateSlug = (text: string) =>
+    text.toLowerCase().trim().replace(/[^a-z0-9]+/g, "-").replace(/(^-|-$)/g, "")
+
+  const syncTags = async (artId: string) => {
+    const tagIds: string[] = []
     for (const tagName of tags) {
       const slug = generateSlug(tagName)
-      const { data: existing } = await supabase
-        .from("tags")
-        .select("id")
-        .eq("slug", slug)
-        .single()
-
-      if (existing) {
-        tagIds.push(existing.id)
-      } else {
-        const { data: newTag } = await supabase
-          .from("tags")
-          .insert({ name: tagName, slug })
-          .select("id")
-          .single()
-        if (newTag) tagIds.push(newTag.id)
-      }
+      const { data: existing } = await supabase.from("tags").select("id").eq("slug", slug).single()
+      if (existing) { tagIds.push(existing.id); continue }
+      const { data: newTag } = await supabase.from("tags").insert({ name: tagName, slug }).select("id").single()
+      if (newTag) tagIds.push(newTag.id)
     }
-
-    await supabase.from("article_tags").delete().eq("article_id", articleId)
-
+    await supabase.from("article_tags").delete().eq("article_id", artId)
     if (tagIds.length > 0) {
-      await supabase.from("article_tags").insert(
-        tagIds.map((tag_id) => ({ article_id: articleId, tag_id }))
-      )
+      await supabase.from("article_tags").insert(tagIds.map((tag_id) => ({ article_id: artId, tag_id })))
     }
   }
 
   const handleSave = async (publish: boolean) => {
-    if (!title) {
-      setMessage({ type: "error", text: "Judul artikel wajib diisi!" })
-      return
-    }
+    if (!title) { setMessage({ type: "error", text: "Judul artikel wajib diisi!" }); return }
+    if (!editor) return
+    setIsLoading(true); setMessage(null)
 
-    setIsLoading(true)
-    setMessage(null)
-
-    let savedArticleId = articleId
-
+    const markdownContent = editor.storage.markdown.getMarkdown()
     const payload = {
-      title,
-      slug: generateSlug(title),
-      excerpt,
-      content,
-      category_id: category || null,
-      featured_image_url: featuredImageUrl,
-      meta_title: metaTitle || null,
-      meta_description: metaDescription || null,
+      title, slug: generateSlug(title), excerpt, content: markdownContent,
+      category_id: category || null, featured_image_url: featuredImageUrl,
+      meta_title: metaTitle || null, meta_description: metaDescription || null,
       status: publish ? "published" : "draft",
       published_at: publish ? new Date().toISOString() : null,
     }
 
+    let savedArticleId = articleId
     if (isEditMode) {
-      const { error: updateError } = await supabase
-        .from("articles")
-        .update(payload)
-        .eq("id", articleId)
-
-      if (updateError) {
-        setIsLoading(false)
-        setMessage({ type: "error", text: updateError.message })
-        return
-      }
+      const { error } = await supabase.from("articles").update(payload).eq("id", articleId)
+      if (error) { setIsLoading(false); setMessage({ type: "error", text: error.message }); return }
     } else {
-      const { data: inserted, error: insertError } = await supabase
-        .from("articles")
-        .insert(payload)
-        .select("id")
-        .single()
-
-      if (insertError || !inserted) {
-        setIsLoading(false)
-        setMessage({ type: "error", text: insertError?.message || "Gagal menyimpan artikel" })
-        return
-      }
-
+      const { data: inserted, error } = await supabase.from("articles").insert(payload).select("id").single()
+      if (error || !inserted) { setIsLoading(false); setMessage({ type: "error", text: error?.message || "Gagal menyimpan" }); return }
       savedArticleId = inserted.id
     }
 
-    if (savedArticleId) {
-      await syncTags(savedArticleId)
-    }
-
+    if (savedArticleId) await syncTags(savedArticleId)
     setIsLoading(false)
     setMessage({
       type: "success",
       text: publish
-        ? isEditMode ? "Artikel berhasil diupdate dan dipublish!" : "Artikel berhasil dipublish!"
-        : isEditMode ? "Artikel berhasil diupdate!" : "Draft berhasil disimpan!",
+        ? isEditMode ? "Artikel diupdate & dipublish!" : "Artikel berhasil dipublish!"
+        : isEditMode ? "Draft diupdate!" : "Draft disimpan!",
     })
-    setTimeout(() => {
-      if (publish) onBack()
-    }, 1500)
+    if (publish) setTimeout(onBack, 1500)
   }
 
   if (isFetching) {
     return (
       <div className="flex h-full items-center justify-center py-24 text-muted-foreground">
-        Loading article...
+        Memuat artikel...
       </div>
     )
   }
 
+  // ── Render ─────────────────────────────────────────────────────────────────
   return (
     <div className="p-6">
+
       {/* Header */}
       <div className="mb-6 flex items-center justify-between">
         <Button variant="ghost" onClick={onBack} className="text-muted-foreground hover:text-foreground">
@@ -380,7 +314,7 @@ export function CreateArticleView({ onBack, articleId }: CreateArticleViewProps)
             disabled={isLoading}
             className="border-border text-foreground hover:border-primary hover:text-primary"
           >
-            {isLoading ? "Saving..." : isEditMode ? "Update Draft" : "Save Draft"}
+            {isLoading ? "Menyimpan..." : isEditMode ? "Update Draft" : "Simpan Draft"}
           </Button>
           <Button
             onClick={() => handleSave(true)}
@@ -388,223 +322,215 @@ export function CreateArticleView({ onBack, articleId }: CreateArticleViewProps)
             className="bg-primary text-primary-foreground hover:bg-primary/90"
           >
             <Save className="mr-2 h-4 w-4" />
-            {isLoading ? "Saving..." : isEditMode ? "Update & Publish" : "Publish"}
+            {isLoading ? "Menyimpan..." : isEditMode ? "Update & Publish" : "Publish"}
           </Button>
         </div>
       </div>
 
+      {/* Message */}
       {message && (
-        <div className={`mb-6 rounded-lg px-4 py-3 text-sm ${
-          message.type === "success"
-            ? "bg-primary/10 text-primary"
-            : "bg-destructive/10 text-destructive"
-        }`}>
+        <div className={[
+          "mb-6 rounded-lg px-4 py-3 text-sm",
+          message.type === "success" ? "bg-primary/10 text-primary" : "bg-destructive/10 text-destructive",
+        ].join(" ")}>
           {message.text}
         </div>
       )}
 
       <div className="grid gap-6 lg:grid-cols-3">
-        {/* Main Content */}
-        <div className="lg:col-span-2">
-          <div className="rounded-xl border border-border bg-card p-6">
-            <h2 className="mb-6 text-2xl font-bold text-foreground" style={{ fontFamily: "var(--font-oswald)" }}>
-              {isEditMode ? "Edit Article" : "Create New Article"}
-            </h2>
 
-            <div className="mb-6">
-              <label className="mb-2 block text-sm font-medium text-foreground">Article Title</label>
-              <Input
-                placeholder="Enter a compelling title..."
+        {/* ── Kolom utama: editor ── */}
+        <div className="lg:col-span-2 space-y-5">
+
+          {/* Title & Excerpt */}
+          <div className="rounded-xl border border-border bg-card p-6 space-y-5">
+            <div>
+              <label className="mb-1.5 block text-xs font-semibold uppercase tracking-wider text-muted-foreground">
+                Judul Artikel
+              </label>
+              <input
+                placeholder="Tulis judul yang menarik..."
                 value={title}
                 onChange={(e) => setTitle(e.target.value)}
-                className="border-border bg-secondary/50 text-lg text-foreground placeholder:text-muted-foreground"
+                className={[
+                  "w-full rounded-md border border-border bg-secondary/50 px-3 py-2.5",
+                  "text-xl font-semibold text-foreground placeholder:text-muted-foreground/40",
+                  "focus:border-primary focus:outline-none focus:ring-1 focus:ring-primary/30 transition-colors",
+                ].join(" ")}
               />
             </div>
-
-            <div className="mb-6">
-              <label className="mb-2 block text-sm font-medium text-foreground">Excerpt</label>
+            <div>
+              <label className="mb-1.5 block text-xs font-semibold uppercase tracking-wider text-muted-foreground">
+                Excerpt
+              </label>
               <textarea
-                placeholder="Write a brief summary..."
+                placeholder="Ringkasan singkat (untuk SEO dan preview)..."
                 value={excerpt}
                 onChange={(e) => setExcerpt(e.target.value)}
                 rows={2}
-                className="w-full rounded-md border border-border bg-secondary/50 px-3 py-2 text-foreground placeholder:text-muted-foreground focus:border-primary focus:outline-none focus:ring-1 focus:ring-primary"
+                className={[
+                  "w-full resize-none rounded-md border border-border bg-secondary/50 px-3 py-2.5",
+                  "text-sm text-foreground placeholder:text-muted-foreground/40 leading-relaxed",
+                  "focus:border-primary focus:outline-none focus:ring-1 focus:ring-primary/30 transition-colors",
+                ].join(" ")}
               />
             </div>
+          </div>
 
-            <div>
-              <div className="mb-2 flex items-center justify-between">
-                <label className="text-sm font-medium text-foreground">Content</label>
-                {/* Write / Preview toggle */}
-                <div className="flex rounded-lg border border-border overflow-hidden text-xs">
-                  <button
-                    type="button"
-                    onClick={() => setEditorTab("write")}
-                    className={`px-3 py-1.5 transition-colors ${
-                      editorTab === "write"
-                        ? "bg-primary text-primary-foreground font-medium"
-                        : "text-muted-foreground hover:bg-secondary/60"
-                    }`}
-                  >
-                    ✏️ Tulis
-                  </button>
-                  <button
-                    type="button"
-                    onClick={() => setEditorTab("preview")}
-                    className={`px-3 py-1.5 transition-colors flex items-center gap-1 ${
-                      editorTab === "preview"
-                        ? "bg-primary text-primary-foreground font-medium"
-                        : "text-muted-foreground hover:bg-secondary/60"
-                    }`}
-                  >
-                    <Eye className="h-3 w-3" />
-                    Preview
-                  </button>
-                </div>
+          {/* ── Editor Card ── */}
+          <div className="overflow-hidden rounded-xl border border-border bg-card">
+
+            {/* Tab bar */}
+            <div className="flex items-center justify-between border-b border-border bg-secondary/30 px-4 py-2">
+              <div className="flex gap-1 text-sm">
+                <button
+                  type="button"
+                  onClick={() => setEditorTab("write")}
+                  className={[
+                    "rounded px-3 py-1.5 font-medium transition-colors",
+                    editorTab === "write"
+                      ? "bg-card text-foreground shadow-sm"
+                      : "text-muted-foreground hover:text-foreground",
+                  ].join(" ")}
+                >
+                  ✏️ Tulis
+                </button>
+                <button
+                  type="button"
+                  onClick={() => setEditorTab("preview")}
+                  className={[
+                    "flex items-center gap-1.5 rounded px-3 py-1.5 font-medium transition-colors",
+                    editorTab === "preview"
+                      ? "bg-card text-foreground shadow-sm"
+                      : "text-muted-foreground hover:text-foreground",
+                  ].join(" ")}
+                >
+                  <Eye className="h-3.5 w-3.5" />
+                  Preview
+                </button>
               </div>
-
-              {editorTab === "write" ? (
-                <>
-                  {/* Toolbar */}
-                  <div className="flex flex-wrap items-center gap-1 rounded-t-md border border-b-0 border-border bg-secondary/50 p-2">
-                    {/* Heading buttons */}
-                    {headingButtons.map(({ label, title, action }) => (
-                      <button
-                        key={label}
-                        type="button"
-                        title={title}
-                        onClick={action}
-                        className="h-8 min-w-[2rem] px-2 rounded text-xs font-bold text-muted-foreground hover:text-foreground hover:bg-border transition-colors"
-                      >
-                        {label}
-                      </button>
-                    ))}
-
-                    <div className="w-px h-5 bg-border mx-1" />
-
-                    {/* Icon buttons */}
-                    {iconButtons.map(({ icon: Icon, label, action }) => (
-                      <Button
-                        key={label}
-                        type="button"
-                        variant="ghost"
-                        size="icon"
-                        title={label}
-                        onClick={action}
-                        className="h-8 w-8 text-muted-foreground hover:text-foreground"
-                      >
-                        <Icon className="h-4 w-4" />
-                      </Button>
-                    ))}
-
-                    <div className="w-px h-5 bg-border mx-1" />
-
-                    {/* Extra buttons */}
-                    <button
-                      type="button"
-                      title="Insert Table"
-                      onClick={handleTable}
-                      className="h-8 px-2 rounded text-xs text-muted-foreground hover:text-foreground hover:bg-border transition-colors"
-                    >
-                      ⊞ Tabel
-                    </button>
-                    <button
-                      type="button"
-                      title="Blockquote"
-                      onClick={handleQuote}
-                      className="h-8 px-2 rounded text-xs text-muted-foreground hover:text-foreground hover:bg-border transition-colors"
-                    >
-                      ❝ Quote
-                    </button>
-                    <button
-                      type="button"
-                      title="Inline code"
-                      onClick={handleCode}
-                      className="h-8 px-2 rounded text-xs font-mono text-muted-foreground hover:text-foreground hover:bg-border transition-colors"
-                    >
-                      {"</>"}
-                    </button>
-                    <button
-                      type="button"
-                      title="Garis pembatas (HR)"
-                      onClick={handleHr}
-                      className="h-8 px-2 rounded text-xs text-muted-foreground hover:text-foreground hover:bg-border transition-colors"
-                    >
-                      — HR
-                    </button>
-
-                    <div className="w-px h-5 bg-border mx-1" />
-                    <span className="flex items-center text-xs text-muted-foreground/60 italic">Markdown</span>
-                  </div>
-
-                  {/* Textarea */}
-                  <textarea
-                    ref={contentRef}
-                    placeholder={`Tulis konten artikel di sini... (format Markdown)\n\nContoh:\n# Judul Besar\n## Sub Judul\n\nParagraf teks biasa di sini.\n\n| Kolom 1 | Kolom 2 |\n|---------|----------|\n| Data 1  | Data 2  |\n\n![alt text](https://url-gambar.com/gambar.jpg)`}
-                    value={content}
-                    onChange={(e) => setContent(e.target.value)}
-                    rows={20}
-                    className="w-full rounded-b-md border border-border bg-secondary/50 px-4 py-3 font-mono text-sm text-foreground placeholder:text-muted-foreground/50 focus:border-primary focus:outline-none focus:ring-1 focus:ring-primary resize-y"
-                  />
-
-                  {/* Markdown quick-reference */}
-                  <div className="mt-2 rounded-lg border border-border bg-secondary/30 px-4 py-3">
-                    <p className="mb-1.5 text-xs font-semibold text-muted-foreground">Panduan Markdown:</p>
-                    <div className="grid grid-cols-2 gap-x-6 gap-y-0.5 text-xs text-muted-foreground font-mono">
-                      <span># Judul H1</span>
-                      <span>**teks tebal**</span>
-                      <span>## Judul H2</span>
-                      <span>_teks miring_</span>
-                      <span>### Judul H3</span>
-                      <span>[link](https://url)</span>
-                      <span>- item list</span>
-                      <span>![alt](https://img)</span>
-                      <span>{'| A | B |'} + {'|---|---|'}</span>
-                      <span>{'> blockquote'}</span>
-                    </div>
-                  </div>
-                </>
-              ) : (
-                /* Preview panel */
-                <div className="rounded-b-md border border-border bg-background min-h-[400px]">
-                  {!content.trim() ? (
-                    <div className="flex items-center justify-center h-40 text-sm text-muted-foreground">
-                      Belum ada konten untuk dipreview.
-                    </div>
-                  ) : (
-                    <div
-                      className="prose prose-sm max-w-none p-6
-                        prose-headings:font-bold prose-headings:text-foreground
-                        prose-h1:text-2xl prose-h2:text-xl prose-h3:text-lg
-                        prose-h2:border-b prose-h2:border-border prose-h2:pb-2
-                        prose-p:text-foreground/90 prose-p:leading-relaxed
-                        prose-a:text-primary prose-strong:font-semibold
-                        prose-img:rounded-xl prose-img:w-full
-                        prose-table:w-full prose-table:border-collapse
-                        prose-th:border prose-th:border-border prose-th:bg-secondary/60 prose-th:px-3 prose-th:py-2 prose-th:text-left prose-th:text-sm prose-th:font-semibold
-                        prose-td:border prose-td:border-border prose-td:px-3 prose-td:py-2 prose-td:text-sm
-                        prose-tr:even:bg-secondary/20
-                        prose-blockquote:border-l-primary prose-blockquote:bg-secondary/50 prose-blockquote:rounded-r-lg"
-                      dangerouslySetInnerHTML={{ __html: previewHtml }}
-                    />
-                  )}
-                </div>
-              )}
+              <span className="font-mono text-xs text-muted-foreground/50 tracking-tight">Markdown</span>
             </div>
+
+            {editorTab === "write" ? (
+              <>
+                {/* ── Toolbar ── */}
+                <div className="flex flex-wrap items-center gap-0.5 border-b border-border bg-secondary/20 px-3 py-2">
+
+                  <ToolbarButton onClick={() => editor?.chain().focus().toggleHeading({ level: 1 }).run()} active={editor?.isActive("heading", { level: 1 })} title="Heading 1">
+                    <Heading1 className="h-4 w-4" />
+                  </ToolbarButton>
+                  <ToolbarButton onClick={() => editor?.chain().focus().toggleHeading({ level: 2 }).run()} active={editor?.isActive("heading", { level: 2 })} title="Heading 2">
+                    <Heading2 className="h-4 w-4" />
+                  </ToolbarButton>
+                  <ToolbarButton onClick={() => editor?.chain().focus().toggleHeading({ level: 3 }).run()} active={editor?.isActive("heading", { level: 3 })} title="Heading 3">
+                    <Heading3 className="h-4 w-4" />
+                  </ToolbarButton>
+
+                  <ToolbarSeparator />
+
+                  <ToolbarButton onClick={() => editor?.chain().focus().toggleBold().run()} active={editor?.isActive("bold")} title="Bold (Ctrl+B)">
+                    <Bold className="h-4 w-4" />
+                  </ToolbarButton>
+                  <ToolbarButton onClick={() => editor?.chain().focus().toggleItalic().run()} active={editor?.isActive("italic")} title="Italic (Ctrl+I)">
+                    <Italic className="h-4 w-4" />
+                  </ToolbarButton>
+                  <ToolbarButton onClick={() => editor?.chain().focus().toggleCode().run()} active={editor?.isActive("code")} title="Inline Code">
+                    <Code2 className="h-4 w-4" />
+                  </ToolbarButton>
+
+                  <ToolbarSeparator />
+
+                  <ToolbarButton onClick={() => editor?.chain().focus().toggleBulletList().run()} active={editor?.isActive("bulletList")} title="Bullet List">
+                    <List className="h-4 w-4" />
+                  </ToolbarButton>
+                  <ToolbarButton onClick={() => editor?.chain().focus().toggleOrderedList().run()} active={editor?.isActive("orderedList")} title="Ordered List">
+                    <ListOrdered className="h-4 w-4" />
+                  </ToolbarButton>
+
+                  <ToolbarSeparator />
+
+                  <ToolbarButton onClick={() => editor?.chain().focus().toggleBlockquote().run()} active={editor?.isActive("blockquote")} title="Blockquote">
+                    <Quote className="h-4 w-4" />
+                  </ToolbarButton>
+                  <ToolbarButton onClick={() => editor?.chain().focus().setHorizontalRule().run()} title="Garis Pemisah">
+                    <Minus className="h-4 w-4" />
+                  </ToolbarButton>
+
+                  <ToolbarSeparator />
+
+                  <ToolbarButton onClick={handleInsertLink}  title="Sisipkan Link">
+                    <Link2 className="h-4 w-4" />
+                  </ToolbarButton>
+                  <ToolbarButton onClick={handleInsertImage} title="Sisipkan Gambar">
+                    <ImageIcon className="h-4 w-4" />
+                  </ToolbarButton>
+                  <ToolbarButton onClick={handleInsertTable} title="Sisipkan Tabel">
+                    <TableIcon className="h-4 w-4" />
+                  </ToolbarButton>
+
+                  <ToolbarSeparator />
+
+                  <ToolbarButton onClick={() => editor?.chain().focus().undo().run()} disabled={!editor?.can().undo()} title="Undo">
+                    <Undo2 className="h-4 w-4" />
+                  </ToolbarButton>
+                  <ToolbarButton onClick={() => editor?.chain().focus().redo().run()} disabled={!editor?.can().redo()} title="Redo">
+                    <Redo2 className="h-4 w-4" />
+                  </ToolbarButton>
+                </div>
+
+                {/* ── Area tulis: dark background, padding lega ── */}
+                <div className="px-10 py-8 bg-card min-h-[540px]">
+                  <EditorContent editor={editor} />
+                </div>
+              </>
+            ) : (
+              /* ── Preview: gunakan class yang sama persis dengan ArticleRenderer ── */
+              <div className="min-h-[540px] bg-card">
+                {!previewHtml.trim() ? (
+                  <div className="flex h-60 items-center justify-center text-sm text-muted-foreground">
+                    Belum ada konten untuk dipreview.
+                  </div>
+                ) : (
+                  <div
+                    className={[
+                      "px-10 py-8",
+                      "prose prose-invert prose-lg max-w-none",
+                      "prose-p:text-foreground/90 prose-p:leading-[1.85]",
+                      "prose-headings:text-foreground prose-headings:font-semibold",
+                      "prose-h2:border-b prose-h2:border-border prose-h2:pb-3",
+                      "prose-a:text-primary prose-a:no-underline hover:prose-a:underline prose-a:font-medium",
+                      "prose-strong:text-foreground",
+                      "prose-blockquote:border-l-2 prose-blockquote:border-l-primary",
+                      "prose-blockquote:bg-secondary/60 prose-blockquote:rounded-r-lg prose-blockquote:not-italic",
+                      "prose-code:bg-secondary prose-code:text-primary prose-code:rounded prose-code:px-1.5",
+                      "prose-code:before:content-none prose-code:after:content-none",
+                      "prose-img:rounded-xl prose-img:w-full",
+                      "prose-table:border-collapse prose-table:text-sm",
+                      "prose-th:border prose-th:border-border prose-th:bg-secondary/60 prose-th:px-4 prose-th:py-2.5 prose-th:font-semibold",
+                      "prose-td:border prose-td:border-border prose-td:px-4 prose-td:py-2.5",
+                      "prose-hr:border-border",
+                    ].join(" ")}
+                    dangerouslySetInnerHTML={{ __html: previewHtml }}
+                  />
+                )}
+              </div>
+            )}
           </div>
         </div>
 
-        {/* Sidebar */}
-        <div className="space-y-6">
+        {/* ── Sidebar ── */}
+        <div className="space-y-5">
+
           {/* Category */}
-          <div className="rounded-xl border border-border bg-card p-6">
-            <h3 className="mb-4 font-semibold text-foreground">Category</h3>
+          <div className="rounded-xl border border-border bg-card p-5">
+            <h3 className="mb-3 text-sm font-semibold text-foreground">Kategori</h3>
             <select
               value={category}
               onChange={(e) => setCategory(e.target.value)}
-              className="w-full rounded-md border border-border bg-secondary/50 px-3 py-2 text-foreground focus:border-primary focus:outline-none"
+              className="w-full rounded-md border border-border bg-secondary/50 px-3 py-2 text-sm text-foreground focus:border-primary focus:outline-none"
             >
-              <option value="">Select a category</option>
+              <option value="">Pilih kategori...</option>
               {categories.map((cat) => (
                 <option key={cat.id} value={cat.id}>{cat.name}</option>
               ))}
@@ -612,27 +538,19 @@ export function CreateArticleView({ onBack, articleId }: CreateArticleViewProps)
           </div>
 
           {/* Tags */}
-          <div className="rounded-xl border border-border bg-card p-6">
-            <h3 className="mb-1 font-semibold text-foreground">Tags</h3>
-            <p className="mb-3 text-xs text-muted-foreground">Tekan Enter atau koma untuk menambah tag</p>
-
-            <div className="mb-3 flex flex-wrap gap-2">
+          <div className="rounded-xl border border-border bg-card p-5">
+            <h3 className="mb-0.5 text-sm font-semibold text-foreground">Tags</h3>
+            <p className="mb-3 text-xs text-muted-foreground">Enter atau koma untuk menambah</p>
+            <div className="mb-3 flex flex-wrap gap-1.5">
               {tags.map((tag) => (
-                <span
-                  key={tag}
-                  className="flex items-center gap-1 rounded-full bg-primary/15 px-3 py-1 text-xs font-medium text-primary"
-                >
+                <span key={tag} className="flex items-center gap-1 rounded-full bg-primary/10 px-2.5 py-0.5 text-xs font-medium text-primary">
                   #{tag}
-                  <button
-                    onClick={() => removeTag(tag)}
-                    className="ml-1 rounded-full text-primary/70 hover:text-primary"
-                  >
+                  <button onClick={() => removeTag(tag)} className="text-primary/60 hover:text-primary">
                     <X className="h-3 w-3" />
                   </button>
                 </span>
               ))}
             </div>
-
             <div className="relative">
               <Input
                 ref={tagInputRef}
@@ -641,103 +559,75 @@ export function CreateArticleView({ onBack, articleId }: CreateArticleViewProps)
                 onChange={(e) => setTagInput(e.target.value)}
                 onKeyDown={handleTagKeyDown}
                 onBlur={() => setTimeout(() => setShowSuggestions(false), 150)}
-                className="border-border bg-secondary/50 text-sm text-foreground placeholder:text-muted-foreground"
+                className="border-border bg-secondary/50 text-sm"
               />
               {showSuggestions && tagSuggestions.length > 0 && (
                 <div className="absolute z-10 mt-1 w-full overflow-hidden rounded-md border border-border bg-card shadow-lg">
                   {tagSuggestions.slice(0, 6).map((s) => (
-                    <button
-                      key={s}
-                      onMouseDown={() => addTag(s)}
-                      className="flex w-full items-center gap-2 px-3 py-2 text-sm text-foreground hover:bg-secondary/60"
-                    >
-                      <span className="text-primary">#</span>
-                      {s}
+                    <button key={s} onMouseDown={() => addTag(s)} className="flex w-full items-center gap-2 px-3 py-2 text-sm text-foreground hover:bg-secondary/60">
+                      <span className="text-primary">#</span>{s}
                     </button>
                   ))}
                 </div>
               )}
             </div>
-
             {allTags.filter((t) => !tags.includes(t.name)).length > 0 && (
               <div className="mt-3">
-                <p className="mb-2 text-xs text-muted-foreground">Tag yang ada:</p>
-                <div className="flex flex-wrap gap-1.5">
-                  {allTags
-                    .filter((t) => !tags.includes(t.name))
-                    .slice(0, 10)
-                    .map((t) => (
-                      <button
-                        key={t.id}
-                        onClick={() => addTag(t.name)}
-                        className="flex items-center gap-0.5 rounded-full border border-border px-2 py-0.5 text-xs text-muted-foreground transition-colors hover:border-primary hover:text-primary"
-                      >
-                        <Plus className="h-2.5 w-2.5" />
-                        {t.name}
-                      </button>
-                    ))}
+                <p className="mb-1.5 text-xs text-muted-foreground">Tag tersedia:</p>
+                <div className="flex flex-wrap gap-1">
+                  {allTags.filter((t) => !tags.includes(t.name)).slice(0, 10).map((t) => (
+                    <button key={t.id} onClick={() => addTag(t.name)}
+                      className="flex items-center gap-0.5 rounded-full border border-border px-2 py-0.5 text-xs text-muted-foreground hover:border-primary hover:text-primary transition-colors">
+                      <Plus className="h-2.5 w-2.5" />{t.name}
+                    </button>
+                  ))}
                 </div>
               </div>
             )}
           </div>
 
           {/* Featured Image */}
-          <div className="rounded-xl border border-border bg-card p-6">
-            <h3 className="mb-4 font-semibold text-foreground">Featured Image</h3>
-            <input
-              ref={featuredImageRef}
-              type="file"
-              accept="image/*"
-              className="hidden"
-              onChange={handleFeaturedImageUpload}
-            />
+          <div className="rounded-xl border border-border bg-card p-5">
+            <h3 className="mb-3 text-sm font-semibold text-foreground">Gambar Unggulan</h3>
+            <input ref={featuredImageRef} type="file" accept="image/*" className="hidden" onChange={handleFeaturedImageUpload} />
             <div
               onClick={() => featuredImageRef.current?.click()}
-              className="flex aspect-video cursor-pointer items-center justify-center overflow-hidden rounded-lg border-2 border-dashed border-border bg-secondary/50 transition-colors hover:border-primary/50"
+              className="flex aspect-video cursor-pointer items-center justify-center overflow-hidden rounded-lg border-2 border-dashed border-border bg-secondary/30 hover:border-primary/50 transition-colors"
             >
               {featuredImagePreview ? (
                 <img src={featuredImagePreview} alt="Featured" className="h-full w-full object-cover" />
               ) : (
                 <div className="text-center">
-                  <ImageIcon className="mx-auto mb-2 h-8 w-8 text-muted-foreground" />
-                  <p className="text-sm text-muted-foreground">Click to upload</p>
-                  <p className="text-xs text-muted-foreground">atau drag and drop</p>
+                  <ImageIcon className="mx-auto mb-2 h-7 w-7 text-muted-foreground" />
+                  <p className="text-xs text-muted-foreground">Klik untuk upload</p>
                 </div>
               )}
             </div>
             {featuredImagePreview && (
-              <button
-                onClick={() => { setFeaturedImagePreview(null); setFeaturedImageUrl(null) }}
-                className="mt-2 text-xs text-destructive hover:underline"
-              >
-                Remove image
+              <button onClick={() => { setFeaturedImagePreview(null); setFeaturedImageUrl(null) }} className="mt-2 text-xs text-destructive hover:underline">
+                Hapus gambar
               </button>
             )}
           </div>
 
-          {/* SEO Settings */}
-          <div className="rounded-xl border border-border bg-card p-6">
-            <h3 className="mb-1 font-semibold text-foreground">SEO Settings</h3>
-            <p className="mb-4 text-xs text-muted-foreground">Kosongkan untuk menggunakan judul & excerpt artikel</p>
+          {/* SEO */}
+          <div className="rounded-xl border border-border bg-card p-5">
+            <h3 className="mb-0.5 text-sm font-semibold text-foreground">SEO</h3>
+            <p className="mb-4 text-xs text-muted-foreground">Kosongkan untuk pakai judul & excerpt</p>
             <div className="space-y-4">
               <div>
-                <label className="mb-2 block text-xs font-medium text-muted-foreground">Meta Title</label>
-                <Input
-                  placeholder={title || "SEO title"}
-                  value={metaTitle}
-                  onChange={(e) => setMetaTitle(e.target.value)}
-                  className="border-border bg-secondary/50 text-sm text-foreground placeholder:text-muted-foreground/50"
-                />
+                <label className="mb-1.5 block text-xs font-medium text-muted-foreground">Meta Title</label>
+                <Input placeholder={title || "SEO title"} value={metaTitle} onChange={(e) => setMetaTitle(e.target.value)} className="border-border bg-secondary/50 text-sm" />
                 <p className="mt-1 text-right text-xs text-muted-foreground">{metaTitle.length}/60</p>
               </div>
               <div>
-                <label className="mb-2 block text-xs font-medium text-muted-foreground">Meta Description</label>
+                <label className="mb-1.5 block text-xs font-medium text-muted-foreground">Meta Description</label>
                 <textarea
                   placeholder={excerpt || "SEO description"}
                   value={metaDescription}
                   onChange={(e) => setMetaDescription(e.target.value)}
                   rows={3}
-                  className="w-full rounded-md border border-border bg-secondary/50 px-3 py-2 text-sm text-foreground placeholder:text-muted-foreground/50 focus:border-primary focus:outline-none"
+                  className="w-full resize-none rounded-md border border-border bg-secondary/50 px-3 py-2 text-sm text-foreground focus:border-primary focus:outline-none"
                 />
                 <p className="mt-1 text-right text-xs text-muted-foreground">{metaDescription.length}/160</p>
               </div>
