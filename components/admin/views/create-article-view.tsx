@@ -16,7 +16,7 @@ import {
   ArrowLeft, Save, Image as ImageIcon, X, Plus, Eye,
   Bold, Italic, List, ListOrdered, Link2, Quote,
   Code2, Minus, Heading1, Heading2, Heading3,
-  Undo2, Redo2, Table as TableIcon,
+  Undo2, Redo2, Table as TableIcon, LayoutGrid,
 } from "lucide-react"
 import { Button } from "@/components/ui/button"
 import { Input } from "@/components/ui/input"
@@ -27,6 +27,285 @@ import { createClient } from "@/lib/supabase/client"
 interface CreateArticleViewProps {
   onBack: () => void
   articleId?: string | null
+}
+
+type TableStyle = "modern" | "card"
+
+interface TableTabData {
+  id: string
+  label: string
+  style: TableStyle
+  headers: string[]
+  rows: string[][]
+}
+
+// ─── Helpers ─────────────────────────────────────────────────────────────────
+
+function generateId() {
+  return Math.random().toString(36).slice(2, 8)
+}
+
+function tableToMarkdown(tab: TableTabData): string {
+  const header = `| ${tab.headers.join(" | ")} |`
+  const divider = `| ${tab.headers.map(() => "---").join(" | ")} |`
+  const rows = tab.rows.map((row) => `| ${row.join(" | ")} |`).join("\n")
+  return `\n${header}\n${divider}\n${rows}\n`
+}
+
+const STORAGE_KEY_PREFIX = "cms_table_tabs_"
+
+// ─── TableStyleWidget ─────────────────────────────────────────────────────────
+
+function TableStyleWidget({ articleId }: { articleId?: string | null }) {
+  const storageKey = STORAGE_KEY_PREFIX + (articleId || "new")
+
+  const defaultTab = (): TableTabData => ({
+    id: generateId(),
+    label: "Tab 1",
+    style: "modern",
+    headers: ["Kolom 1", "Kolom 2", "Kolom 3"],
+    rows: [["Data 1", "Data 2", "Data 3"]],
+  })
+
+  const [tabs, setTabs] = useState<TableTabData[]>(() => {
+    if (typeof window === "undefined") return [defaultTab()]
+    try {
+      const saved = localStorage.getItem(storageKey)
+      if (saved) return JSON.parse(saved)
+    } catch {}
+    return [defaultTab()]
+  })
+
+  const [activeTab, setActiveTab] = useState<string>(() => {
+    if (typeof window === "undefined") return ""
+    try {
+      const saved = localStorage.getItem(storageKey + "_active")
+      if (saved) return saved
+    } catch {}
+    return ""
+  })
+
+  // Persist to localStorage whenever tabs change
+  useEffect(() => {
+    try {
+      localStorage.setItem(storageKey, JSON.stringify(tabs))
+    } catch {}
+  }, [tabs, storageKey])
+
+  useEffect(() => {
+    if (!activeTab && tabs.length > 0) setActiveTab(tabs[0].id)
+  }, [tabs, activeTab])
+
+  useEffect(() => {
+    if (activeTab) {
+      try { localStorage.setItem(storageKey + "_active", activeTab) } catch {}
+    }
+  }, [activeTab, storageKey])
+
+  const currentTab = tabs.find((t) => t.id === activeTab) ?? tabs[0]
+
+  const updateTab = (id: string, patch: Partial<TableTabData>) => {
+    setTabs((prev) => prev.map((t) => (t.id === id ? { ...t, ...patch } : t)))
+  }
+
+  const addTab = () => {
+    const newTab: TableTabData = {
+      id: generateId(),
+      label: `Tab ${tabs.length + 1}`,
+      style: "modern",
+      headers: ["Kolom 1", "Kolom 2", "Kolom 3"],
+      rows: [["Data 1", "Data 2", "Data 3"]],
+    }
+    setTabs((prev) => [...prev, newTab])
+    setActiveTab(newTab.id)
+  }
+
+  const removeTab = (id: string) => {
+    setTabs((prev) => {
+      const next = prev.filter((t) => t.id !== id)
+      if (activeTab === id && next.length > 0) setActiveTab(next[0].id)
+      return next
+    })
+  }
+
+  const addRow = (tab: TableTabData) => {
+    updateTab(tab.id, { rows: [...tab.rows, tab.headers.map(() => "")] })
+  }
+
+  const addCol = (tab: TableTabData) => {
+    updateTab(tab.id, {
+      headers: [...tab.headers, `Kolom ${tab.headers.length + 1}`],
+      rows: tab.rows.map((r) => [...r, ""]),
+    })
+  }
+
+  const updateCell = (tab: TableTabData, row: number, col: number, value: string) => {
+    const rows = tab.rows.map((r, ri) => r.map((c, ci) => (ri === row && ci === col ? value : c)))
+    updateTab(tab.id, { rows })
+  }
+
+  const updateHeader = (tab: TableTabData, col: number, value: string) => {
+    const headers = tab.headers.map((h, i) => (i === col ? value : h))
+    updateTab(tab.id, { headers })
+  }
+
+  if (!currentTab) return null
+
+  return (
+    <div className="rounded-xl border border-border bg-card overflow-hidden">
+      {/* Header */}
+      <div className="flex items-center gap-2 border-b border-border bg-secondary/30 px-4 py-3">
+        <LayoutGrid className="h-4 w-4 text-primary" />
+        <span className="text-sm font-semibold text-foreground">Table Style</span>
+      </div>
+
+      {/* Tab bar */}
+      <div className="flex items-center gap-1 border-b border-border bg-secondary/20 px-3 py-2 overflow-x-auto">
+        {tabs.map((tab) => (
+          <div
+            key={tab.id}
+            className={[
+              "flex items-center gap-1.5 rounded-md px-3 py-1 text-sm font-medium cursor-pointer transition-colors shrink-0",
+              tab.id === activeTab
+                ? "bg-primary/20 text-primary"
+                : "text-muted-foreground hover:text-foreground hover:bg-secondary",
+            ].join(" ")}
+            onClick={() => setActiveTab(tab.id)}
+          >
+            <input
+              value={tab.label}
+              onChange={(e) => { e.stopPropagation(); updateTab(tab.id, { label: e.target.value }) }}
+              onClick={(e) => e.stopPropagation()}
+              className="bg-transparent border-none outline-none w-16 text-inherit text-sm"
+            />
+            {tabs.length > 1 && (
+              <button
+                onClick={(e) => { e.stopPropagation(); removeTab(tab.id) }}
+                className="text-muted-foreground hover:text-destructive transition-colors"
+              >
+                <X className="h-3 w-3" />
+              </button>
+            )}
+          </div>
+        ))}
+        <button
+          onClick={addTab}
+          className="ml-1 flex items-center gap-1 rounded-md px-2 py-1 text-xs text-muted-foreground hover:text-primary hover:bg-secondary transition-colors shrink-0"
+        >
+          <Plus className="h-3.5 w-3.5" />
+          Add Tab
+        </button>
+      </div>
+
+      {/* Style selector */}
+      <div className="flex items-center gap-3 border-b border-border px-4 py-3">
+        <span className="text-xs text-muted-foreground font-medium">Desain:</span>
+        {(["modern", "card"] as TableStyle[]).map((style) => (
+          <button
+            key={style}
+            onClick={() => updateTab(currentTab.id, { style })}
+            className={[
+              "rounded-md px-3 py-1 text-xs font-medium transition-colors border",
+              currentTab.style === style
+                ? "border-primary bg-primary/10 text-primary"
+                : "border-border text-muted-foreground hover:border-primary/50 hover:text-foreground",
+            ].join(" ")}
+          >
+            {style === "modern" ? "Modern Table" : "Card Design"}
+          </button>
+        ))}
+      </div>
+
+      {/* Table preview */}
+      <div className="p-4 overflow-x-auto">
+        {currentTab.style === "modern" ? (
+          <table className="w-full border-collapse text-sm">
+            <thead>
+              <tr className="bg-primary/10">
+                {currentTab.headers.map((h, ci) => (
+                  <th key={ci} className="border border-border px-3 py-2 text-left font-semibold text-foreground">
+                    <input
+                      value={h}
+                      onChange={(e) => updateHeader(currentTab, ci, e.target.value)}
+                      className="bg-transparent border-none outline-none w-full font-semibold text-foreground"
+                      placeholder={`Kolom ${ci + 1}`}
+                    />
+                  </th>
+                ))}
+              </tr>
+            </thead>
+            <tbody>
+              {currentTab.rows.map((row, ri) => (
+                <tr key={ri} className={ri % 2 === 0 ? "" : "bg-secondary/20"}>
+                  {row.map((cell, ci) => (
+                    <td key={ci} className="border border-border px-3 py-2 text-foreground/80">
+                      <input
+                        value={cell}
+                        onChange={(e) => updateCell(currentTab, ri, ci, e.target.value)}
+                        className="bg-transparent border-none outline-none w-full text-foreground/80"
+                        placeholder="Data..."
+                      />
+                    </td>
+                  ))}
+                </tr>
+              ))}
+            </tbody>
+          </table>
+        ) : (
+          /* Card Design */
+          <div className="grid gap-3 sm:grid-cols-2">
+            {currentTab.rows.map((row, ri) => (
+              <div key={ri} className="rounded-lg border border-border bg-secondary/30 p-4 space-y-2">
+                {currentTab.headers.map((header, ci) => (
+                  <div key={ci} className="flex items-start gap-2">
+                    <span className="text-xs font-semibold text-primary min-w-[80px]">{header}</span>
+                    <input
+                      value={row[ci] ?? ""}
+                      onChange={(e) => updateCell(currentTab, ri, ci, e.target.value)}
+                      className="flex-1 bg-transparent border-none outline-none text-xs text-foreground/80"
+                      placeholder="Data..."
+                    />
+                  </div>
+                ))}
+              </div>
+            ))}
+          </div>
+        )}
+
+        {/* Add row / col buttons */}
+        <div className="mt-3 flex items-center gap-2">
+          <button
+            onClick={() => addRow(currentTab)}
+            className="flex items-center gap-1 rounded px-2 py-1 text-xs text-muted-foreground hover:text-primary hover:bg-secondary transition-colors"
+          >
+            <Plus className="h-3 w-3" /> Tambah Baris
+          </button>
+          <button
+            onClick={() => addCol(currentTab)}
+            className="flex items-center gap-1 rounded px-2 py-1 text-xs text-muted-foreground hover:text-primary hover:bg-secondary transition-colors"
+          >
+            <Plus className="h-3 w-3" /> Tambah Kolom
+          </button>
+        </div>
+      </div>
+
+      {/* Insert to editor */}
+      <div className="border-t border-border px-4 py-3 flex items-center justify-between">
+        <span className="text-xs text-muted-foreground">Klik Insert untuk memasukkan tabel ke artikel</span>
+        <button
+          onClick={() => {
+            const markdown = tabs.map(tableToMarkdown).join("\n")
+            const event = new CustomEvent("insert-table-markdown", { detail: markdown })
+            window.dispatchEvent(event)
+          }}
+          className="flex items-center gap-1.5 rounded-md bg-primary/10 px-3 py-1.5 text-xs font-medium text-primary hover:bg-primary/20 transition-colors"
+        >
+          <TableIcon className="h-3.5 w-3.5" />
+          Insert ke Artikel
+        </button>
+      </div>
+    </div>
+  )
 }
 
 // ─── Toolbar Button ───────────────────────────────────────────────────────────
@@ -50,7 +329,7 @@ function ToolbarButton({
         "flex h-7 min-w-[1.75rem] items-center justify-center rounded px-1.5 text-sm transition-colors",
         "disabled:pointer-events-none disabled:opacity-30",
         active
-          ? "bg-primary/20 text-primary"               // aktif: neon green tint
+          ? "bg-primary/20 text-primary"
           : "text-muted-foreground hover:bg-secondary hover:text-foreground",
       ].join(" ")}
     >
@@ -105,10 +384,8 @@ export function CreateArticleView({ onBack, articleId }: CreateArticleViewProps)
     ],
     editorProps: {
       attributes: {
-        // Tampilan di dalam area tulis: mengikuti dark theme website
         class: [
           "min-h-[540px] focus:outline-none",
-          // prose-invert agar cocok di dark background
           "prose prose-invert prose-lg max-w-none",
           "prose-headings:text-foreground prose-headings:font-semibold",
           "prose-h1:text-2xl prose-h2:text-xl prose-h3:text-lg",
@@ -125,6 +402,18 @@ export function CreateArticleView({ onBack, articleId }: CreateArticleViewProps)
     },
     content: "",
   })
+
+  // ── Listen for table insert from TableStyleWidget ─────────────────────────
+  useEffect(() => {
+    const handler = (e: Event) => {
+      const markdown = (e as CustomEvent<string>).detail
+      if (editor && markdown) {
+        editor.chain().focus().insertContent(markdown).run()
+      }
+    }
+    window.addEventListener("insert-table-markdown", handler)
+    return () => window.removeEventListener("insert-table-markdown", handler)
+  }, [editor])
 
   // ── Fetch meta (kategori + tags) ───────────────────────────────────────────
   useEffect(() => {
@@ -188,7 +477,7 @@ export function CreateArticleView({ onBack, articleId }: CreateArticleViewProps)
     else if (e.key === "Backspace" && tagInput === "" && tags.length > 0) removeTag(tags[tags.length - 1])
   }
 
-  // ── Preview — identik konfigurasi dengan ArticleRenderer ──────────────────
+  // ── Preview ────────────────────────────────────────────────────────────────
   useEffect(() => {
     if (editorTab !== "preview" || !editor) return
     const markdown = editor.storage.markdown.getMarkdown()
@@ -465,7 +754,7 @@ export function CreateArticleView({ onBack, articleId }: CreateArticleViewProps)
                   <ToolbarButton onClick={handleInsertImage} title="Sisipkan Gambar">
                     <ImageIcon className="h-4 w-4" />
                   </ToolbarButton>
-                  <ToolbarButton onClick={handleInsertTable} title="Sisipkan Tabel">
+                  <ToolbarButton onClick={handleInsertTable} title="Sisipkan Tabel Cepat">
                     <TableIcon className="h-4 w-4" />
                   </ToolbarButton>
 
@@ -479,13 +768,12 @@ export function CreateArticleView({ onBack, articleId }: CreateArticleViewProps)
                   </ToolbarButton>
                 </div>
 
-                {/* ── Area tulis: dark background, padding lega ── */}
+                {/* ── Area tulis ── */}
                 <div className="px-10 py-8 bg-card min-h-[540px]">
                   <EditorContent editor={editor} />
                 </div>
               </>
             ) : (
-              /* ── Preview: gunakan class yang sama persis dengan ArticleRenderer ── */
               <div className="min-h-[540px] bg-card">
                 {!previewHtml.trim() ? (
                   <div className="flex h-60 items-center justify-center text-sm text-muted-foreground">
@@ -517,6 +805,10 @@ export function CreateArticleView({ onBack, articleId }: CreateArticleViewProps)
               </div>
             )}
           </div>
+
+          {/* ── Table Style Widget ── */}
+          <TableStyleWidget articleId={articleId} />
+
         </div>
 
         {/* ── Sidebar ── */}

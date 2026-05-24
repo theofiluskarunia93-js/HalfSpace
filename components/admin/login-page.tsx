@@ -75,7 +75,7 @@ export function LoginPage({ onLogin, onGoToPublic }: LoginPageProps) {
               <Input
                 id="email"
                 type="email"
-                placeholder="admin@halfspace.com"
+                placeholder="Enter your email"
                 value={email}
                 onChange={(e) => setEmail(e.target.value)}
                 className="border-border bg-secondary/50 text-foreground placeholder:text-muted-foreground focus:border-primary focus:ring-primary"
