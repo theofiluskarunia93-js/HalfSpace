@@ -18,6 +18,8 @@ export function TrendingArticles() {
         .from("articles")
         .select("*, categories(name)")
         .eq("status", "published")
+        // Exclude artikel yang sudah masuk Editor Choice
+        .or("is_editor_choice.is.null,is_editor_choice.eq.false")
         .order("created_at", { ascending: false })
         .limit(10)
       if (data) setArticles(data)

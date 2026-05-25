@@ -103,3 +103,59 @@
   font-weight: 700;
   color: oklch(0.87 0.29 142);          /* --primary neon green */
 }
+
+/* ── Card Table Block (dari Card Design) ─────────────────── */
+
+.card-table-block {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(260px, 1fr));
+  gap: 1rem;
+  margin: 1.5rem 0;
+}
+
+.card-table-card {
+  border-radius: 0.75rem;
+  border: 1px solid oklch(0.25 0 0);
+  background: oklch(0.14 0 0);
+  padding: 1rem 1.25rem;
+  display: flex;
+  flex-direction: column;
+  gap: 0.6rem;
+}
+
+.card-table-field {
+  display: flex;
+  align-items: flex-start;
+  gap: 0.5rem;
+}
+
+.card-table-label {
+  font-size: 0.7rem;
+  font-weight: 700;
+  text-transform: uppercase;
+  letter-spacing: 0.05em;
+  color: oklch(0.87 0.29 142);
+  min-width: 90px;
+  padding-top: 0.15rem;
+  flex-shrink: 0;
+}
+
+.card-table-value {
+  font-size: 0.85rem;
+  color: oklch(0.9 0 0);
+  line-height: 1.5;
+}
+
+/* Light mode override */
+.article-light-mode .card-table-card {
+  border-color: #e5e7eb;
+  background: #f9fafb;
+}
+
+.article-light-mode .card-table-label {
+  color: oklch(0.65 0.2 142);
+}
+
+.article-light-mode .card-table-value {
+  color: #374151;
+}

@@ -5,6 +5,7 @@ import { Navbar } from "./navbar"
 import { HeroSection } from "./hero-section"
 import { LiveScores } from "./live-scores"
 import { TrendingArticles } from "./trending-articles"
+import { EditorChoice } from "./editor-choice"
 import { StandingsSection } from "./standings-section"
 import { Footer } from "./footer"
 import { PageContent } from "./page-content"
@@ -36,6 +37,8 @@ export function PublicWebsite({ currentPage, onPageChange, onGoToAdmin }: Public
           <HeroSection />
           <LiveScores />
           <TrendingArticles />
+          {/* Editor Choice — tepat di bawah Trending */}
+          <EditorChoice />
           <StandingsSection />
         </>
       ) : (

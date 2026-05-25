@@ -195,3 +195,63 @@
     0 0 8px oklch(0.87 0.29 142 / 0.9),
     0 0 20px oklch(0.87 0.29 142 / 0.6);
 }
+
+/* ── Card Table Block — artikel public ───────────────── */
+/* Sama dengan tiptap-article.css tapi untuk prose di article-detail */
+
+.prose .card-table-block {
+  display: grid !important;
+  grid-template-columns: repeat(auto-fill, minmax(240px, 1fr)) !important;
+  gap: 1rem !important;
+  margin: 1.5rem 0 !important;
+  /* reset prose table styles */
+  border: none !important;
+  background: transparent !important;
+}
+
+.prose .card-table-card {
+  border-radius: 0.75rem !important;
+  border: 1px solid oklch(0.25 0 0) !important;
+  background: oklch(0.14 0 0) !important;
+  padding: 1rem 1.25rem !important;
+  display: flex !important;
+  flex-direction: column !important;
+  gap: 0.55rem !important;
+}
+
+.prose .card-table-field {
+  display: flex !important;
+  align-items: flex-start !important;
+  gap: 0.5rem !important;
+}
+
+.prose .card-table-label {
+  font-size: 0.7rem !important;
+  font-weight: 700 !important;
+  text-transform: uppercase !important;
+  letter-spacing: 0.05em !important;
+  color: oklch(0.87 0.29 142) !important;
+  min-width: 90px !important;
+  flex-shrink: 0 !important;
+  padding-top: 0.1rem !important;
+}
+
+.prose .card-table-value {
+  font-size: 0.85rem !important;
+  color: oklch(0.9 0 0) !important;
+  line-height: 1.5 !important;
+}
+
+/* Light mode (prose-stone) overrides */
+.prose-stone .card-table-card {
+  border-color: #e5e7eb !important;
+  background: #f9fafb !important;
+}
+
+.prose-stone .card-table-label {
+  color: oklch(0.55 0.18 142) !important;
+}
+
+.prose-stone .card-table-value {
+  color: #374151 !important;
+}

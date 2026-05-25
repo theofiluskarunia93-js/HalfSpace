@@ -9,7 +9,8 @@ import { FooterStandalone } from "@/components/footer-standalone"
 import {
   Clock, Eye, Calendar, ChevronRight, Home,
   Share2, Twitter, Facebook, Link2, Check,
-  BookOpen, ArrowUp, User
+  BookOpen, ArrowUp, User,
+  AArrowUp, AArrowDown, Sun, Moon,
 } from "lucide-react"
 import { marked } from "marked"
 
@@ -35,26 +36,22 @@ interface TocItem {
   level: number
 }
 
+// ─── Font size steps ───────────────────────────────────────────────────────
+const FONT_SIZES = ["text-sm", "text-base", "text-lg", "text-xl"] as const
+type FontSizeClass = typeof FONT_SIZES[number]
+const FONT_SIZE_DEFAULT_IDX = 1 // text-base
+
 // ─── Helpers ───────────────────────────────────────────────────────────────
 
-/**
- * Deteksi apakah konten adalah HTML murni (bukan Markdown).
- * Cek apakah dimulai dengan tag HTML block-level seperti <p>, <div>, <h1>, dsb.
- * Ini lebih akurat daripada regex umum yang bisa salah deteksi konten Markdown
- * yang kebetulan mengandung karakter < (seperti URL atau simbol).
- */
 function isHtml(content: string): boolean {
   const trimmed = content.trim()
-  // Konten HTML murni biasanya dimulai dengan tag block-level
   return /^<(p|div|h[1-6]|ul|ol|li|blockquote|pre|table|section|article|header|footer|main|figure|figcaption|br)\b/i.test(trimmed)
 }
 
-// Setup marked sekali saja di module level (marked v18 compatible)
 marked.use({
-  gfm: true,       // GitHub Flavored Markdown: tabel, strikethrough, dll
-  breaks: true,    // Newline tunggal jadi <br>
+  gfm: true,
+  breaks: true,
   renderer: {
-    // Custom renderer untuk gambar — pastikan src valid
     image({ href, title, text }: { href: string; title: string | null; text: string }) {
       if (!href || href === "null" || href === "undefined") return ""
       const safeHref = href.trim()
@@ -62,7 +59,6 @@ marked.use({
       const titleAttr = title ? ` title="${title}"` : ""
       return `<img src="${safeHref}" alt="${safeAlt}"${titleAttr} class="rounded-xl w-full my-6" loading="lazy" decoding="async" />`
     },
-    // Custom renderer untuk heading — inject id untuk TOC anchor
     heading({ text, depth }: { text: string; depth: number }) {
       const cleanText = text.replace(/<[^>]+>/g, "")
       const id = cleanText
@@ -75,11 +71,6 @@ marked.use({
   },
 })
 
-/**
- * Konversi konten dari CMS ke HTML siap render.
- * Jika sudah HTML → langsung pakai.
- * Jika Markdown → parse dengan marked.
- */
 function contentToHtml(content: string): string {
   if (!content) return ""
   if (isHtml(content)) return content
@@ -87,7 +78,6 @@ function contentToHtml(content: string): string {
     return marked.parse(content) as string
   } catch (e) {
     console.error("marked parse error:", e)
-    // Fallback: tampilkan sebagai plain text dalam paragraf
     return content.split("\n\n").map(p => `<p>${p}</p>`).join("")
   }
 }
@@ -101,7 +91,6 @@ function calcReadingTime(content: string): number {
 }
 
 function extractToc(html: string): TocItem[] {
-  // Coba parse heading dengan id (hasil dari custom renderer kita)
   const withId = [...html.matchAll(/<h([2-3])[^>]*id="([^"]*)"[^>]*>(.*?)<\/h[2-3]>/gi)]
   if (withId.length > 0) {
     return withId.map((m) => ({
@@ -110,7 +99,6 @@ function extractToc(html: string): TocItem[] {
       text: m[3].replace(/<[^>]+>/g, ""),
     }))
   }
-  // Fallback: heading tanpa id
   const raw = [...html.matchAll(/<h([2-3])[^>]*>(.*?)<\/h[2-3]>/gi)]
   return raw.map((m, i) => ({
     level: parseInt(m[1]),
@@ -119,7 +107,6 @@ function extractToc(html: string): TocItem[] {
   }))
 }
 
-/** Inject id ke heading yang belum punya id (untuk konten HTML legacy) */
 function injectHeadingIds(html: string): string {
   let i = 0
   return html.replace(/<h([2-3])([^>]*)>/gi, (match, level, attrs) => {
@@ -342,9 +329,7 @@ function ShareButtons({ title }: { title: string }) {
       await navigator.clipboard.writeText(url)
       setCopied(true)
       setTimeout(() => setCopied(false), 2000)
-    } catch {
-      // fallback silent
-    }
+    } catch {}
   }
 
   const shareTwitter = () =>
@@ -392,6 +377,61 @@ function ShareButtons({ title }: { title: string }) {
       >
         {copied ? <Check className="h-3.5 w-3.5" aria-hidden="true" /> : <Link2 className="h-3.5 w-3.5" aria-hidden="true" />}
         {copied ? "Tersalin!" : "Salin tautan"}
+      </button>
+    </div>
+  )
+}
+
+// ─── Reading Controls (font size + dark/light) ─────────────────────────────
+interface ReadingControlsProps {
+  fontSizeIdx: number
+  onFontIncrease: () => void
+  onFontDecrease: () => void
+  isDark: boolean
+  onToggleDark: () => void
+}
+
+function ReadingControls({ fontSizeIdx, onFontIncrease, onFontDecrease, isDark, onToggleDark }: ReadingControlsProps) {
+  return (
+    <div className="flex items-center gap-1 rounded-lg border border-border bg-card px-2 py-1.5">
+      {/* Font decrease */}
+      <button
+        onClick={onFontDecrease}
+        disabled={fontSizeIdx === 0}
+        aria-label="Perkecil ukuran huruf"
+        title="Perkecil huruf"
+        className="flex h-7 w-7 items-center justify-center rounded text-muted-foreground transition-colors hover:bg-secondary hover:text-foreground disabled:opacity-30 disabled:pointer-events-none"
+      >
+        <AArrowDown className="h-4 w-4" />
+      </button>
+
+      {/* Font size indicator */}
+      <span className="min-w-[2rem] text-center text-[10px] font-medium text-muted-foreground select-none">
+        {["XS", "S", "M", "L"][fontSizeIdx]}
+      </span>
+
+      {/* Font increase */}
+      <button
+        onClick={onFontIncrease}
+        disabled={fontSizeIdx === FONT_SIZES.length - 1}
+        aria-label="Perbesar ukuran huruf"
+        title="Perbesar huruf"
+        className="flex h-7 w-7 items-center justify-center rounded text-muted-foreground transition-colors hover:bg-secondary hover:text-foreground disabled:opacity-30 disabled:pointer-events-none"
+      >
+        <AArrowUp className="h-4 w-4" />
+      </button>
+
+      {/* Divider */}
+      <div className="mx-1 h-4 w-px bg-border" />
+
+      {/* Dark / Light toggle */}
+      <button
+        onClick={onToggleDark}
+        aria-label={isDark ? "Ganti ke mode terang" : "Ganti ke mode gelap"}
+        title={isDark ? "Mode Terang" : "Mode Gelap"}
+        className="flex h-7 w-7 items-center justify-center rounded text-muted-foreground transition-colors hover:bg-secondary hover:text-foreground"
+      >
+        {isDark ? <Sun className="h-4 w-4" /> : <Moon className="h-4 w-4" />}
       </button>
     </div>
   )
@@ -600,9 +640,74 @@ export function ArticleDetail({ articleId }: ArticleDetailProps) {
   const [processedContent, setProcessedContent] = useState("")
   const supabase = createClient()
 
+  // ── Reading preferences ────────────────────────────────────────────────
+  const [fontSizeIdx, setFontSizeIdx] = useState<number>(FONT_SIZE_DEFAULT_IDX)
+  // isDark: true = ikut tema gelap website (default), false = force light mode pada artikel
+  const [isDark, setIsDark] = useState<boolean>(true)
+
+  const handleFontIncrease = () =>
+    setFontSizeIdx((i) => Math.min(i + 1, FONT_SIZES.length - 1))
+  const handleFontDecrease = () =>
+    setFontSizeIdx((i) => Math.max(i - 1, 0))
+  const handleToggleDark = () =>
+    setIsDark((v) => !v)
+
+  // Prose classes yang adaptif terhadap font size & dark/light mode
+  const proseClass = [
+    "max-w-none",
+    // Pilih base font size sesuai state
+    FONT_SIZES[fontSizeIdx] === "text-sm"  ? "prose prose-sm"  :
+    FONT_SIZES[fontSizeIdx] === "text-lg"  ? "prose prose-lg"  :
+    FONT_SIZES[fontSizeIdx] === "text-xl"  ? "prose prose-xl"  :
+    "prose prose-base",
+    // Mode warna artikel
+    isDark ? "prose-invert" : "prose-stone",
+    // Heading & teks
+    "prose-headings:font-bold prose-headings:scroll-mt-24",
+    isDark
+      ? "prose-headings:text-foreground prose-p:text-foreground/90"
+      : "prose-headings:text-gray-900 prose-p:text-gray-800",
+    "prose-h1:text-2xl prose-h1:mt-8 prose-h1:mb-4",
+    "prose-h2:text-xl prose-h2:mt-8 prose-h2:mb-4 prose-h2:border-b prose-h2:pb-2",
+    isDark ? "prose-h2:border-border" : "prose-h2:border-gray-200",
+    "prose-h3:text-lg prose-h3:mt-6 prose-h3:mb-3",
+    "prose-p:leading-relaxed prose-p:mb-4",
+    // Links
+    "prose-a:text-primary prose-a:no-underline hover:prose-a:underline",
+    // Bold
+    isDark ? "prose-strong:text-foreground" : "prose-strong:text-gray-900",
+    "prose-strong:font-semibold",
+    // Images
+    "prose-img:rounded-xl prose-img:w-full prose-img:my-6",
+    // Blockquote
+    "prose-blockquote:border-l-primary",
+    isDark
+      ? "prose-blockquote:bg-secondary/50 prose-blockquote:text-foreground/70"
+      : "prose-blockquote:bg-gray-50 prose-blockquote:text-gray-700",
+    "prose-blockquote:rounded-r-lg prose-blockquote:py-1 prose-blockquote:not-italic",
+    // Code
+    "prose-code:text-primary prose-code:rounded prose-code:px-1 prose-code:py-0.5 prose-code:text-sm",
+    isDark ? "prose-code:bg-secondary" : "prose-code:bg-gray-100",
+    "prose-code:before:content-none prose-code:after:content-none",
+    // Lists
+    isDark
+      ? "prose-ul:text-foreground/90 prose-ol:text-foreground/90"
+      : "prose-ul:text-gray-800 prose-ol:text-gray-800",
+    "prose-li:my-1",
+    // Table
+    "prose-table:w-full prose-table:border-collapse prose-table:my-4",
+    isDark
+      ? "prose-th:border prose-th:border-border prose-th:bg-secondary/60 prose-th:text-foreground prose-td:border prose-td:border-border prose-td:text-foreground/80 prose-tr:even:bg-secondary/20"
+      : "prose-th:border prose-th:border-gray-200 prose-th:bg-gray-100 prose-th:text-gray-900 prose-td:border prose-td:border-gray-200 prose-td:text-gray-700 prose-tr:even:bg-gray-50",
+    "prose-th:px-3 prose-th:py-2 prose-th:text-left prose-th:text-sm prose-th:font-semibold",
+    "prose-td:px-3 prose-td:py-2 prose-td:text-sm",
+    // HR
+    isDark ? "prose-hr:border-border" : "prose-hr:border-gray-200",
+    "prose-hr:my-8",
+  ].join(" ")
+
   useEffect(() => {
     async function fetchArticle() {
-      // Coba fetch dengan filter status published dulu
       let { data } = await supabase
         .from("articles")
         .select("*, categories(name, slug)")
@@ -610,7 +715,6 @@ export function ArticleDetail({ articleId }: ArticleDetailProps) {
         .eq("status", "published")
         .maybeSingle()
 
-      // Fallback tanpa filter status (untuk preview draft atau perbedaan nilai status)
       if (!data) {
         const fallback = await supabase
           .from("articles")
@@ -625,9 +729,7 @@ export function ArticleDetail({ articleId }: ArticleDetailProps) {
         await trackArticleView(articleId)
 
         if (data.content) {
-          // Konversi konten (Markdown atau HTML) → HTML final
           const html = contentToHtml(data.content)
-          // Inject id ke heading yang belum punya (untuk konten HTML lama)
           const injected = injectHeadingIds(html)
           setProcessedContent(injected)
           setToc(extractToc(injected))
@@ -641,9 +743,13 @@ export function ArticleDetail({ articleId }: ArticleDetailProps) {
 
   const readingTime = article?.content ? calcReadingTime(article.content) : 0
 
+  // Article area background sesuai mode
+  const articleBg = isDark
+    ? "bg-background"
+    : "bg-white"
+
   return (
     <>
-      {/* Schema markup */}
       {article && (
         <>
           <ArticleSchema article={article} />
@@ -654,7 +760,7 @@ export function ArticleDetail({ articleId }: ArticleDetailProps) {
       <ReadingProgressBar />
       <BackToTop />
 
-      <div className="min-h-screen bg-background">
+      <div className={`min-h-screen transition-colors duration-300 ${isDark ? "bg-background" : "bg-gray-50"}`}>
         <NavbarStandalone />
 
         <main className="mx-auto max-w-7xl px-4 py-8">
@@ -671,7 +777,11 @@ export function ArticleDetail({ articleId }: ArticleDetailProps) {
             <div className="flex gap-8 lg:items-start">
 
               {/* ── Main Article Column ── */}
-              <article className="min-w-0 flex-1" itemScope itemType="https://schema.org/NewsArticle">
+              <article
+                className={`min-w-0 flex-1 rounded-2xl transition-colors duration-300 ${isDark ? "" : "bg-white shadow-sm border border-gray-100 px-6 py-8 sm:px-10"}`}
+                itemScope
+                itemType="https://schema.org/NewsArticle"
+              >
 
                 {/* Breadcrumbs */}
                 <Breadcrumbs article={article} />
@@ -685,7 +795,7 @@ export function ArticleDetail({ articleId }: ArticleDetailProps) {
                   )}
 
                   <h1
-                    className="text-2xl font-bold leading-snug text-foreground sm:text-3xl lg:text-4xl"
+                    className={`text-2xl font-bold leading-snug sm:text-3xl lg:text-4xl transition-colors duration-300 ${isDark ? "text-foreground" : "text-gray-900"}`}
                     style={{ fontFamily: "var(--font-oswald)" }}
                     itemProp="headline"
                   >
@@ -693,13 +803,13 @@ export function ArticleDetail({ articleId }: ArticleDetailProps) {
                   </h1>
 
                   {article.excerpt && (
-                    <p className="mt-3 text-base text-muted-foreground leading-relaxed" itemProp="description">
+                    <p className={`mt-3 text-base leading-relaxed transition-colors duration-300 ${isDark ? "text-muted-foreground" : "text-gray-600"}`} itemProp="description">
                       {article.excerpt}
                     </p>
                   )}
 
-                  {/* Meta row */}
-                  <div className="mt-4 flex flex-wrap items-center gap-x-4 gap-y-2 text-xs text-muted-foreground border-y border-border py-3">
+                  {/* Meta row + Reading Controls */}
+                  <div className={`mt-4 flex flex-wrap items-center gap-x-4 gap-y-2 text-xs border-y py-3 transition-colors duration-300 ${isDark ? "text-muted-foreground border-border" : "text-gray-500 border-gray-200"}`}>
                     <span className="flex items-center gap-1.5">
                       <User className="h-3.5 w-3.5 flex-shrink-0" aria-hidden="true" />
                       <span itemProp="author" itemScope itemType="https://schema.org/Organization">
@@ -723,6 +833,17 @@ export function ArticleDetail({ articleId }: ArticleDetailProps) {
                       <Eye className="h-3.5 w-3.5 flex-shrink-0" aria-hidden="true" />
                       {(article.views || 0).toLocaleString("id-ID")} views
                     </span>
+
+                    {/* Reading controls — di kanan meta row */}
+                    <div className="ml-auto">
+                      <ReadingControls
+                        fontSizeIdx={fontSizeIdx}
+                        onFontIncrease={handleFontIncrease}
+                        onFontDecrease={handleFontDecrease}
+                        isDark={isDark}
+                        onToggleDark={handleToggleDark}
+                      />
+                    </div>
                   </div>
 
                   {/* Share — top */}
@@ -731,7 +852,7 @@ export function ArticleDetail({ articleId }: ArticleDetailProps) {
                   </div>
                 </header>
 
-                {/* TOC — mobile (di atas gambar) */}
+                {/* TOC — mobile */}
                 {toc.length > 0 && (
                   <div className="mb-6 lg:hidden">
                     <TableOfContents items={toc} />
@@ -757,13 +878,12 @@ export function ArticleDetail({ articleId }: ArticleDetailProps) {
                         height={630}
                         itemProp="url"
                         onError={(e) => {
-                          // Sembunyikan gambar jika gagal load
                           ;(e.target as HTMLImageElement).style.display = "none"
                         }}
                       />
                     </picture>
                     {article.featured_image_alt && (
-                      <figcaption className="mt-2 text-center text-xs text-muted-foreground italic">
+                      <figcaption className={`mt-2 text-center text-xs italic transition-colors ${isDark ? "text-muted-foreground" : "text-gray-500"}`}>
                         {article.featured_image_alt}
                       </figcaption>
                     )}
@@ -772,32 +892,15 @@ export function ArticleDetail({ articleId }: ArticleDetailProps) {
                   </figure>
                 )}
 
-                {/* Article content */}
+                {/* Article content — font size & mode adaptive */}
                 <div
-                  className="prose prose-sm sm:prose-base max-w-none
-                    prose-headings:font-bold prose-headings:text-foreground prose-headings:scroll-mt-24
-                    prose-h1:text-2xl prose-h1:mt-8 prose-h1:mb-4
-                    prose-h2:text-xl prose-h2:mt-8 prose-h2:mb-4 prose-h2:border-b prose-h2:border-border prose-h2:pb-2
-                    prose-h3:text-lg prose-h3:mt-6 prose-h3:mb-3
-                    prose-p:text-foreground/90 prose-p:leading-relaxed prose-p:mb-4
-                    prose-a:text-primary prose-a:no-underline hover:prose-a:underline
-                    prose-strong:text-foreground prose-strong:font-semibold
-                    prose-img:rounded-xl prose-img:w-full prose-img:my-6
-                    prose-blockquote:border-l-primary prose-blockquote:bg-secondary/50 prose-blockquote:rounded-r-lg prose-blockquote:py-1 prose-blockquote:not-italic
-                    prose-code:text-primary prose-code:bg-secondary prose-code:rounded prose-code:px-1 prose-code:py-0.5 prose-code:text-sm prose-code:before:content-none prose-code:after:content-none
-                    prose-ul:text-foreground/90 prose-ol:text-foreground/90
-                    prose-li:my-1
-                    prose-table:w-full prose-table:border-collapse prose-table:my-4
-                    prose-th:border prose-th:border-border prose-th:bg-secondary/60 prose-th:px-3 prose-th:py-2 prose-th:text-left prose-th:text-sm prose-th:font-semibold
-                    prose-td:border prose-td:border-border prose-td:px-3 prose-td:py-2 prose-td:text-sm
-                    prose-tr:even:bg-secondary/20
-                    dark:prose-invert"
+                  className={`transition-all duration-300 ${proseClass}`}
                   dangerouslySetInnerHTML={{ __html: processedContent || article.content || "" }}
                   itemProp="articleBody"
                 />
 
                 {/* Share — bottom */}
-                <div className="mt-8 border-t border-border pt-6">
+                <div className={`mt-8 border-t pt-6 transition-colors ${isDark ? "border-border" : "border-gray-200"}`}>
                   <ShareButtons title={article.title} />
                 </div>
 
@@ -810,7 +913,7 @@ export function ArticleDetail({ articleId }: ArticleDetailProps) {
                 {article.categories && (
                   <section className="mt-10" aria-label="Artikel terkait">
                     <h2
-                      className="mb-5 text-xl font-bold uppercase tracking-tight text-foreground"
+                      className={`mb-5 text-xl font-bold uppercase tracking-tight transition-colors ${isDark ? "text-foreground" : "text-gray-900"}`}
                       style={{ fontFamily: "var(--font-oswald)" }}
                     >
                       Artikel Terkait

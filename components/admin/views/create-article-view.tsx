@@ -1,13 +1,5 @@
 "use client"
 
-/**
- * components/admin/views/create-article-view.tsx
- * CMS Editor — Tiptap + tiptap-markdown
- *
- * Tampilan minimalis Word-like, tema gelap sesuai website (neon green).
- * Output ke Supabase: Markdown murni via editor.storage.markdown.getMarkdown()
- */
-
 import { useState, useEffect, useRef, useCallback } from "react"
 import { useEditor, EditorContent } from "@tiptap/react"
 import StarterKit from "@tiptap/starter-kit"
@@ -16,7 +8,7 @@ import {
   ArrowLeft, Save, Image as ImageIcon, X, Plus, Eye,
   Bold, Italic, List, ListOrdered, Link2, Quote,
   Code2, Minus, Heading1, Heading2, Heading3,
-  Undo2, Redo2, Table as TableIcon, LayoutGrid,
+  Undo2, Redo2, Table as TableIcon, LayoutGrid, Star,
 } from "lucide-react"
 import { Button } from "@/components/ui/button"
 import { Input } from "@/components/ui/input"
@@ -46,10 +38,30 @@ function generateId() {
 }
 
 function tableToMarkdown(tab: TableTabData): string {
-  const header = `| ${tab.headers.join(" | ")} |`
+  const header  = `| ${tab.headers.join(" | ")} |`
   const divider = `| ${tab.headers.map(() => "---").join(" | ")} |`
-  const rows = tab.rows.map((row) => `| ${row.join(" | ")} |`).join("\n")
+  const rows    = tab.rows.map((row) => `| ${row.join(" | ")} |`).join("\n")
   return `\n${header}\n${divider}\n${rows}\n`
+}
+
+/**
+ * Card design → HTML murni (tidak di-markdown).
+ * Dibungkus class "card-table-block" agar ArticleRenderer
+ * bisa mendeteksi dan menampilkan tanpa parsing markdown.
+ */
+function tableToCardHtml(tab: TableTabData): string {
+  const cards = tab.rows
+    .map((row) => {
+      const fields = tab.headers
+        .map(
+          (h, ci) =>
+            `<div class="card-table-field"><span class="card-table-label">${h}</span><span class="card-table-value">${row[ci] ?? ""}</span></div>`
+        )
+        .join("")
+      return `<div class="card-table-card">${fields}</div>`
+    })
+    .join("")
+  return `<div class="card-table-block">${cards}</div>`
 }
 
 const STORAGE_KEY_PREFIX = "cms_table_tabs_"
@@ -85,11 +97,8 @@ function TableStyleWidget({ articleId }: { articleId?: string | null }) {
     return ""
   })
 
-  // Persist to localStorage whenever tabs change
   useEffect(() => {
-    try {
-      localStorage.setItem(storageKey, JSON.stringify(tabs))
-    } catch {}
+    try { localStorage.setItem(storageKey, JSON.stringify(tabs)) } catch {}
   }, [tabs, storageKey])
 
   useEffect(() => {
@@ -104,9 +113,8 @@ function TableStyleWidget({ articleId }: { articleId?: string | null }) {
 
   const currentTab = tabs.find((t) => t.id === activeTab) ?? tabs[0]
 
-  const updateTab = (id: string, patch: Partial<TableTabData>) => {
+  const updateTab = (id: string, patch: Partial<TableTabData>) =>
     setTabs((prev) => prev.map((t) => (t.id === id ? { ...t, ...patch } : t)))
-  }
 
   const addTab = () => {
     const newTab: TableTabData = {
@@ -128,25 +136,41 @@ function TableStyleWidget({ articleId }: { articleId?: string | null }) {
     })
   }
 
-  const addRow = (tab: TableTabData) => {
+  const addRow = (tab: TableTabData) =>
     updateTab(tab.id, { rows: [...tab.rows, tab.headers.map(() => "")] })
-  }
 
-  const addCol = (tab: TableTabData) => {
+  const addCol = (tab: TableTabData) =>
     updateTab(tab.id, {
       headers: [...tab.headers, `Kolom ${tab.headers.length + 1}`],
       rows: tab.rows.map((r) => [...r, ""]),
     })
-  }
 
   const updateCell = (tab: TableTabData, row: number, col: number, value: string) => {
-    const rows = tab.rows.map((r, ri) => r.map((c, ci) => (ri === row && ci === col ? value : c)))
+    const rows = tab.rows.map((r, ri) =>
+      r.map((c, ci) => (ri === row && ci === col ? value : c))
+    )
     updateTab(tab.id, { rows })
   }
 
   const updateHeader = (tab: TableTabData, col: number, value: string) => {
     const headers = tab.headers.map((h, i) => (i === col ? value : h))
     updateTab(tab.id, { headers })
+  }
+
+  // ── Insert handler: tiap tab bisa berbeda style ───────────────────────────
+  const handleInsert = () => {
+    // Insert semua tab — tiap tab sesuai style-nya sendiri
+    for (const tab of tabs) {
+      if (tab.style === "card") {
+        const html = tableToCardHtml(tab)
+        const event = new CustomEvent("insert-table-html", { detail: html })
+        window.dispatchEvent(event)
+      } else {
+        const md = tableToMarkdown(tab)
+        const event = new CustomEvent("insert-table-markdown", { detail: md })
+        window.dispatchEvent(event)
+      }
+    }
   }
 
   if (!currentTab) return null
@@ -197,7 +221,7 @@ function TableStyleWidget({ articleId }: { articleId?: string | null }) {
         </button>
       </div>
 
-      {/* Style selector */}
+      {/* Style selector — per tab aktif */}
       <div className="flex items-center gap-3 border-b border-border px-4 py-3">
         <span className="text-xs text-muted-foreground font-medium">Desain:</span>
         {(["modern", "card"] as TableStyle[]).map((style) => (
@@ -214,6 +238,12 @@ function TableStyleWidget({ articleId }: { articleId?: string | null }) {
             {style === "modern" ? "Modern Table" : "Card Design"}
           </button>
         ))}
+        {/* Hint mode */}
+        <span className="ml-auto text-[10px] text-muted-foreground/60">
+          {currentTab.style === "card"
+            ? "⚡ Card → output HTML langsung"
+            : "📋 Modern → output Markdown"}
+        </span>
       </div>
 
       {/* Table preview */}
@@ -252,7 +282,7 @@ function TableStyleWidget({ articleId }: { articleId?: string | null }) {
             </tbody>
           </table>
         ) : (
-          /* Card Design */
+          /* Card Design — preview */
           <div className="grid gap-3 sm:grid-cols-2">
             {currentTab.rows.map((row, ri) => (
               <div key={ri} className="rounded-lg border border-border bg-secondary/30 p-4 space-y-2">
@@ -291,13 +321,11 @@ function TableStyleWidget({ articleId }: { articleId?: string | null }) {
 
       {/* Insert to editor */}
       <div className="border-t border-border px-4 py-3 flex items-center justify-between">
-        <span className="text-xs text-muted-foreground">Klik Insert untuk memasukkan tabel ke artikel</span>
+        <span className="text-xs text-muted-foreground">
+          Klik Insert untuk memasukkan tabel ke artikel
+        </span>
         <button
-          onClick={() => {
-            const markdown = tabs.map(tableToMarkdown).join("\n")
-            const event = new CustomEvent("insert-table-markdown", { detail: markdown })
-            window.dispatchEvent(event)
-          }}
+          onClick={handleInsert}
           className="flex items-center gap-1.5 rounded-md bg-primary/10 px-3 py-1.5 text-xs font-medium text-primary hover:bg-primary/20 transition-colors"
         >
           <TableIcon className="h-3.5 w-3.5" />
@@ -358,6 +386,9 @@ export function CreateArticleView({ onBack, articleId }: CreateArticleViewProps)
   const [isFetching,      setIsFetching]      = useState(isEditMode)
   const [message,         setMessage]         = useState<{ type: "success" | "error"; text: string } | null>(null)
 
+  // ── Editor Choice toggle ──────────────────────────────────────────────────
+  const [isEditorChoice, setIsEditorChoice] = useState(false)
+
   const [featuredImagePreview, setFeaturedImagePreview] = useState<string | null>(null)
   const [featuredImageUrl,     setFeaturedImageUrl]     = useState<string | null>(null)
   const featuredImageRef = useRef<HTMLInputElement>(null)
@@ -377,7 +408,7 @@ export function CreateArticleView({ onBack, articleId }: CreateArticleViewProps)
     extensions: [
       StarterKit.configure({ codeBlock: false }),
       Markdown.configure({
-        html: false,
+        html: true,
         transformCopiedText: true,
         transformPastedText: true,
       }),
@@ -403,7 +434,7 @@ export function CreateArticleView({ onBack, articleId }: CreateArticleViewProps)
     content: "",
   })
 
-  // ── Listen for table insert from TableStyleWidget ─────────────────────────
+  // ── Listen for table insert (markdown) ───────────────────────────────────
   useEffect(() => {
     const handler = (e: Event) => {
       const markdown = (e as CustomEvent<string>).detail
@@ -413,6 +444,21 @@ export function CreateArticleView({ onBack, articleId }: CreateArticleViewProps)
     }
     window.addEventListener("insert-table-markdown", handler)
     return () => window.removeEventListener("insert-table-markdown", handler)
+  }, [editor])
+
+  // ── Listen for table insert (HTML — card design) ──────────────────────────
+  useEffect(() => {
+    const handler = (e: Event) => {
+      const html = (e as CustomEvent<string>).detail
+      if (editor && html) {
+        // Insert sebagai HTML mentah ke dalam editor
+        editor.chain().focus().insertContent(html, {
+          parseOptions: { preserveWhitespace: "full" },
+        }).run()
+      }
+    }
+    window.addEventListener("insert-table-html", handler)
+    return () => window.removeEventListener("insert-table-html", handler)
   }, [editor])
 
   // ── Fetch meta (kategori + tags) ───────────────────────────────────────────
@@ -442,6 +488,7 @@ export function CreateArticleView({ onBack, articleId }: CreateArticleViewProps)
         setFeaturedImagePreview(data.featured_image_url || null)
         setMetaTitle(data.meta_title || "")
         setMetaDescription(data.meta_description || "")
+        setIsEditorChoice(data.is_editor_choice || false)
         editor.commands.setContent(data.content || "")
       }
       const { data: articleTags } = await supabase
@@ -480,10 +527,10 @@ export function CreateArticleView({ onBack, articleId }: CreateArticleViewProps)
   // ── Preview ────────────────────────────────────────────────────────────────
   useEffect(() => {
     if (editorTab !== "preview" || !editor) return
-    const markdown = editor.storage.markdown.getMarkdown()
+    const rawContent = editor.storage.markdown.getMarkdown()
     import("marked").then(({ marked }) => {
       marked.use({ gfm: true, breaks: true })
-      try { setPreviewHtml(marked.parse(markdown) as string) }
+      try { setPreviewHtml(marked.parse(rawContent) as string) }
       catch { setPreviewHtml("<p>Gagal merender preview.</p>") }
     })
   }, [editorTab, editor])
@@ -555,6 +602,7 @@ export function CreateArticleView({ onBack, articleId }: CreateArticleViewProps)
       meta_title: metaTitle || null, meta_description: metaDescription || null,
       status: publish ? "published" : "draft",
       published_at: publish ? new Date().toISOString() : null,
+      is_editor_choice: isEditorChoice,
     }
 
     let savedArticleId = articleId
@@ -698,7 +746,7 @@ export function CreateArticleView({ onBack, articleId }: CreateArticleViewProps)
                   Preview
                 </button>
               </div>
-              <span className="font-mono text-xs text-muted-foreground/50 tracking-tight">Markdown</span>
+              <span className="font-mono text-xs text-muted-foreground/50 tracking-tight">Markdown + HTML</span>
             </div>
 
             {editorTab === "write" ? (
@@ -754,7 +802,7 @@ export function CreateArticleView({ onBack, articleId }: CreateArticleViewProps)
                   <ToolbarButton onClick={handleInsertImage} title="Sisipkan Gambar">
                     <ImageIcon className="h-4 w-4" />
                   </ToolbarButton>
-                  <ToolbarButton onClick={handleInsertTable} title="Sisipkan Tabel Cepat">
+                  <ToolbarButton onClick={handleInsertTable} title="Sisipkan Tabel Cepat (Markdown)">
                     <TableIcon className="h-4 w-4" />
                   </ToolbarButton>
 
@@ -813,6 +861,44 @@ export function CreateArticleView({ onBack, articleId }: CreateArticleViewProps)
 
         {/* ── Sidebar ── */}
         <div className="space-y-5">
+
+          {/* ── Editor Choice Toggle ── */}
+          <div className="rounded-xl border border-border bg-card p-5">
+            <div className="flex items-center justify-between">
+              <div className="flex items-center gap-2">
+                <Star className={`h-4 w-4 ${isEditorChoice ? "text-primary fill-primary" : "text-muted-foreground"}`} />
+                <h3 className="text-sm font-semibold text-foreground">Editor Choice</h3>
+              </div>
+              {/* Toggle switch */}
+              <button
+                type="button"
+                role="switch"
+                aria-checked={isEditorChoice}
+                onClick={() => setIsEditorChoice((v) => !v)}
+                className={[
+                  "relative inline-flex h-6 w-11 items-center rounded-full transition-colors focus:outline-none focus:ring-2 focus:ring-primary/50",
+                  isEditorChoice ? "bg-primary" : "bg-secondary",
+                ].join(" ")}
+              >
+                <span
+                  className={[
+                    "inline-block h-4 w-4 rounded-full bg-white shadow transition-transform",
+                    isEditorChoice ? "translate-x-6" : "translate-x-1",
+                  ].join(" ")}
+                />
+              </button>
+            </div>
+            <p className="mt-2 text-xs text-muted-foreground leading-relaxed">
+              {isEditorChoice
+                ? "✅ Artikel ini akan tampil di bagian Editor Choice di halaman utama."
+                : "Aktifkan untuk menampilkan artikel ini di bagian Editor Choice."}
+            </p>
+            {isEditorChoice && (
+              <p className="mt-1 text-xs text-amber-500/80">
+                ⚠️ Artikel Editor Choice tidak akan muncul di bagian Trending.
+              </p>
+            )}
+          </div>
 
           {/* Category */}
           <div className="rounded-xl border border-border bg-card p-5">
