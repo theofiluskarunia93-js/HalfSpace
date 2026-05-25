@@ -13,7 +13,7 @@ import {
   ArrowLeft, Save, Image as ImageIcon, X, Plus, Eye,
   Bold, Italic, List, ListOrdered, Link2, Quote,
   Code2, Minus, Heading1, Heading2, Heading3,
-  Undo2, Redo2, Table as TableIcon, Star,
+  Undo2, Redo2, Table as TableIcon, Star, Trophy,
 } from "lucide-react"
 import { Button } from "@/components/ui/button"
 import { Input } from "@/components/ui/input"
@@ -38,27 +38,29 @@ interface MatchEntry {
   id: string
   homeTeam: string
   awayTeam: string
-  date: string      // e.g. "Jumat, 12 Juni 2026"
-  time: string      // e.g. "02.00 WIB"
+  homeScore: string   // kosong = belum main, isi angka = sudah/sedang main
+  awayScore: string
+  date: string
+  time: string
   stadium: string
 }
 
 interface MatchTab {
   id: string
-  label: string     // e.g. "Grup A"
+  label: string
   matches: MatchEntry[]
 }
 
 function makeMatch(): MatchEntry {
-  return { id: generateId(), homeTeam: "", awayTeam: "", date: "", time: "", stadium: "" }
+  return { id: generateId(), homeTeam: "", awayTeam: "", homeScore: "", awayScore: "", date: "", time: "", stadium: "" }
 }
 
 function makeMatchTab(index: number): MatchTab {
   return { id: generateId(), label: `Grup ${String.fromCharCode(65 + index)}`, matches: [makeMatch()] }
 }
 
-/** Render satu tab pertandingan menjadi HTML match-card-grid */
 function renderMatchTabHtml(tab: MatchTab): string {
+  const hasScore = (m: MatchEntry) => m.homeScore !== "" && m.awayScore !== ""
   const cards = tab.matches.map((m) => `
 <div class="match-card">
   <div class="match-card-top">
@@ -67,7 +69,10 @@ function renderMatchTabHtml(tab: MatchTab): string {
   </div>
   <div class="match-card-teams">
     <span class="match-card-team">${m.homeTeam}</span>
-    <span class="match-card-vs">vs</span>
+    ${hasScore(m)
+      ? `<span class="match-card-score">${m.homeScore} <span class="match-card-score-sep">–</span> ${m.awayScore}</span>`
+      : `<span class="match-card-vs">vs</span>`
+    }
     <span class="match-card-team">${m.awayTeam}</span>
   </div>
   <div class="match-card-bottom">
@@ -78,7 +83,6 @@ function renderMatchTabHtml(tab: MatchTab): string {
   return `<div class="match-card-grid">${cards}</div>`
 }
 
-/** Bungkus semua tab jadwal menjadi tabbed-block HTML */
 function buildMatchTabbedHtml(tabs: MatchTab[], blockId: string): string {
   const buttons = tabs
     .map((t, i) => `<button class="tbb${i === 0 ? " tbb-active" : ""}" data-tab="${i}">${t.label}</button>`)
@@ -140,7 +144,6 @@ function MatchCardWidget({ onInsert }: { onInsert: (html: string, blockId: strin
     const blockId = generateId()
     const validTabs = tabs.filter((t) => t.matches.some((m) => m.homeTeam || m.awayTeam))
     if (!validTabs.length) return
-    // Selalu wrap dengan data-block-id agar restore saat edit bisa menemukan blok ini
     const html = validTabs.length === 1
       ? `<div class="match-block" data-block-id="${blockId}">${renderMatchTabHtml(validTabs[0])}</div>`
       : buildMatchTabbedHtml(validTabs, blockId)
@@ -151,7 +154,6 @@ function MatchCardWidget({ onInsert }: { onInsert: (html: string, blockId: strin
 
   return (
     <div className="rounded-xl border border-border bg-card overflow-hidden">
-      {/* Header */}
       <div className="flex items-center justify-between border-b border-border bg-secondary/30 px-4 py-3">
         <div className="flex items-center gap-2">
           <TableIcon className="h-4 w-4 text-primary" />
@@ -160,7 +162,6 @@ function MatchCardWidget({ onInsert }: { onInsert: (html: string, blockId: strin
         <span className="text-[10px] text-muted-foreground/60">Tab = Grup / Ronde</span>
       </div>
 
-      {/* Tab bar */}
       <div className="flex items-center gap-1 overflow-x-auto border-b border-border bg-secondary/20 px-3 py-2">
         {tabs.map((tab) => (
           <div
@@ -193,7 +194,6 @@ function MatchCardWidget({ onInsert }: { onInsert: (html: string, blockId: strin
         </button>
       </div>
 
-      {/* Match list */}
       <div className="max-h-72 overflow-y-auto p-3 space-y-2">
         {currentTab.matches.map((match, idx) => (
           <div key={match.id} className="rounded-lg border border-border bg-secondary/20 p-3 space-y-2">
@@ -206,7 +206,6 @@ function MatchCardWidget({ onInsert }: { onInsert: (html: string, blockId: strin
                 </button>
               )}
             </div>
-            {/* Teams row */}
             <div className="flex items-center gap-1.5">
               <input
                 value={match.homeTeam}
@@ -214,7 +213,25 @@ function MatchCardWidget({ onInsert }: { onInsert: (html: string, blockId: strin
                 placeholder="Tim Kandang"
                 className="flex-1 rounded border border-border bg-card px-2 py-1 text-xs text-foreground placeholder:text-muted-foreground/40 outline-none focus:border-primary"
               />
-              <span className="text-[10px] font-bold text-primary shrink-0">VS</span>
+              <div className="flex shrink-0 items-center gap-1">
+                <input
+                  type="number"
+                  min={0}
+                  value={match.homeScore}
+                  onChange={(e) => updateMatch(currentTab.id, match.id, { homeScore: e.target.value })}
+                  placeholder="–"
+                  className="w-9 rounded border border-border bg-card px-1 py-1 text-center text-xs font-bold text-primary outline-none focus:border-primary"
+                />
+                <span className="text-[10px] font-bold text-primary">:</span>
+                <input
+                  type="number"
+                  min={0}
+                  value={match.awayScore}
+                  onChange={(e) => updateMatch(currentTab.id, match.id, { awayScore: e.target.value })}
+                  placeholder="–"
+                  className="w-9 rounded border border-border bg-card px-1 py-1 text-center text-xs font-bold text-primary outline-none focus:border-primary"
+                />
+              </div>
               <input
                 value={match.awayTeam}
                 onChange={(e) => updateMatch(currentTab.id, match.id, { awayTeam: e.target.value })}
@@ -222,7 +239,6 @@ function MatchCardWidget({ onInsert }: { onInsert: (html: string, blockId: strin
                 className="flex-1 rounded border border-border bg-card px-2 py-1 text-xs text-foreground placeholder:text-muted-foreground/40 outline-none focus:border-primary"
               />
             </div>
-            {/* Date & time & stadium */}
             <div className="grid grid-cols-3 gap-1.5">
               <input
                 value={match.date}
@@ -252,7 +268,6 @@ function MatchCardWidget({ onInsert }: { onInsert: (html: string, blockId: strin
         </button>
       </div>
 
-      {/* Insert button */}
       <div className="border-t border-border px-4 py-3 flex items-center justify-between">
         <span className="text-xs text-muted-foreground">
           {tabs.length > 1 ? `${tabs.length} grup · tab interaktif` : "1 grup · tanpa tab"}
@@ -261,6 +276,374 @@ function MatchCardWidget({ onInsert }: { onInsert: (html: string, blockId: strin
           onClick={handleInsert}
           className="flex items-center gap-1.5 rounded-md bg-primary/10 px-3 py-1.5 text-xs font-semibold text-primary hover:bg-primary/20 transition-colors">
           <TableIcon className="h-3.5 w-3.5" />
+          Insert ke Artikel
+        </button>
+      </div>
+    </div>
+  )
+}
+
+// ─── Group Standings Widget ───────────────────────────────────────────────────
+
+interface StandingsTeamEntry {
+  id: string
+  code: string      // kode negara 2 huruf, e.g. "MX"
+  name: string      // nama tim
+  played: number
+  won: number
+  drawn: number
+  lost: number
+  gf: number        // gol masuk
+  ga: number        // gol kebobolan
+  pts: number
+  form: string[]    // array "W"/"D"/"L" max 3
+}
+
+interface StandingsGroup {
+  id: string
+  label: string     // e.g. "Grup A"
+  teams: StandingsTeamEntry[]
+}
+
+function makeTeam(): StandingsTeamEntry {
+  return {
+    id: generateId(), code: "", name: "",
+    played: 0, won: 0, drawn: 0, lost: 0, gf: 0, ga: 0, pts: 0,
+    form: [],
+  }
+}
+
+function makeStandingsGroup(index: number): StandingsGroup {
+  return {
+    id: generateId(),
+    label: `Grup ${String.fromCharCode(65 + index)}`,
+    teams: [makeTeam(), makeTeam(), makeTeam(), makeTeam()],
+  }
+}
+
+/** Hitung SG (selisih gol) */
+function calcSG(team: StandingsTeamEntry): number {
+  return team.gf - team.ga
+}
+
+/** Sort tim dalam grup: pts desc → SG desc → GF desc */
+function sortedTeams(teams: StandingsTeamEntry[]): StandingsTeamEntry[] {
+  return [...teams].sort((a, b) => {
+    if (b.pts !== a.pts) return b.pts - a.pts
+    if (calcSG(b) !== calcSG(a)) return calcSG(b) - calcSG(a)
+    return b.gf - a.gf
+  })
+}
+
+/** Render satu grup sebagai tabel HTML */
+function renderGroupTableHtml(group: StandingsGroup): string {
+  const sorted = sortedTeams(group.teams)
+  const rows = sorted.map((t, i) => {
+    const sg = calcSG(t)
+    const sgStr = sg > 0 ? `+${sg}` : `${sg}`
+    const rankClass = i < 2 ? "gs-rank-qualify" : i === 2 ? "gs-rank-candidate" : "gs-rank-out"
+    const formBadges = (t.form || []).map((r) => {
+      const cls = r === "W" ? "gs-form-w" : r === "D" ? "gs-form-d" : "gs-form-l"
+      return `<span class="gs-form-badge ${cls}">${r}</span>`
+    }).join("")
+    return `<tr class="gs-row">
+  <td class="gs-td gs-td-rank"><span class="gs-rank ${rankClass}">${i + 1}</span></td>
+  <td class="gs-td gs-td-team">
+    <span class="gs-flag">${t.code.toUpperCase()}</span>
+    <span class="gs-team-name">${t.name || "—"}</span>
+  </td>
+  <td class="gs-td gs-td-num">${t.played}</td>
+  <td class="gs-td gs-td-num">${t.won}</td>
+  <td class="gs-td gs-td-num">${t.drawn}</td>
+  <td class="gs-td gs-td-num">${t.lost}</td>
+  <td class="gs-td gs-td-num">${t.gf}</td>
+  <td class="gs-td gs-td-num">${t.ga}</td>
+  <td class="gs-td gs-td-num">${sgStr}</td>
+  <td class="gs-td gs-td-pts">${t.pts}</td>
+  <td class="gs-td gs-td-form"><div class="gs-form">${formBadges}</div></td>
+</tr>`
+  }).join("")
+
+  return `<div class="gs-table-wrap">
+  <table class="gs-table">
+    <thead>
+      <tr class="gs-thead-row">
+        <th class="gs-th gs-th-rank">#</th>
+        <th class="gs-th gs-th-team">TIM</th>
+        <th class="gs-th gs-th-num">M</th>
+        <th class="gs-th gs-th-num">W</th>
+        <th class="gs-th gs-th-num">S</th>
+        <th class="gs-th gs-th-num">K</th>
+        <th class="gs-th gs-th-num">GM</th>
+        <th class="gs-th gs-th-num">GK</th>
+        <th class="gs-th gs-th-num">SG</th>
+        <th class="gs-th gs-th-pts">PTS</th>
+        <th class="gs-th gs-th-form">FORM</th>
+      </tr>
+    </thead>
+    <tbody>${rows}</tbody>
+  </table>
+  <div class="gs-legend">
+    <span class="gs-legend-item gs-legend-qualify">● Lolos (Juara/Runner-up)</span>
+    <span class="gs-legend-item gs-legend-candidate">● Kandidat Peringkat 3</span>
+  </div>
+</div>`
+}
+
+/** Bungkus semua grup dalam tabbed block HTML */
+function buildGroupStandingsHtml(groups: StandingsGroup[], blockId: string, title: string): string {
+  const buttons = groups
+    .map((g, i) => `<button class="tbb${i === 0 ? " tbb-active" : ""}" data-tab="${i}">${g.label}</button>`)
+    .join("")
+  const panels = groups
+    .map((g, i) => `<div class="tbp${i === 0 ? " tbp-active" : ""}" data-panel="${i}">${renderGroupTableHtml(g)}</div>`)
+    .join("")
+  return (
+    `<div class="group-standings-block tabbed-block" data-block-id="${blockId}">` +
+    `<div class="gs-header"><span class="gs-header-icon">🏆</span><span class="gs-header-title">${title}</span><span class="gs-header-sub">Klasemen Sementara</span></div>` +
+    `<div class="tb-nav">${buttons}</div>` +
+    `<div class="tb-content">${panels}</div>` +
+    `</div>`
+  )
+}
+
+function GroupStandingsWidget({ onInsert }: { onInsert: (html: string, blockId: string) => void }) {
+  const [title, setTitle] = useState("Klasemen Fase Grup")
+  const [groups, setGroups] = useState<StandingsGroup[]>([makeStandingsGroup(0)])
+  const [activeGroup, setActiveGroup] = useState<string>(() => "")
+  const [activeTeamIdx, setActiveTeamIdx] = useState<number>(0)
+
+  useEffect(() => {
+    if (!activeGroup && groups.length > 0) setActiveGroup(groups[0].id)
+  }, [groups, activeGroup])
+
+  const currentGroup = groups.find((g) => g.id === activeGroup) ?? groups[0]
+
+  const addGroup = () => {
+    const g = makeStandingsGroup(groups.length)
+    setGroups((prev) => [...prev, g])
+    setActiveGroup(g.id)
+    setActiveTeamIdx(0)
+  }
+
+  const removeGroup = (id: string) => {
+    setGroups((prev) => {
+      const next = prev.filter((g) => g.id !== id)
+      if (activeGroup === id && next.length > 0) setActiveGroup(next[0].id)
+      return next
+    })
+  }
+
+  const updateGroupLabel = (id: string, label: string) =>
+    setGroups((prev) => prev.map((g) => g.id === id ? { ...g, label } : g))
+
+  const updateTeam = (groupId: string, teamId: string, patch: Partial<StandingsTeamEntry>) => {
+    setGroups((prev) => prev.map((g) => g.id !== groupId ? g : {
+      ...g,
+      teams: g.teams.map((t) => t.id !== teamId ? t : { ...t, ...patch }),
+    }))
+  }
+
+  const addTeam = (groupId: string) => {
+    setGroups((prev) => prev.map((g) => g.id !== groupId ? g : {
+      ...g, teams: [...g.teams, makeTeam()],
+    }))
+  }
+
+  const removeTeam = (groupId: string, teamId: string) => {
+    setGroups((prev) => prev.map((g) => g.id !== groupId ? g : {
+      ...g, teams: g.teams.filter((t) => t.id !== teamId),
+    }))
+  }
+
+  const handleInsert = () => {
+    const blockId = generateId()
+    const validGroups = groups.filter((g) => g.teams.some((t) => t.name))
+    if (!validGroups.length) return
+    const html = buildGroupStandingsHtml(validGroups, blockId, title)
+    onInsert(html, blockId)
+  }
+
+  if (!currentGroup) return null
+
+  const numField = (val: number, onChange: (n: number) => void, label: string) => (
+    <div className="flex flex-col items-center gap-0.5">
+      <span className="text-[9px] uppercase tracking-wide text-muted-foreground/60">{label}</span>
+      <input
+        type="number"
+        min={0}
+        value={val}
+        onChange={(e) => onChange(Math.max(0, parseInt(e.target.value) || 0))}
+        className="w-10 rounded border border-border bg-card px-1 py-0.5 text-center text-xs text-foreground outline-none focus:border-primary"
+      />
+    </div>
+  )
+
+  return (
+    <div className="rounded-xl border border-border bg-card overflow-hidden">
+      {/* Header */}
+      <div className="flex items-center justify-between border-b border-border bg-secondary/30 px-4 py-3">
+        <div className="flex items-center gap-2">
+          <Trophy className="h-4 w-4 text-primary" />
+          <span className="text-sm font-semibold text-foreground">Klasemen Fase Grup</span>
+        </div>
+        <span className="text-[10px] text-muted-foreground/60">Tab = Grup</span>
+      </div>
+
+      {/* Title input */}
+      <div className="border-b border-border bg-secondary/10 px-3 py-2">
+        <input
+          value={title}
+          onChange={(e) => setTitle(e.target.value)}
+          placeholder="Judul klasemen, e.g. Klasemen Fase Grup Piala Dunia 2026"
+          className="w-full bg-transparent text-xs font-medium text-foreground placeholder:text-muted-foreground/40 outline-none"
+        />
+      </div>
+
+      {/* Group tabs */}
+      <div className="flex items-center gap-1 overflow-x-auto border-b border-border bg-secondary/20 px-3 py-2">
+        {groups.map((grp) => (
+          <div
+            key={grp.id}
+            onClick={() => { setActiveGroup(grp.id); setActiveTeamIdx(0) }}
+            className={[
+              "flex shrink-0 cursor-pointer items-center gap-1.5 rounded-md px-2.5 py-1 text-xs font-semibold transition-colors",
+              grp.id === activeGroup
+                ? "bg-primary/20 text-primary"
+                : "text-muted-foreground hover:bg-secondary hover:text-foreground",
+            ].join(" ")}
+          >
+            <input
+              value={grp.label}
+              onChange={(e) => { e.stopPropagation(); updateGroupLabel(grp.id, e.target.value) }}
+              onClick={(e) => e.stopPropagation()}
+              className="w-14 bg-transparent text-inherit outline-none text-xs font-semibold"
+            />
+            {groups.length > 1 && (
+              <button onClick={(e) => { e.stopPropagation(); removeGroup(grp.id) }}
+                className="text-muted-foreground/50 hover:text-destructive">
+                <X className="h-3 w-3" />
+              </button>
+            )}
+          </div>
+        ))}
+        <button onClick={addGroup}
+          className="ml-1 flex shrink-0 items-center gap-1 rounded-md px-2 py-1 text-xs text-muted-foreground hover:bg-secondary hover:text-primary transition-colors">
+          <Plus className="h-3 w-3" /> Grup
+        </button>
+      </div>
+
+      {/* Team list for active group */}
+      <div className="max-h-80 overflow-y-auto p-3 space-y-2">
+        {currentGroup.teams.map((team, idx) => (
+          <div
+            key={team.id}
+            className={[
+              "rounded-lg border bg-secondary/10 p-3 space-y-2 cursor-pointer transition-colors",
+              activeTeamIdx === idx ? "border-primary/50 bg-primary/5" : "border-border hover:border-border/80",
+            ].join(" ")}
+            onClick={() => setActiveTeamIdx(idx)}
+          >
+            {/* Team header */}
+            <div className="flex items-center justify-between">
+              <div className="flex items-center gap-2">
+                <span className={[
+                  "flex h-5 w-5 items-center justify-center rounded text-[10px] font-bold",
+                  idx < 2 ? "bg-primary/20 text-primary" : idx === 2 ? "bg-yellow-500/20 text-yellow-400" : "text-muted-foreground",
+                ].join(" ")}>{idx + 1}</span>
+                <span className="text-[10px] font-bold uppercase tracking-wider text-muted-foreground">Tim {idx + 1}</span>
+              </div>
+              {currentGroup.teams.length > 2 && (
+                <button onClick={(e) => { e.stopPropagation(); removeTeam(currentGroup.id, team.id) }}
+                  className="text-muted-foreground/50 hover:text-destructive">
+                  <X className="h-3.5 w-3.5" />
+                </button>
+              )}
+            </div>
+
+            {/* Name & code */}
+            <div className="flex items-center gap-1.5">
+              <input
+                value={team.code}
+                onChange={(e) => updateTeam(currentGroup.id, team.id, { code: e.target.value.toUpperCase().slice(0, 3) })}
+                placeholder="MX"
+                className="w-10 rounded border border-border bg-card px-1.5 py-1 text-center text-xs font-bold text-foreground placeholder:text-muted-foreground/40 outline-none focus:border-primary uppercase"
+              />
+              <input
+                value={team.name}
+                onChange={(e) => updateTeam(currentGroup.id, team.id, { name: e.target.value })}
+                placeholder="Nama Tim (e.g. Meksiko)"
+                className="flex-1 rounded border border-border bg-card px-2 py-1 text-xs text-foreground placeholder:text-muted-foreground/40 outline-none focus:border-primary"
+              />
+            </div>
+
+            {/* Stats row */}
+            <div className="flex items-end gap-2 flex-wrap">
+              {numField(team.played, (n) => updateTeam(currentGroup.id, team.id, { played: n }), "M")}
+              {numField(team.won, (n) => updateTeam(currentGroup.id, team.id, { won: n }), "W")}
+              {numField(team.drawn, (n) => updateTeam(currentGroup.id, team.id, { drawn: n }), "S")}
+              {numField(team.lost, (n) => updateTeam(currentGroup.id, team.id, { lost: n }), "K")}
+              {numField(team.gf, (n) => updateTeam(currentGroup.id, team.id, { gf: n }), "GM")}
+              {numField(team.ga, (n) => updateTeam(currentGroup.id, team.id, { ga: n }), "GK")}
+              {numField(team.pts, (n) => updateTeam(currentGroup.id, team.id, { pts: n }), "PTS")}
+              {/* Form badges */}
+              <div className="flex flex-col items-start gap-0.5 ml-1">
+                <span className="text-[9px] uppercase tracking-wide text-muted-foreground/60">FORM</span>
+                <div className="flex gap-0.5">
+                  {["W", "D", "L"].map((r) => (
+                    <button
+                      key={r}
+                      onClick={(e) => {
+                        e.stopPropagation()
+                        if (team.form.length >= 3) return
+                        updateTeam(currentGroup.id, team.id, { form: [...team.form, r] })
+                      }}
+                      className={[
+                        "flex h-5 w-5 items-center justify-center rounded-full text-[9px] font-bold border transition-colors",
+                        r === "W" ? "border-green-500/40 text-green-400 hover:bg-green-500/20" :
+                        r === "D" ? "border-yellow-500/40 text-yellow-400 hover:bg-yellow-500/20" :
+                                    "border-destructive/40 text-destructive hover:bg-destructive/20",
+                      ].join(" ")}
+                    >{r}</button>
+                  ))}
+                  {team.form.length > 0 && (
+                    <button
+                      onClick={(e) => { e.stopPropagation(); updateTeam(currentGroup.id, team.id, { form: team.form.slice(0, -1) }) }}
+                      className="flex h-5 w-5 items-center justify-center rounded-full text-[9px] text-muted-foreground hover:text-destructive border border-border"
+                    >✕</button>
+                  )}
+                </div>
+                <div className="flex gap-0.5 mt-0.5">
+                  {team.form.map((r, fi) => (
+                    <span key={fi} className={[
+                      "flex h-4 w-4 items-center justify-center rounded-full text-[8px] font-bold",
+                      r === "W" ? "bg-green-500/20 text-green-400" :
+                      r === "D" ? "bg-yellow-500/20 text-yellow-400" :
+                                  "bg-destructive/20 text-destructive",
+                    ].join(" ")}>{r}</span>
+                  ))}
+                </div>
+              </div>
+            </div>
+          </div>
+        ))}
+
+        <button
+          onClick={() => addTeam(currentGroup.id)}
+          className="flex w-full items-center justify-center gap-1.5 rounded-md border border-dashed border-border py-2 text-xs text-muted-foreground hover:border-primary hover:text-primary transition-colors">
+          <Plus className="h-3.5 w-3.5" /> Tambah Tim
+        </button>
+      </div>
+
+      {/* Footer */}
+      <div className="border-t border-border px-4 py-3 flex items-center justify-between">
+        <span className="text-xs text-muted-foreground">
+          {groups.length} grup · {groups.reduce((s, g) => s + g.teams.length, 0)} tim total
+        </span>
+        <button
+          onClick={handleInsert}
+          className="flex items-center gap-1.5 rounded-md bg-primary/10 px-3 py-1.5 text-xs font-semibold text-primary hover:bg-primary/20 transition-colors">
+          <Trophy className="h-3.5 w-3.5" />
           Insert ke Artikel
         </button>
       </div>
@@ -318,11 +701,7 @@ export function CreateArticleView({ onBack, articleId }: CreateArticleViewProps)
   const [isFetching,      setIsFetching]      = useState(isEditMode)
   const [message,         setMessage]         = useState<{ type: "success" | "error"; text: string } | null>(null)
 
-  // ── Editor Choice toggle ──────────────────────────────────────────────────
   const [isEditorChoice, setIsEditorChoice] = useState(false)
-
-  // ── Card Style toggle — tersinkron dengan toolbar insert table ────────────
-  const [isCardStyle, setIsCardStyle] = useState(false)
 
   const [featuredImagePreview, setFeaturedImagePreview] = useState<string | null>(null)
   const [featuredImageUrl,     setFeaturedImageUrl]     = useState<string | null>(null)
@@ -337,8 +716,6 @@ export function CreateArticleView({ onBack, articleId }: CreateArticleViewProps)
 
   const [editorTab,   setEditorTab]   = useState<"write" | "preview">("write")
   const [previewHtml, setPreviewHtml] = useState("")
-  // Card HTML disimpan di Map (id → html) karena Tiptap strip custom class.
-  // Di Tiptap cukup insert placeholder teks [[CARD:id]], lalu replace saat preview/save.
   const cardMapRef = useRef<Map<string, string>>(new Map())
 
   // ── Tiptap editor ──────────────────────────────────────────────────────────
@@ -373,7 +750,6 @@ export function CreateArticleView({ onBack, articleId }: CreateArticleViewProps)
     content: "",
   })
 
-  // ── Listen for modern table insert (JSON node — reliable untuk Tiptap) ────
   useEffect(() => {
     const handler = (e: Event) => {
       const node = (e as CustomEvent<object>).detail
@@ -385,9 +761,6 @@ export function CreateArticleView({ onBack, articleId }: CreateArticleViewProps)
     return () => window.removeEventListener("insert-table-node", handler)
   }, [editor])
 
-  // ── Listen for card placeholder insert ───────────────────────────────────
-  // Insert teks placeholder [[CARD:id]] ke posisi kursor di Tiptap.
-  // Placeholder ini di-replace dengan HTML card saat preview/save.
   useEffect(() => {
     const handler = (e: Event) => {
       const cardId = (e as CustomEvent<string>).detail
@@ -401,7 +774,6 @@ export function CreateArticleView({ onBack, articleId }: CreateArticleViewProps)
     return () => window.removeEventListener("insert-card-placeholder", handler)
   }, [editor])
 
-  // ── Fetch meta (kategori + tags) ───────────────────────────────────────────
   useEffect(() => {
     async function fetchMeta() {
       const [catRes, tagRes] = await Promise.all([
@@ -414,7 +786,6 @@ export function CreateArticleView({ onBack, articleId }: CreateArticleViewProps)
     fetchMeta()
   }, [])
 
-  // ── Fetch artikel (edit mode) ──────────────────────────────────────────────
   useEffect(() => {
     if (!articleId || !editor) return
     async function fetchArticle() {
@@ -429,26 +800,20 @@ export function CreateArticleView({ onBack, articleId }: CreateArticleViewProps)
         setMetaTitle(data.meta_title || "")
         setMetaDescription(data.meta_description || "")
         setIsEditorChoice(data.is_editor_choice || false)
-        // Restore semua blok berdasarkan data-block-id
-        // Strategi: scan HTML untuk semua elemen dengan data-block-id, simpan ke cardMapRef
         const raw = data.content || ""
 
-        // Parse HTML di sisi client untuk ekstrak blok dengan data-block-id
         const parser = typeof DOMParser !== "undefined" ? new DOMParser() : null
         let restored = raw
 
         if (parser) {
           const doc = parser.parseFromString(raw, "text/html")
-          // Cari semua elemen top-level yang punya data-block-id
           doc.querySelectorAll("[data-block-id]").forEach((el) => {
             const id = el.getAttribute("data-block-id")
             if (!id) return
             cardMapRef.current.set(id, el.outerHTML)
-            // Ganti di string restored dengan placeholder
             restored = restored.replace(el.outerHTML, `[[CARD:${id}]]`)
           })
 
-          // Fallback: modern-table tanpa data-block-id
           restored = restored.replace(/(<table class="modern-table">[\s\S]*?<\/table>)/g,
             (match: string) => {
               const id = generateId()
@@ -456,7 +821,6 @@ export function CreateArticleView({ onBack, articleId }: CreateArticleViewProps)
               return `[[CARD:${id}]]`
             })
 
-          // Fallback: card-design standalone tanpa data-block-id
           restored = restored.replace(/(<div class="card-design">[\s\S]*?<\/div>)/g,
             (match: string) => {
               const id = generateId()
@@ -464,7 +828,6 @@ export function CreateArticleView({ onBack, articleId }: CreateArticleViewProps)
               return `[[CARD:${id}]]`
             })
         } else {
-          // SSR fallback — regex sederhana
           restored = raw
             .replace(/(<div[^>]+data-block-id="([^"]+)"[\s\S]*?<\/div>)/g,
               (match: string, _full: string, id: string) => {
@@ -484,7 +847,6 @@ export function CreateArticleView({ onBack, articleId }: CreateArticleViewProps)
     fetchArticle()
   }, [articleId, editor])
 
-  // ── Tag autocomplete ───────────────────────────────────────────────────────
   useEffect(() => {
     if (!tagInput.trim()) { setTagSuggestions([]); setShowSuggestions(false); return }
     const filtered = allTags
@@ -507,21 +869,18 @@ export function CreateArticleView({ onBack, articleId }: CreateArticleViewProps)
     else if (e.key === "Backspace" && tagInput === "" && tags.length > 0) removeTag(tags[tags.length - 1])
   }
 
-  // ── Resolve card placeholders → HTML card sesungguhnya ──────────────────
   const resolveCards = (html: string): string => {
     return html.replace(/\[\[CARD:([a-z0-9]+)\]\]/g, (_, id) => {
       return cardMapRef.current.get(id) ?? ""
     })
   }
 
-  // ── Preview ────────────────────────────────────────────────────────────────
   useEffect(() => {
     if (editorTab !== "preview" || !editor) return
     const raw = editor.getHTML()
     setPreviewHtml(resolveCards(raw))
   }, [editorTab, editor])
 
-  // ── Featured image ─────────────────────────────────────────────────────────
   const handleFeaturedImageUpload = async (e: React.ChangeEvent<HTMLInputElement>) => {
     const file = e.target.files?.[0]; if (!file) return
     const reader = new FileReader()
@@ -536,7 +895,6 @@ export function CreateArticleView({ onBack, articleId }: CreateArticleViewProps)
     }
   }
 
-  // ── Toolbar actions ────────────────────────────────────────────────────────
   const handleInsertImage = useCallback(() => {
     if (!editor) return
     const url = window.prompt("URL gambar:", "https://"); if (!url || url === "https://") return
@@ -552,21 +910,9 @@ export function CreateArticleView({ onBack, articleId }: CreateArticleViewProps)
 
   const handleInsertTable = useCallback(() => {
     if (!editor) return
-    if (isCardStyle) {
-      // Insert card design placeholder — format card-design HTML
-      const cardHtml = `<div class="card-design"><div class="card-design-card"><div class="card-design-field"><span class="card-design-label">Label</span><span class="card-design-value">Nilai</span></div></div></div>`
-      const blockId = generateId()
-      cardMapRef.current.set(blockId, cardHtml)
-      editor.chain().focus().insertContent({
-        type: "paragraph",
-        content: [{ type: "text", text: `[[CARD:${blockId}]]` }],
-      }).run()
-    } else {
-      editor.chain().focus().insertTable({ rows: 3, cols: 3, withHeaderRow: true }).run()
-    }
-  }, [editor, isCardStyle])
+    editor.chain().focus().insertTable({ rows: 3, cols: 3, withHeaderRow: true }).run()
+  }, [editor])
 
-  // ── Save / Publish ─────────────────────────────────────────────────────────
   const generateSlug = (text: string) =>
     text.toLowerCase().trim().replace(/[^a-z0-9]+/g, "-").replace(/(^-|-$)/g, "")
 
@@ -797,7 +1143,7 @@ export function CreateArticleView({ onBack, articleId }: CreateArticleViewProps)
                   <ToolbarButton onClick={handleInsertImage} title="Sisipkan Gambar">
                     <ImageIcon className="h-4 w-4" />
                   </ToolbarButton>
-                  <ToolbarButton onClick={handleInsertTable} title="Sisipkan Tabel Cepat (Markdown)">
+                  <ToolbarButton onClick={handleInsertTable} title="Sisipkan Tabel">
                     <TableIcon className="h-4 w-4" />
                   </ToolbarButton>
 
@@ -837,26 +1183,12 @@ export function CreateArticleView({ onBack, articleId }: CreateArticleViewProps)
                       "prose-code:bg-secondary prose-code:text-primary prose-code:rounded prose-code:px-1.5",
                       "prose-code:before:content-none prose-code:after:content-none",
                       "prose-img:rounded-xl prose-img:w-full",
-                      // Modern table styles
                       "prose-table:w-full prose-table:border-collapse prose-table:my-6 prose-table:text-sm",
                       "prose-th:border prose-th:border-border prose-th:bg-secondary/80 prose-th:px-4 prose-th:py-2.5 prose-th:font-semibold prose-th:text-foreground prose-th:text-left",
                       "prose-td:border prose-td:border-border prose-td:px-4 prose-td:py-2.5 prose-td:text-foreground/80 prose-td:align-top",
                       "[&_tbody_tr:nth-child(even)]:bg-secondary/30",
                       "prose-hr:border-border",
-                      // Card table styles (legacy class names)
-                      "[&_.card-table-block]:grid [&_.card-table-block]:gap-4 [&_.card-table-block]:my-6",
-                      "[&_.card-table-block]:grid-cols-1 sm:[&_.card-table-block]:grid-cols-2",
-                      "[&_.card-table-card]:rounded-xl [&_.card-table-card]:border [&_.card-table-card]:border-border [&_.card-table-card]:bg-secondary/40 [&_.card-table-card]:p-4 [&_.card-table-card]:flex [&_.card-table-card]:flex-col [&_.card-table-card]:gap-2",
-                      "[&_.card-table-field]:flex [&_.card-table-field]:items-start [&_.card-table-field]:gap-2",
-                      "[&_.card-table-label]:text-[10px] [&_.card-table-label]:font-bold [&_.card-table-label]:uppercase [&_.card-table-label]:tracking-wide [&_.card-table-label]:text-primary [&_.card-table-label]:min-w-[90px] [&_.card-table-label]:pt-0.5 [&_.card-table-label]:shrink-0",
-                      "[&_.card-table-value]:text-sm [&_.card-table-value]:text-foreground/90 [&_.card-table-value]:leading-snug",
-                      // card-design class (format baru dari TableStyleWidget)
-                      "[&_.card-design]:grid [&_.card-design]:gap-4 [&_.card-design]:my-6 [&_.card-design]:grid-cols-1",
-                      "[&_.card-design-card]:rounded-xl [&_.card-design-card]:border [&_.card-design-card]:border-border [&_.card-design-card]:bg-secondary/40 [&_.card-design-card]:p-4 [&_.card-design-card]:flex [&_.card-design-card]:flex-col [&_.card-design-card]:gap-2",
-                      "[&_.card-design-field]:flex [&_.card-design-field]:items-start [&_.card-design-field]:gap-2",
-                      "[&_.card-design-label]:text-[10px] [&_.card-design-label]:font-bold [&_.card-design-label]:uppercase [&_.card-design-label]:tracking-wide [&_.card-design-label]:text-primary [&_.card-design-label]:min-w-[90px] [&_.card-design-label]:pt-0.5 [&_.card-design-label]:shrink-0",
-                      "[&_.card-design-value]:text-sm [&_.card-design-value]:text-foreground/90 [&_.card-design-value]:leading-snug",
-                      // match-card styles (jadwal pertandingan)
+                      // match-card styles
                       "[&_.match-block]:my-6",
                       "[&_.match-card-grid]:grid [&_.match-card-grid]:gap-4 [&_.match-card-grid]:my-4 [&_.match-card-grid]:grid-cols-1 sm:[&_.match-card-grid]:grid-cols-2",
                       "[&_.match-card]:rounded-xl [&_.match-card]:border [&_.match-card]:border-border [&_.match-card]:bg-secondary/30 [&_.match-card]:p-4 [&_.match-card]:flex [&_.match-card]:flex-col [&_.match-card]:gap-2.5",
@@ -866,6 +1198,8 @@ export function CreateArticleView({ onBack, articleId }: CreateArticleViewProps)
                       "[&_.match-card-teams]:flex [&_.match-card-teams]:items-center [&_.match-card-teams]:gap-2 [&_.match-card-teams]:flex-wrap",
                       "[&_.match-card-team]:text-base [&_.match-card-team]:font-bold [&_.match-card-team]:text-foreground",
                       "[&_.match-card-vs]:text-sm [&_.match-card-vs]:font-bold [&_.match-card-vs]:text-primary",
+                      "[&_.match-card-score]:flex [&_.match-card-score]:items-center [&_.match-card-score]:gap-1 [&_.match-card-score]:rounded-md [&_.match-card-score]:bg-primary/10 [&_.match-card-score]:px-2.5 [&_.match-card-score]:py-0.5 [&_.match-card-score]:text-base [&_.match-card-score]:font-extrabold [&_.match-card-score]:text-primary [&_.match-card-score]:tabular-nums",
+                      "[&_.match-card-score-sep]:text-muted-foreground [&_.match-card-score-sep]:font-normal",
                       "[&_.match-card-bottom]:flex [&_.match-card-bottom]:items-center [&_.match-card-bottom]:justify-between [&_.match-card-bottom]:flex-wrap [&_.match-card-bottom]:gap-2",
                       "[&_.match-card-time]:rounded [&_.match-card-time]:border [&_.match-card-time]:border-border [&_.match-card-time]:bg-black/30 [&_.match-card-time]:px-2 [&_.match-card-time]:py-1 [&_.match-card-time]:text-xs [&_.match-card-time]:font-bold [&_.match-card-time]:text-foreground",
                       "[&_.match-card-stadium]:text-xs [&_.match-card-stadium]:text-muted-foreground",
@@ -877,6 +1211,43 @@ export function CreateArticleView({ onBack, articleId }: CreateArticleViewProps)
                       "[&_.tb-content]:p-4 [&_.tb-content]:bg-card",
                       "[&_.tbp]:hidden",
                       "[&_.tbp-active]:block",
+                      // group standings styles
+                      "[&_.group-standings-block]:my-6",
+                      "[&_.gs-header]:flex [&_.gs-header]:items-center [&_.gs-header]:gap-2 [&_.gs-header]:px-4 [&_.gs-header]:py-3 [&_.gs-header]:border-b [&_.gs-header]:border-border [&_.gs-header]:bg-secondary/20",
+                      "[&_.gs-header-icon]:text-lg",
+                      "[&_.gs-header-title]:font-bold [&_.gs-header-title]:text-foreground [&_.gs-header-title]:text-sm [&_.gs-header-title]:flex-1",
+                      "[&_.gs-header-sub]:text-xs [&_.gs-header-sub]:text-muted-foreground",
+                      "[&_.gs-table-wrap]:overflow-x-auto",
+                      "[&_.gs-table]:w-full [&_.gs-table]:text-xs [&_.gs-table]:border-collapse",
+                      "[&_.gs-thead-row]:border-b [&_.gs-thead-row]:border-border",
+                      "[&_.gs-th]:px-2 [&_.gs-th]:py-2.5 [&_.gs-th]:text-[10px] [&_.gs-th]:font-bold [&_.gs-th]:uppercase [&_.gs-th]:tracking-wider [&_.gs-th]:text-muted-foreground",
+                      "[&_.gs-th-rank]:text-left [&_.gs-th-rank]:pl-3",
+                      "[&_.gs-th-team]:text-left",
+                      "[&_.gs-th-num]:text-center",
+                      "[&_.gs-th-pts]:text-center [&_.gs-th-pts]:text-primary",
+                      "[&_.gs-th-form]:text-center",
+                      "[&_.gs-row]:border-b [&_.gs-row]:border-border/40 [&_.gs-row]:transition-colors hover:[&_.gs-row]:bg-secondary/30",
+                      "[&_.gs-td]:px-2 [&_.gs-td]:py-2",
+                      "[&_.gs-td-rank]:pl-3",
+                      "[&_.gs-td-num]:text-center [&_.gs-td-num]:text-muted-foreground",
+                      "[&_.gs-td-pts]:text-center [&_.gs-td-pts]:font-bold [&_.gs-td-pts]:text-foreground",
+                      "[&_.gs-td-form]:text-center",
+                      "[&_.gs-td-team]:min-w-[120px]",
+                      "[&_.gs-rank]:flex [&_.gs-rank]:h-5 [&_.gs-rank]:w-5 [&_.gs-rank]:items-center [&_.gs-rank]:justify-center [&_.gs-rank]:rounded [&_.gs-rank]:text-[10px] [&_.gs-rank]:font-bold",
+                      "[&_.gs-rank-qualify]:bg-primary/20 [&_.gs-rank-qualify]:text-primary [&_.gs-rank-qualify]:border-l-2 [&_.gs-rank-qualify]:border-l-primary",
+                      "[&_.gs-rank-candidate]:bg-yellow-500/20 [&_.gs-rank-candidate]:text-yellow-400",
+                      "[&_.gs-rank-out]:text-muted-foreground",
+                      "[&_.gs-flag]:inline-flex [&_.gs-flag]:items-center [&_.gs-flag]:justify-center [&_.gs-flag]:rounded [&_.gs-flag]:bg-secondary [&_.gs-flag]:px-1 [&_.gs-flag]:text-[10px] [&_.gs-flag]:font-bold [&_.gs-flag]:text-muted-foreground [&_.gs-flag]:mr-1.5 [&_.gs-flag]:shrink-0",
+                      "[&_.gs-team-name]:font-medium [&_.gs-team-name]:text-foreground",
+                      "[&_.gs-form]:flex [&_.gs-form]:gap-0.5 [&_.gs-form]:justify-center",
+                      "[&_.gs-form-badge]:flex [&_.gs-form-badge]:h-4 [&_.gs-form-badge]:w-4 [&_.gs-form-badge]:items-center [&_.gs-form-badge]:justify-center [&_.gs-form-badge]:rounded-full [&_.gs-form-badge]:text-[8px] [&_.gs-form-badge]:font-bold",
+                      "[&_.gs-form-w]:bg-green-500/20 [&_.gs-form-w]:text-green-400",
+                      "[&_.gs-form-d]:bg-yellow-500/20 [&_.gs-form-d]:text-yellow-400",
+                      "[&_.gs-form-l]:bg-destructive/20 [&_.gs-form-l]:text-destructive",
+                      "[&_.gs-legend]:flex [&_.gs-legend]:gap-4 [&_.gs-legend]:px-3 [&_.gs-legend]:py-2 [&_.gs-legend]:border-t [&_.gs-legend]:border-border/40",
+                      "[&_.gs-legend-item]:text-[10px] [&_.gs-legend-item]:text-muted-foreground",
+                      "[&_.gs-legend-qualify]:text-primary",
+                      "[&_.gs-legend-candidate]:text-yellow-400",
                     ].join(" ")}
                     dangerouslySetInnerHTML={{ __html: previewHtml }}
                   ref={(el) => {
@@ -908,49 +1279,29 @@ export function CreateArticleView({ onBack, articleId }: CreateArticleViewProps)
         {/* ── Sidebar ── */}
         <div className="space-y-5">
 
-          {/* ── Card Style Toggle ── */}
-          <div className="rounded-xl border border-border bg-card p-5">
-            <div className="flex items-center justify-between">
-              <div className="flex items-center gap-2">
-                <TableIcon className={`h-4 w-4 ${isCardStyle ? "text-primary" : "text-muted-foreground"}`} />
-                <h3 className="text-sm font-semibold text-foreground">Card Style</h3>
-              </div>
-              <button
-                type="button"
-                role="switch"
-                aria-checked={isCardStyle}
-                onClick={() => setIsCardStyle((v) => !v)}
-                className={[
-                  "relative inline-flex h-6 w-11 items-center rounded-full transition-colors focus:outline-none focus:ring-2 focus:ring-primary/50",
-                  isCardStyle ? "bg-primary" : "bg-secondary",
-                ].join(" ")}
-              >
-                <span className={[
-                  "inline-block h-4 w-4 rounded-full bg-white shadow transition-transform",
-                  isCardStyle ? "translate-x-6" : "translate-x-1",
-                ].join(" ")} />
-              </button>
-            </div>
-            <p className="mt-2 text-xs text-muted-foreground leading-relaxed">
-              {isCardStyle
-                ? "✅ Tabel akan dimasukkan dalam format Card Design."
-                : "Aktifkan untuk mengubah tabel menjadi tampilan Card Design."}
-            </p>
-          </div>
+          {/* ── Jadwal Pertandingan Widget ── */}
+          <MatchCardWidget
+            onInsert={(html, blockId) => {
+              if (!editor) return
+              cardMapRef.current.set(blockId, html)
+              editor.chain().focus().insertContent({
+                type: "paragraph",
+                content: [{ type: "text", text: `[[CARD:${blockId}]]` }],
+              }).run()
+            }}
+          />
 
-          {/* ── Match Card Widget — hanya muncul saat Card Style OFF ── */}
-          {!isCardStyle && (
-            <MatchCardWidget
-              onInsert={(html, blockId) => {
-                if (!editor) return
-                cardMapRef.current.set(blockId, html)
-                editor.chain().focus().insertContent({
-                  type: "paragraph",
-                  content: [{ type: "text", text: `[[CARD:${blockId}]]` }],
-                }).run()
-              }}
-            />
-          )}
+          {/* ── Klasemen Fase Grup Widget ── */}
+          <GroupStandingsWidget
+            onInsert={(html, blockId) => {
+              if (!editor) return
+              cardMapRef.current.set(blockId, html)
+              editor.chain().focus().insertContent({
+                type: "paragraph",
+                content: [{ type: "text", text: `[[CARD:${blockId}]]` }],
+              }).run()
+            }}
+          />
 
           {/* ── Editor Choice Toggle ── */}
           <div className="rounded-xl border border-border bg-card p-5">
@@ -959,7 +1310,6 @@ export function CreateArticleView({ onBack, articleId }: CreateArticleViewProps)
                 <Star className={`h-4 w-4 ${isEditorChoice ? "text-primary fill-primary" : "text-muted-foreground"}`} />
                 <h3 className="text-sm font-semibold text-foreground">Editor Choice</h3>
               </div>
-              {/* Toggle switch */}
               <button
                 type="button"
                 role="switch"

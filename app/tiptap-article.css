@@ -606,3 +606,198 @@ table.modern-table tbody tr:nth-child(even) {
 .article-light-mode .match-card-stadium {
   color: #6b7280;
 }
+
+/* ── Group Standings Block ───────────────────────────────── */
+
+.group-standings-block {
+  margin: 1.5rem 0;
+}
+
+.gs-header {
+  display: flex;
+  align-items: center;
+  gap: 0.5rem;
+  padding: 0.75rem 1rem;
+  border-bottom: 1px solid oklch(0.25 0 0);
+  background: oklch(0.14 0 0);
+}
+
+.gs-header-icon {
+  font-size: 1.1rem;
+  line-height: 1;
+}
+
+.gs-header-title {
+  flex: 1;
+  font-size: 0.9rem;
+  font-weight: 700;
+  color: oklch(0.98 0 0);
+}
+
+.gs-header-sub {
+  font-size: 0.75rem;
+  color: oklch(0.55 0 0);
+}
+
+.gs-table-wrap {
+  overflow-x: auto;
+}
+
+.gs-table {
+  width: 100%;
+  border-collapse: collapse;
+  font-size: 0.8rem;
+  margin: 0;
+}
+
+.gs-thead-row {
+  border-bottom: 1px solid oklch(0.25 0 0);
+}
+
+.gs-th {
+  padding: 0.5rem 0.5rem;
+  font-size: 0.65rem;
+  font-weight: 700;
+  text-transform: uppercase;
+  letter-spacing: 0.07em;
+  color: oklch(0.55 0 0);
+}
+
+.gs-th-rank  { text-align: left; padding-left: 0.75rem; }
+.gs-th-team  { text-align: left; }
+.gs-th-num   { text-align: center; }
+.gs-th-pts   { text-align: center; color: oklch(0.87 0.29 142); }
+.gs-th-form  { text-align: center; }
+
+.gs-row {
+  border-bottom: 1px solid oklch(0.18 0 0);
+  transition: background 0.12s ease;
+}
+
+.gs-row:hover {
+  background: oklch(0.16 0 0);
+}
+
+.gs-td {
+  padding: 0.45rem 0.5rem;
+}
+
+.gs-td-rank  { padding-left: 0.75rem; }
+.gs-td-num   { text-align: center; color: oklch(0.65 0 0); }
+.gs-td-pts   { text-align: center; font-weight: 700; color: oklch(0.97 0 0); }
+.gs-td-form  { text-align: center; }
+.gs-td-team  { min-width: 130px; }
+
+.gs-rank {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  height: 1.25rem;
+  width: 1.25rem;
+  border-radius: 0.25rem;
+  font-size: 0.7rem;
+  font-weight: 700;
+}
+
+.gs-rank-qualify  {
+  background: oklch(0.87 0.29 142 / 0.15);
+  color: oklch(0.87 0.29 142);
+  border-left: 2px solid oklch(0.87 0.29 142);
+}
+
+.gs-rank-candidate {
+  background: oklch(0.78 0.18 95 / 0.15);
+  color: oklch(0.78 0.18 95);
+}
+
+.gs-rank-out {
+  color: oklch(0.55 0 0);
+}
+
+.gs-flag {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  border-radius: 0.2rem;
+  background: oklch(0.2 0 0);
+  padding: 0 0.3rem;
+  font-size: 0.65rem;
+  font-weight: 700;
+  color: oklch(0.65 0 0);
+  margin-right: 0.4rem;
+  flex-shrink: 0;
+  letter-spacing: 0.03em;
+}
+
+.gs-team-name {
+  font-size: 0.82rem;
+  font-weight: 500;
+  color: oklch(0.95 0 0);
+}
+
+.gs-form {
+  display: flex;
+  gap: 0.2rem;
+  justify-content: center;
+}
+
+.gs-form-badge {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  height: 1rem;
+  width: 1rem;
+  border-radius: 9999px;
+  font-size: 0.6rem;
+  font-weight: 700;
+}
+
+.gs-form-w { background: oklch(0.53 0.17 142 / 0.25); color: oklch(0.72 0.2 142); }
+.gs-form-d { background: oklch(0.78 0.18 95 / 0.2);  color: oklch(0.78 0.18 95); }
+.gs-form-l { background: oklch(0.55 0.22 25 / 0.2);  color: oklch(0.7 0.22 25); }
+
+.gs-legend {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 1rem;
+  padding: 0.5rem 0.75rem;
+  border-top: 1px solid oklch(0.18 0 0);
+}
+
+.gs-legend-item   { font-size: 0.7rem; color: oklch(0.55 0 0); }
+.gs-legend-qualify   { color: oklch(0.87 0.29 142); }
+.gs-legend-candidate { color: oklch(0.78 0.18 95); }
+
+/* Light mode group standings */
+.article-light-mode .gs-header {
+  background: #f3f4f6;
+  border-bottom-color: #e5e7eb;
+}
+
+.article-light-mode .gs-header-title { color: #111827; }
+.article-light-mode .gs-header-sub   { color: #9ca3af; }
+
+.article-light-mode .gs-thead-row { border-bottom-color: #e5e7eb; }
+.article-light-mode .gs-th        { color: #9ca3af; }
+.article-light-mode .gs-th-pts    { color: #166534; }
+
+.article-light-mode .gs-row              { border-bottom-color: #f3f4f6; }
+.article-light-mode .gs-row:hover        { background: #f9fafb; }
+.article-light-mode .gs-td-num           { color: #6b7280; }
+.article-light-mode .gs-td-pts           { color: #111827; }
+.article-light-mode .gs-team-name        { color: #111827; }
+
+.article-light-mode .gs-rank-qualify  {
+  background: #dcfce7;
+  color: #166534;
+  border-left-color: #166534;
+}
+
+.article-light-mode .gs-rank-candidate { background: #fef9c3; color: #854d0e; }
+.article-light-mode .gs-rank-out       { color: #9ca3af; }
+.article-light-mode .gs-flag           { background: #e5e7eb; color: #6b7280; }
+
+.article-light-mode .gs-legend         { border-top-color: #e5e7eb; }
+.article-light-mode .gs-legend-item    { color: #9ca3af; }
+.article-light-mode .gs-legend-qualify    { color: #166534; }
+.article-light-mode .gs-legend-candidate  { color: #854d0e; }

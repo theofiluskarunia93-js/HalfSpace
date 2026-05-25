@@ -10,7 +10,6 @@ import {
   Clock, Eye, Calendar, ChevronRight, Home,
   Share2, Twitter, Facebook, Link2, Check,
   BookOpen, ArrowUp, User,
-  AArrowUp, AArrowDown, Sun, Moon,
 } from "lucide-react"
 // ─── Types ─────────────────────────────────────────────────────────────────
 interface Article {
@@ -50,9 +49,7 @@ interface TocItem {
 }
 
 // ─── Font size steps ───────────────────────────────────────────────────────
-const FONT_SIZES = ["text-sm", "text-base", "text-lg", "text-xl"] as const
-type FontSizeClass = typeof FONT_SIZES[number]
-const FONT_SIZE_DEFAULT_IDX = 1 // text-base
+
 
 // ─── Helpers ───────────────────────────────────────────────────────────────
 
@@ -361,60 +358,7 @@ function ShareButtons({ title }: { title: string }) {
   )
 }
 
-// ─── Reading Controls (font size + dark/light) ─────────────────────────────
-interface ReadingControlsProps {
-  fontSizeIdx: number
-  onFontIncrease: () => void
-  onFontDecrease: () => void
-  isDark: boolean
-  onToggleDark: () => void
-}
 
-function ReadingControls({ fontSizeIdx, onFontIncrease, onFontDecrease, isDark, onToggleDark }: ReadingControlsProps) {
-  return (
-    <div className="flex items-center gap-1 rounded-lg border border-border bg-card px-2 py-1.5">
-      {/* Font decrease */}
-      <button
-        onClick={onFontDecrease}
-        disabled={fontSizeIdx === 0}
-        aria-label="Perkecil ukuran huruf"
-        title="Perkecil huruf"
-        className="flex h-7 w-7 items-center justify-center rounded text-muted-foreground transition-colors hover:bg-secondary hover:text-foreground disabled:opacity-30 disabled:pointer-events-none"
-      >
-        <AArrowDown className="h-4 w-4" />
-      </button>
-
-      {/* Font size indicator */}
-      <span className="min-w-[2rem] text-center text-[10px] font-medium text-muted-foreground select-none">
-        {["XS", "S", "M", "L"][fontSizeIdx]}
-      </span>
-
-      {/* Font increase */}
-      <button
-        onClick={onFontIncrease}
-        disabled={fontSizeIdx === FONT_SIZES.length - 1}
-        aria-label="Perbesar ukuran huruf"
-        title="Perbesar huruf"
-        className="flex h-7 w-7 items-center justify-center rounded text-muted-foreground transition-colors hover:bg-secondary hover:text-foreground disabled:opacity-30 disabled:pointer-events-none"
-      >
-        <AArrowUp className="h-4 w-4" />
-      </button>
-
-      {/* Divider */}
-      <div className="mx-1 h-4 w-px bg-border" />
-
-      {/* Dark / Light toggle */}
-      <button
-        onClick={onToggleDark}
-        aria-label={isDark ? "Ganti ke mode terang" : "Ganti ke mode gelap"}
-        title={isDark ? "Mode Terang" : "Mode Gelap"}
-        className="flex h-7 w-7 items-center justify-center rounded text-muted-foreground transition-colors hover:bg-secondary hover:text-foreground"
-      >
-        {isDark ? <Sun className="h-4 w-4" /> : <Moon className="h-4 w-4" />}
-      </button>
-    </div>
-  )
-}
 
 // ─── Author Card ───────────────────────────────────────────────────────────
 function AuthorCard() {
@@ -617,81 +561,73 @@ export function ArticleDetail({ articleId }: ArticleDetailProps) {
   const [isLoading, setIsLoading] = useState(true)
   const [toc, setToc] = useState<TocItem[]>([])
   const [processedContent, setProcessedContent] = useState("")
+  const contentRef = useRef<HTMLDivElement>(null)
   const supabase = createClient()
 
-  // ── Reading preferences ────────────────────────────────────────────────
-  const [fontSizeIdx, setFontSizeIdx] = useState<number>(FONT_SIZE_DEFAULT_IDX)
-  // isDark: true = ikut tema gelap website (default), false = force light mode pada artikel
-  const [isDark, setIsDark] = useState<boolean>(true)
+  // ── Inisialisasi tab interaktif setiap kali konten berubah ──────────────
+  useEffect(() => {
+    if (!processedContent) return
+    const el = contentRef.current
+    if (!el) return
+    const init = () => {
+      el.querySelectorAll<HTMLElement>(".tabbed-block").forEach((block) => {
+        if (block.dataset.tabInit) return
+        block.dataset.tabInit = "1"
+        block.querySelectorAll<HTMLElement>(".tbb").forEach((btn) => {
+          btn.addEventListener("click", () => {
+            const idx = btn.dataset.tab
+            block.querySelectorAll(".tbb").forEach((b) => b.classList.remove("tbb-active"))
+            block.querySelectorAll(".tbp").forEach((p) => p.classList.remove("tbp-active"))
+            btn.classList.add("tbb-active")
+            block.querySelector(`.tbp[data-panel="${idx}"]`)?.classList.add("tbp-active")
+          })
+        })
+      })
+    }
+    // Tunggu sampai DOM selesai di-render oleh dangerouslySetInnerHTML
+    const timer = setTimeout(init, 80)
+    return () => clearTimeout(timer)
+  }, [processedContent])
 
-  const handleFontIncrease = () =>
-    setFontSizeIdx((i) => Math.min(i + 1, FONT_SIZES.length - 1))
-  const handleFontDecrease = () =>
-    setFontSizeIdx((i) => Math.max(i - 1, 0))
-  const handleToggleDark = () =>
-    setIsDark((v) => !v)
-
-  // Prose classes yang adaptif terhadap font size & dark/light mode
-  // Font size values per step (in rem)
-  const FONT_SIZE_VALUES = ["0.875rem", "1rem", "1.125rem", "1.25rem"]
-
+  // Prose classes (always dark theme)
   const proseClass = [
-    "max-w-none prose prose-base",
-    // Mode warna
-    isDark ? "prose-invert" : "",
+    "max-w-none prose prose-base prose-invert",
     // Heading
     "prose-headings:font-bold prose-headings:scroll-mt-24",
-    isDark
-      ? "prose-headings:text-foreground prose-p:text-foreground/90"
-      : "prose-headings:text-gray-900 prose-p:text-gray-800",
+    "prose-headings:text-foreground prose-p:text-foreground/90",
     "prose-h1:text-2xl prose-h1:mt-8 prose-h1:mb-4",
-    "prose-h2:text-xl prose-h2:mt-8 prose-h2:mb-4 prose-h2:border-b prose-h2:pb-2",
-    isDark ? "prose-h2:border-border" : "prose-h2:border-gray-200",
+    "prose-h2:text-xl prose-h2:mt-8 prose-h2:mb-4 prose-h2:border-b prose-h2:pb-2 prose-h2:border-border",
     "prose-h3:text-lg prose-h3:mt-6 prose-h3:mb-3",
     "prose-p:leading-relaxed prose-p:mb-4",
     // Links
     "prose-a:text-primary prose-a:no-underline hover:prose-a:underline",
     // Bold
-    isDark ? "prose-strong:text-foreground" : "prose-strong:text-gray-900",
-    "prose-strong:font-semibold",
+    "prose-strong:text-foreground prose-strong:font-semibold",
     // Images
     "prose-img:rounded-xl prose-img:w-full prose-img:my-6",
     // Blockquote
     "prose-blockquote:border-l-primary prose-blockquote:border-l-2",
-    isDark
-      ? "prose-blockquote:bg-secondary/50 prose-blockquote:text-foreground/70"
-      : "prose-blockquote:bg-gray-50 prose-blockquote:text-gray-700",
+    "prose-blockquote:bg-secondary/50 prose-blockquote:text-foreground/70",
     "prose-blockquote:rounded-r-lg prose-blockquote:py-1 prose-blockquote:not-italic",
     // Code
-    "prose-code:text-primary prose-code:rounded prose-code:px-1 prose-code:py-0.5 prose-code:text-sm",
-    isDark ? "prose-code:bg-secondary" : "prose-code:bg-gray-100",
+    "prose-code:text-primary prose-code:rounded prose-code:px-1 prose-code:py-0.5 prose-code:text-sm prose-code:bg-secondary",
     "prose-code:before:content-none prose-code:after:content-none",
     // Lists
-    isDark
-      ? "prose-ul:text-foreground/90 prose-ol:text-foreground/90"
-      : "prose-ul:text-gray-800 prose-ol:text-gray-800",
+    "prose-ul:text-foreground/90 prose-ol:text-foreground/90",
     "prose-li:my-1",
-    // Table — modern clean style
+    // Table
     "prose-table:w-full prose-table:border-collapse prose-table:my-6 prose-table:text-sm prose-table:overflow-hidden prose-table:rounded-lg",
-    isDark
-      ? [
-          "prose-th:border prose-th:border-border prose-th:bg-secondary/80",
-          "prose-th:text-foreground prose-th:font-semibold",
-          "prose-td:border prose-td:border-border prose-td:text-foreground/80",
-          "[&_tbody_tr:nth-child(even)]:bg-secondary/30",
-        ].join(" ")
-      : [
-          "prose-th:border prose-th:border-gray-200 prose-th:bg-gray-100",
-          "prose-th:text-gray-900 prose-th:font-semibold",
-          "prose-td:border prose-td:border-gray-200 prose-td:text-gray-700",
-          "[&_tbody_tr:nth-child(even)]:bg-gray-50",
-        ].join(" "),
+    "prose-th:border prose-th:border-border prose-th:bg-secondary/80",
+    "prose-th:text-foreground prose-th:font-semibold",
+    "prose-td:border prose-td:border-border prose-td:text-foreground/80",
+    "[&_tbody_tr:nth-child(even)]:bg-secondary/30",
     "prose-th:px-4 prose-th:py-2.5 prose-th:text-left prose-th:text-sm",
     "prose-td:px-4 prose-td:py-2.5 prose-td:align-top",
     // HR
-    isDark ? "prose-hr:border-border" : "prose-hr:border-gray-200",
-    "prose-hr:my-8",
+    "prose-hr:border-border prose-hr:my-8",
   ].join(" ")
+
+
 
   useEffect(() => {
     async function fetchArticle() {
@@ -731,10 +667,6 @@ export function ArticleDetail({ articleId }: ArticleDetailProps) {
   const readingTime = article?.content ? calcReadingTime(article.content) : 0
 
   // Article area background sesuai mode
-  const articleBg = isDark
-    ? "bg-background"
-    : "bg-white"
-
   return (
     <>
       {article && (
@@ -747,7 +679,7 @@ export function ArticleDetail({ articleId }: ArticleDetailProps) {
       <ReadingProgressBar />
       <BackToTop />
 
-      <div className={`min-h-screen transition-colors duration-300 ${isDark ? "bg-background" : "bg-gray-50"}`}>
+      <div className="min-h-screen bg-background">
         <NavbarStandalone />
 
         <main className="mx-auto max-w-7xl px-4 py-8">
@@ -765,7 +697,7 @@ export function ArticleDetail({ articleId }: ArticleDetailProps) {
 
               {/* ── Main Article Column ── */}
               <article
-                className={`min-w-0 flex-1 rounded-2xl transition-colors duration-300 ${isDark ? "" : "bg-white shadow-sm border border-gray-100 px-6 py-8 sm:px-10 article-light-mode"}`}
+                className="min-w-0 flex-1 rounded-2xl"
                 itemScope
                 itemType="https://schema.org/NewsArticle"
               >
@@ -782,7 +714,7 @@ export function ArticleDetail({ articleId }: ArticleDetailProps) {
                   )}
 
                   <h1
-                    className={`text-2xl font-bold leading-snug sm:text-3xl lg:text-4xl transition-colors duration-300 ${isDark ? "text-foreground" : "text-gray-900"}`}
+                    className="text-2xl font-bold leading-snug sm:text-3xl lg:text-4xl text-foreground"
                     style={{ fontFamily: "var(--font-oswald)" }}
                     itemProp="headline"
                   >
@@ -790,13 +722,13 @@ export function ArticleDetail({ articleId }: ArticleDetailProps) {
                   </h1>
 
                   {article.excerpt && (
-                    <p className={`mt-3 text-base leading-relaxed transition-colors duration-300 ${isDark ? "text-muted-foreground" : "text-gray-600"}`} itemProp="description">
+                    <p className="mt-3 text-base leading-relaxed text-muted-foreground" itemProp="description">
                       {article.excerpt}
                     </p>
                   )}
 
                   {/* Meta row + Reading Controls */}
-                  <div className={`mt-4 flex flex-wrap items-center gap-x-4 gap-y-2 text-xs border-y py-3 transition-colors duration-300 ${isDark ? "text-muted-foreground border-border" : "text-gray-500 border-gray-200"}`}>
+                  <div className="mt-4 flex flex-wrap items-center gap-x-4 gap-y-2 text-xs border-y py-3 text-muted-foreground border-border">
                     <span className="flex items-center gap-1.5">
                       <User className="h-3.5 w-3.5 flex-shrink-0" aria-hidden="true" />
                       <span itemProp="author" itemScope itemType="https://schema.org/Organization">
@@ -821,16 +753,6 @@ export function ArticleDetail({ articleId }: ArticleDetailProps) {
                       {(article.views || 0).toLocaleString("id-ID")} views
                     </span>
 
-                    {/* Reading controls — di kanan meta row */}
-                    <div className="ml-auto">
-                      <ReadingControls
-                        fontSizeIdx={fontSizeIdx}
-                        onFontIncrease={handleFontIncrease}
-                        onFontDecrease={handleFontDecrease}
-                        isDark={isDark}
-                        onToggleDark={handleToggleDark}
-                      />
-                    </div>
                   </div>
 
                   {/* Share — top */}
@@ -870,7 +792,7 @@ export function ArticleDetail({ articleId }: ArticleDetailProps) {
                       />
                     </picture>
                     {article.featured_image_alt && (
-                      <figcaption className={`mt-2 text-center text-xs italic transition-colors ${isDark ? "text-muted-foreground" : "text-gray-500"}`}>
+                      <figcaption className="mt-2 text-center text-xs italic text-muted-foreground">
                         {article.featured_image_alt}
                       </figcaption>
                     )}
@@ -879,52 +801,24 @@ export function ArticleDetail({ articleId }: ArticleDetailProps) {
                   </figure>
                 )}
 
-                {/* Article content — font size & mode adaptive */}
+                {/* Article content */}
                 <div
                   className={[
-                    "transition-all duration-300",
                     proseClass,
                     // Card table grid (legacy class names)
                     "[&_.card-table-block]:grid [&_.card-table-block]:gap-4 [&_.card-table-block]:grid-cols-1 sm:[&_.card-table-block]:grid-cols-2",
-                    isDark
-                      ? "[&_.card-table-card]:border-border [&_.card-table-card]:bg-secondary/40 [&_.card-table-label]:text-primary [&_.card-table-value]:text-foreground/90"
-                      : "[&_.card-table-card]:border-gray-200 [&_.card-table-card]:bg-gray-50 [&_.card-table-label]:!text-green-700 [&_.card-table-value]:!text-gray-800",
-                    // card-design class (format baru dari TableStyleWidget)
+                    "[&_.card-table-card]:border-border [&_.card-table-card]:bg-secondary/40 [&_.card-table-label]:text-primary [&_.card-table-value]:text-foreground/90",
+                    // card-design class
                     "[&_.card-design]:grid [&_.card-design]:gap-4 [&_.card-design]:my-6 [&_.card-design]:grid-cols-1 sm:[&_.card-design]:grid-cols-2",
-                    isDark
-                      ? "[&_.card-design-card]:border-border [&_.card-design-card]:bg-secondary/40 [&_.card-design-label]:text-primary [&_.card-design-value]:text-foreground/90"
-                      : "[&_.card-design-card]:border-gray-200 [&_.card-design-card]:bg-gray-50 [&_.card-design-label]:!text-green-700 [&_.card-design-value]:!text-gray-800",
-                    // Light mode table text (termasuk modern-table)
-                    !isDark ? "[&_table_th]:!bg-gray-100 [&_table_th]:!text-gray-900 [&_table_th]:!border-gray-200 [&_table_td]:!text-gray-700 [&_table_td]:!border-gray-200 [&_table_tbody_tr:nth-child(even)]:!bg-gray-50" : "",
-                  ].filter(Boolean).join(" ")}
-                  style={{ fontSize: FONT_SIZE_VALUES[fontSizeIdx], color: isDark ? undefined : "#1f2937" }}
+                    "[&_.card-design-card]:border-border [&_.card-design-card]:bg-secondary/40 [&_.card-design-label]:text-primary [&_.card-design-value]:text-foreground/90",
+                  ].join(" ")}
                   dangerouslySetInnerHTML={{ __html: processedContent || article.content || "" }}
                   itemProp="articleBody"
-                  ref={(el) => {
-                    if (!el) return
-                    // Inisialisasi tabbed block — pasang event listener ke semua tombol tab
-                    const initTabs = () => {
-                      el.querySelectorAll<HTMLElement>(".tabbed-block").forEach((block) => {
-                        if (block.dataset.tabInit) return
-                        block.dataset.tabInit = "1"
-                        block.querySelectorAll<HTMLElement>(".tbb").forEach((btn) => {
-                          btn.addEventListener("click", () => {
-                            const idx = btn.dataset.tab
-                            block.querySelectorAll(".tbb").forEach((b) => b.classList.remove("tbb-active"))
-                            block.querySelectorAll(".tbp").forEach((p) => p.classList.remove("tbp-active"))
-                            btn.classList.add("tbb-active")
-                            block.querySelector(`.tbp[data-panel="${idx}"]`)?.classList.add("tbp-active")
-                          })
-                        })
-                      })
-                    }
-                    // Jalankan setelah render selesai
-                    setTimeout(initTabs, 50)
-                  }}
+                  ref={contentRef}
                 />
 
                 {/* Share — bottom */}
-                <div className={`mt-8 border-t pt-6 transition-colors ${isDark ? "border-border" : "border-gray-200"}`}>
+                <div className="mt-8 border-t pt-6 border-border">
                   <ShareButtons title={article.title} />
                 </div>
 
@@ -937,7 +831,7 @@ export function ArticleDetail({ articleId }: ArticleDetailProps) {
                 {article.categories && (
                   <section className="mt-10" aria-label="Artikel terkait">
                     <h2
-                      className={`mb-5 text-xl font-bold uppercase tracking-tight transition-colors ${isDark ? "text-foreground" : "text-gray-900"}`}
+                      className="mb-5 text-xl font-bold uppercase tracking-tight text-foreground"
                       style={{ fontFamily: "var(--font-oswald)" }}
                     >
                       Artikel Terkait
