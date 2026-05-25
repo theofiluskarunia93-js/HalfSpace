@@ -4,50 +4,52 @@
 
 @custom-variant dark (&:is(.dark *));
 
+/* ── LIGHT MODE CONFIGURATION ── */
 :root {
-  --background: oklch(0.08 0 0);
-  --foreground: oklch(0.98 0 0);
-  --card: oklch(0.12 0 0);
-  --card-foreground: oklch(0.98 0 0);
-  --popover: oklch(0.1 0 0);
-  --popover-foreground: oklch(0.98 0 0);
-  --primary: oklch(0.87 0.29 142);
-  --primary-foreground: oklch(0.08 0 0);
-  --secondary: oklch(0.18 0 0);
-  --secondary-foreground: oklch(0.98 0 0);
-  --muted: oklch(0.2 0 0);
-  --muted-foreground: oklch(0.6 0 0);
-  --accent: oklch(0.87 0.29 142);
-  --accent-foreground: oklch(0.08 0 0);
+  --background: oklch(0.98 0 0);          /* Putih Terang */
+  --foreground: oklch(0.08 0 0);          /* Hitam Gelap */
+  --card: oklch(1 0 0);                   /* Putih Bersih */
+  --card-foreground: oklch(0.08 0 0);
+  --popover: oklch(1 0 0);
+  --popover-foreground: oklch(0.08 0 0);
+  --primary: oklch(0.55 0.18 142);        /* Hijau Emerald yang disesuaikan untuk Light Mode (kontras tinggi) */
+  --primary-foreground: oklch(0.98 0 0);
+  --secondary: oklch(0.96 0 0);           /* Abu-abu sangat terang */
+  --secondary-foreground: oklch(0.08 0 0);
+  --muted: oklch(0.92 0 0);
+  --muted-foreground: oklch(0.4 0 0);     /* Abu-abu teks medium */
+  --accent: oklch(0.55 0.18 142);
+  --accent-foreground: oklch(0.98 0 0);
   --destructive: oklch(0.577 0.245 27.325);
   --destructive-foreground: oklch(0.98 0 0);
-  --border: oklch(0.25 0 0);
-  --input: oklch(0.18 0 0);
-  --ring: oklch(0.87 0.29 142);
-  --chart-1: oklch(0.87 0.29 142);
+  --border: oklch(0.88 0 0);              /* Border abu-abu halus */
+  --input: oklch(0.92 0 0);
+  --ring: oklch(0.55 0.18 142);
+  --chart-1: oklch(0.55 0.18 142);
   --chart-2: oklch(0.6 0.118 184.704);
   --chart-3: oklch(0.398 0.07 227.392);
   --chart-4: oklch(0.828 0.189 84.429);
   --chart-5: oklch(0.769 0.188 70.08);
   --radius: 0.5rem;
-  --sidebar: oklch(0.1 0 0);
-  --sidebar-foreground: oklch(0.98 0 0);
-  --sidebar-primary: oklch(0.87 0.29 142);
-  --sidebar-primary-foreground: oklch(0.08 0 0);
-  --sidebar-accent: oklch(0.18 0 0);
-  --sidebar-accent-foreground: oklch(0.98 0 0);
-  --sidebar-border: oklch(0.25 0 0);
-  --sidebar-ring: oklch(0.87 0.29 142);
+  --sidebar: oklch(0.98 0 0);
+  --sidebar-foreground: oklch(0.08 0 0);
+  --sidebar-primary: oklch(0.55 0.18 142);
+  --sidebar-primary-foreground: oklch(0.98 0 0);
+  --sidebar-accent: oklch(0.96 0 0);
+  --sidebar-accent-foreground: oklch(0.08 0 0);
+  --sidebar-border: oklch(0.88 0 0);
+  --sidebar-ring: oklch(0.55 0.18 142);
 }
 
+/* ── DARK MODE CONFIGURATION ── */
 .dark {
-  --background: oklch(0.08 0 0);
-  --foreground: oklch(0.98 0 0);
+  --background: oklch(0.08 0 0);          /* Hitam Gelap */
+  --foreground: oklch(0.98 0 0);          /* Putih Terang */
   --card: oklch(0.12 0 0);
   --card-foreground: oklch(0.98 0 0);
   --popover: oklch(0.1 0 0);
   --popover-foreground: oklch(0.98 0 0);
-  --primary: oklch(0.87 0.29 142);
+  --primary: oklch(0.87 0.29 142);        /* Hijau Neon khas kamu */
   --primary-foreground: oklch(0.08 0 0);
   --secondary: oklch(0.18 0 0);
   --secondary-foreground: oklch(0.98 0 0);
@@ -196,20 +198,20 @@
     0 0 20px oklch(0.87 0.29 142 / 0.6);
 }
 
-/* ── Card Table Block — artikel public ───────────────── */
-/* Sama dengan tiptap-article.css tapi untuk prose di article-detail */
-
-.prose .card-table-block {
+/* ── Card Table Block & Card Design (Gabungan Selector Agar Bersih) ── */
+.prose .card-table-block,
+.prose .card-design {
   display: grid !important;
   grid-template-columns: repeat(auto-fill, minmax(240px, 1fr)) !important;
   gap: 1rem !important;
   margin: 1.5rem 0 !important;
-  /* reset prose table styles */
   border: none !important;
   background: transparent !important;
 }
 
-.prose .card-table-card {
+.prose .card-table-card,
+.prose .card-design-card,
+.card-design-card {
   border-radius: 0.75rem !important;
   border: 1px solid oklch(0.25 0 0) !important;
   background: oklch(0.14 0 0) !important;
@@ -219,13 +221,17 @@
   gap: 0.55rem !important;
 }
 
-.prose .card-table-field {
+.prose .card-table-field,
+.prose .card-design-field,
+.card-design-field {
   display: flex !important;
   align-items: flex-start !important;
   gap: 0.5rem !important;
 }
 
-.prose .card-table-label {
+.prose .card-table-label,
+.prose .card-design-label,
+.card-design-label {
   font-size: 0.7rem !important;
   font-weight: 700 !important;
   text-transform: uppercase !important;
@@ -236,27 +242,32 @@
   padding-top: 0.1rem !important;
 }
 
-.prose .card-table-value {
+.prose .card-table-value,
+.prose .card-design-value,
+.card-design-value {
   font-size: 0.85rem !important;
   color: oklch(0.9 0 0) !important;
   line-height: 1.5 !important;
 }
 
-/* Light mode (prose-stone) overrides */
-.prose-stone .card-table-card {
+/* Light mode (prose-stone) overrides untuk kedua jenis kartu */
+.prose-stone .card-table-card,
+.prose-stone .card-design-card {
   border-color: #e5e7eb !important;
   background: #f9fafb !important;
 }
 
-.prose-stone .card-table-label {
+.prose-stone .card-table-label,
+.prose-stone .card-design-label {
   color: oklch(0.55 0.18 142) !important;
 }
 
-.prose-stone .card-table-value {
+.prose-stone .card-table-value,
+.prose-stone .card-design-value {
   color: #374151 !important;
 }
 
-/* ── modern-table — standalone class (dari TableStyleWidget) ── */
+/* ── modern-table ── */
 .prose table.modern-table,
 table.modern-table {
   width: 100% !important;
@@ -306,66 +317,4 @@ table.modern-table tbody tr:nth-child(even) {
 
 .prose-stone table.modern-table tbody tr:nth-child(even) {
   background: #f9fafb !important;
-}
-
-/* ── card-design — standalone class (dari TableStyleWidget) ─── */
-.prose .card-design,
-.card-design {
-  display: grid !important;
-  grid-template-columns: repeat(auto-fill, minmax(240px, 1fr)) !important;
-  gap: 1rem !important;
-  margin: 1.5rem 0 !important;
-  border: none !important;
-  background: transparent !important;
-}
-
-.prose .card-design-card,
-.card-design-card {
-  border-radius: 0.75rem !important;
-  border: 1px solid oklch(0.25 0 0) !important;
-  background: oklch(0.14 0 0) !important;
-  padding: 1rem 1.25rem !important;
-  display: flex !important;
-  flex-direction: column !important;
-  gap: 0.55rem !important;
-}
-
-.prose .card-design-field,
-.card-design-field {
-  display: flex !important;
-  align-items: flex-start !important;
-  gap: 0.5rem !important;
-}
-
-.prose .card-design-label,
-.card-design-label {
-  font-size: 0.7rem !important;
-  font-weight: 700 !important;
-  text-transform: uppercase !important;
-  letter-spacing: 0.05em !important;
-  color: oklch(0.87 0.29 142) !important;
-  min-width: 90px !important;
-  flex-shrink: 0 !important;
-  padding-top: 0.1rem !important;
-}
-
-.prose .card-design-value,
-.card-design-value {
-  font-size: 0.85rem !important;
-  color: oklch(0.9 0 0) !important;
-  line-height: 1.5 !important;
-}
-
-/* Light mode overrides untuk card-design */
-.prose-stone .card-design-card {
-  border-color: #e5e7eb !important;
-  background: #f9fafb !important;
-}
-
-.prose-stone .card-design-label {
-  color: oklch(0.55 0.18 142) !important;
-}
-
-.prose-stone .card-design-value {
-  color: #374151 !important;
 }
