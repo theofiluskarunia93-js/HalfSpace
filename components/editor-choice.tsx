@@ -1,12 +1,19 @@
 "use client"
 
-import { useEffect, useState } from "react"
+import React, { useEffect, useState } from "react"
 import { Star } from "lucide-react"
 import { createClient } from "@/lib/supabase/client"
 import { useRouter } from "next/navigation"
 
+interface Article {
+  id: string
+  title: string
+  slug: string
+  categories: { name: string }[] | null
+}
+
 export function EditorChoice() {
-  const [articles, setArticles] = useState<any[]>([])
+  const [articles, setArticles] = useState<Article[]>([])
   const supabase = createClient()
   const router = useRouter()
 
@@ -19,7 +26,7 @@ export function EditorChoice() {
         .eq("is_editor_choice", true)
         .order("published_at", { ascending: false })
         .limit(5)
-      if (data) setArticles(data)
+      if (data) setArticles(data as Article[])
     }
     fetchEditorChoice()
   }, [])
@@ -29,6 +36,7 @@ export function EditorChoice() {
   return (
     <section id="editor-choice-section" className="bg-background py-10 border-t border-border/40">
       <div className="mx-auto max-w-7xl px-4">
+
         {/* Section header */}
         <div className="mb-5 flex items-center gap-3">
           <div
@@ -43,14 +51,12 @@ export function EditorChoice() {
               Editor&apos;s Choice
             </h2>
           </div>
-          <div
-            className="h-px flex-1 bg-gradient-to-r from-primary/40 to-transparent"
-          />
+          <div className="h-px flex-1 bg-gradient-to-r from-primary/40 to-transparent" />
         </div>
 
         {/* Article list */}
         <ul className="divide-y divide-border/50">
-          {articles.map((article, idx) => (
+          {articles.map((article: Article, idx: number) => (
             <li key={article.id}>
               <button
                 onClick={() => router.push(`/article/${article.id}`)}
@@ -74,9 +80,9 @@ export function EditorChoice() {
                 </span>
 
                 {/* Category badge */}
-                {article.categories?.name && (
+                {article.categories?.[0]?.name && (
                   <span className="flex-shrink-0 hidden sm:inline-block rounded-full bg-primary/10 px-2.5 py-0.5 text-[10px] font-semibold uppercase tracking-wide text-primary">
-                    {article.categories.name}
+                    {article.categories[0].name}
                   </span>
                 )}
 
@@ -91,6 +97,7 @@ export function EditorChoice() {
             </li>
           ))}
         </ul>
+
       </div>
     </section>
   )
