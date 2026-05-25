@@ -12,8 +12,6 @@ import {
   BookOpen, ArrowUp, User,
   AArrowUp, AArrowDown, Sun, Moon,
 } from "lucide-react"
-import { marked } from "marked"
-
 // ─── Types ─────────────────────────────────────────────────────────────────
 interface Article {
   id: string
@@ -43,43 +41,9 @@ const FONT_SIZE_DEFAULT_IDX = 1 // text-base
 
 // ─── Helpers ───────────────────────────────────────────────────────────────
 
-function isHtml(content: string): boolean {
-  const trimmed = content.trim()
-  return /^<(p|div|h[1-6]|ul|ol|li|blockquote|pre|table|section|article|header|footer|main|figure|figcaption|br)\b/i.test(trimmed)
-}
-
-marked.use({
-  gfm: true,
-  breaks: true,
-  renderer: {
-    image({ href, title, text }: { href: string; title: string | null; text: string }) {
-      if (!href || href === "null" || href === "undefined") return ""
-      const safeHref = href.trim()
-      const safeAlt = text || ""
-      const titleAttr = title ? ` title="${title}"` : ""
-      return `<img src="${safeHref}" alt="${safeAlt}"${titleAttr} class="rounded-xl w-full my-6" loading="lazy" decoding="async" />`
-    },
-    heading({ text, depth }: { text: string; depth: number }) {
-      const cleanText = text.replace(/<[^>]+>/g, "")
-      const id = cleanText
-        .toLowerCase()
-        .replace(/[^\w\s-]/g, "")
-        .trim()
-        .replace(/\s+/g, "-")
-      return `<h${depth} id="${id}">${text}</h${depth}>\n`
-    },
-  },
-})
-
+// Konten sekarang selalu HTML dari Tiptap — langsung pakai, tidak perlu parse
 function contentToHtml(content: string): string {
-  if (!content) return ""
-  if (isHtml(content)) return content
-  try {
-    return marked.parse(content) as string
-  } catch (e) {
-    console.error("marked parse error:", e)
-    return content.split("\n\n").map(p => `<p>${p}</p>`).join("")
-  }
+  return content || ""
 }
 
 function calcReadingTime(content: string): number {
@@ -654,15 +618,15 @@ export function ArticleDetail({ articleId }: ArticleDetailProps) {
 
   // Prose classes yang adaptif terhadap font size & dark/light mode
   const proseClass = [
-    "max-w-none",
-    // Pilih base font size sesuai state
-    FONT_SIZES[fontSizeIdx] === "text-sm"  ? "prose prose-sm"  :
-    FONT_SIZES[fontSizeIdx] === "text-lg"  ? "prose prose-lg"  :
-    FONT_SIZES[fontSizeIdx] === "text-xl"  ? "prose prose-xl"  :
-    "prose prose-base",
-    // Mode warna artikel
-    isDark ? "prose-invert" : "prose-stone",
-    // Heading & teks
+    "max-w-none prose",
+    // Font size — apply langsung ke prose variant
+    FONT_SIZES[fontSizeIdx] === "text-sm" ? "prose-sm"  :
+    FONT_SIZES[fontSizeIdx] === "text-lg" ? "prose-lg"  :
+    FONT_SIZES[fontSizeIdx] === "text-xl" ? "prose-xl"  :
+    "prose-base",
+    // Mode warna
+    isDark ? "prose-invert" : "",
+    // Heading
     "prose-headings:font-bold prose-headings:scroll-mt-24",
     isDark
       ? "prose-headings:text-foreground prose-p:text-foreground/90"
@@ -680,7 +644,7 @@ export function ArticleDetail({ articleId }: ArticleDetailProps) {
     // Images
     "prose-img:rounded-xl prose-img:w-full prose-img:my-6",
     // Blockquote
-    "prose-blockquote:border-l-primary",
+    "prose-blockquote:border-l-primary prose-blockquote:border-l-2",
     isDark
       ? "prose-blockquote:bg-secondary/50 prose-blockquote:text-foreground/70"
       : "prose-blockquote:bg-gray-50 prose-blockquote:text-gray-700",
@@ -694,13 +658,23 @@ export function ArticleDetail({ articleId }: ArticleDetailProps) {
       ? "prose-ul:text-foreground/90 prose-ol:text-foreground/90"
       : "prose-ul:text-gray-800 prose-ol:text-gray-800",
     "prose-li:my-1",
-    // Table
-    "prose-table:w-full prose-table:border-collapse prose-table:my-4",
+    // Table — modern clean style
+    "prose-table:w-full prose-table:border-collapse prose-table:my-6 prose-table:text-sm prose-table:overflow-hidden prose-table:rounded-lg",
     isDark
-      ? "prose-th:border prose-th:border-border prose-th:bg-secondary/60 prose-th:text-foreground prose-td:border prose-td:border-border prose-td:text-foreground/80 prose-tr:even:bg-secondary/20"
-      : "prose-th:border prose-th:border-gray-200 prose-th:bg-gray-100 prose-th:text-gray-900 prose-td:border prose-td:border-gray-200 prose-td:text-gray-700 prose-tr:even:bg-gray-50",
-    "prose-th:px-3 prose-th:py-2 prose-th:text-left prose-th:text-sm prose-th:font-semibold",
-    "prose-td:px-3 prose-td:py-2 prose-td:text-sm",
+      ? [
+          "prose-th:border prose-th:border-border prose-th:bg-secondary/80",
+          "prose-th:text-foreground prose-th:font-semibold",
+          "prose-td:border prose-td:border-border prose-td:text-foreground/80",
+          "[&_tbody_tr:nth-child(even)]:bg-secondary/30",
+        ].join(" ")
+      : [
+          "prose-th:border prose-th:border-gray-200 prose-th:bg-gray-100",
+          "prose-th:text-gray-900 prose-th:font-semibold",
+          "prose-td:border prose-td:border-gray-200 prose-td:text-gray-700",
+          "[&_tbody_tr:nth-child(even)]:bg-gray-50",
+        ].join(" "),
+    "prose-th:px-4 prose-th:py-2.5 prose-th:text-left prose-th:text-sm",
+    "prose-td:px-4 prose-td:py-2.5 prose-td:align-top",
     // HR
     isDark ? "prose-hr:border-border" : "prose-hr:border-gray-200",
     "prose-hr:my-8",
@@ -778,7 +752,7 @@ export function ArticleDetail({ articleId }: ArticleDetailProps) {
 
               {/* ── Main Article Column ── */}
               <article
-                className={`min-w-0 flex-1 rounded-2xl transition-colors duration-300 ${isDark ? "" : "bg-white shadow-sm border border-gray-100 px-6 py-8 sm:px-10"}`}
+                className={`min-w-0 flex-1 rounded-2xl transition-colors duration-300 ${isDark ? "" : "bg-white shadow-sm border border-gray-100 px-6 py-8 sm:px-10 article-light-mode"}`}
                 itemScope
                 itemType="https://schema.org/NewsArticle"
               >
@@ -894,7 +868,19 @@ export function ArticleDetail({ articleId }: ArticleDetailProps) {
 
                 {/* Article content — font size & mode adaptive */}
                 <div
-                  className={`transition-all duration-300 ${proseClass}`}
+                  className={[
+                    "transition-all duration-300",
+                    proseClass,
+                    // Apply font-size class directly so text-sm/base/lg/xl actually works
+                    FONT_SIZES[fontSizeIdx],
+                    // Light mode: force dark text on white bg
+                    !isDark ? "text-gray-800 [&_*]:text-gray-800 [&_h1]:text-gray-900 [&_h2]:text-gray-900 [&_h3]:text-gray-900 [&_strong]:text-gray-900 [&_a]:text-primary" : "",
+                    // Card table always visible in both modes
+                    "[&_.card-table-block]:grid [&_.card-table-block]:gap-4",
+                    isDark
+                      ? "[&_.card-table-card]:border-border [&_.card-table-card]:bg-secondary/40 [&_.card-table-label]:text-primary [&_.card-table-value]:text-foreground/90"
+                      : "[&_.card-table-card]:border-gray-200 [&_.card-table-card]:bg-gray-50 [&_.card-table-label]:text-primary [&_.card-table-value]:text-gray-800",
+                  ].filter(Boolean).join(" ")}
                   dangerouslySetInnerHTML={{ __html: processedContent || article.content || "" }}
                   itemProp="articleBody"
                 />

@@ -3,7 +3,8 @@
 import { useState, useEffect, useRef, useCallback } from "react"
 import { useEditor, EditorContent } from "@tiptap/react"
 import StarterKit from "@tiptap/starter-kit"
-import { Markdown } from "tiptap-markdown"
+import { Image as TiptapImage } from "@tiptap/extension-image"
+import { Link as TiptapLink } from "@tiptap/extension-link"
 import Table from "@tiptap/extension-table"
 import TableRow from "@tiptap/extension-table-row"
 import TableHeader from "@tiptap/extension-table-header"
@@ -411,11 +412,8 @@ export function CreateArticleView({ onBack, articleId }: CreateArticleViewProps)
   const editor = useEditor({
     extensions: [
       StarterKit.configure({ codeBlock: false }),
-      Markdown.configure({
-        html: true,
-        transformCopiedText: true,
-        transformPastedText: true,
-      }),
+      TiptapImage,
+      TiptapLink.configure({ openOnClick: false }),
       Table.configure({ resizable: true }),
       TableRow,
       TableHeader,
@@ -535,30 +533,7 @@ export function CreateArticleView({ onBack, articleId }: CreateArticleViewProps)
   // ── Preview ────────────────────────────────────────────────────────────────
   useEffect(() => {
     if (editorTab !== "preview" || !editor) return
-
-    // Ambil HTML langsung dari Tiptap agar card-table-block & tabel native terjaga utuh
-    const rawHtml = editor.getHTML()
-
-    // Pisahkan segmen card-table-block agar tidak diparse ulang oleh marked
-    const CARD_PLACEHOLDER = "%%CARD_BLOCK_%%"
-    const cardBlocks: string[] = []
-    const sanitized = rawHtml.replace(
-      /<div class="card-table-block">[\s\S]*?<\/div>/g,
-      (match) => { cardBlocks.push(match); return CARD_PLACEHOLDER }
-    )
-
-    import("marked").then(({ marked }) => {
-      try {
-        const parsed = marked.parse(sanitized, { async: false }) as string
-        let result = parsed
-        cardBlocks.forEach((block) => {
-          result = result.replace(CARD_PLACEHOLDER, block)
-        })
-        setPreviewHtml(result)
-      } catch {
-        setPreviewHtml("<p>Gagal merender preview.</p>")
-      }
-    })
+    setPreviewHtml(editor.getHTML())
   }, [editorTab, editor])
 
   // ── Featured image ─────────────────────────────────────────────────────────
@@ -592,9 +567,7 @@ export function CreateArticleView({ onBack, articleId }: CreateArticleViewProps)
 
   const handleInsertTable = useCallback(() => {
     if (!editor) return
-    editor.chain().focus().insertContent(
-      "\n| Kolom 1 | Kolom 2 | Kolom 3 |\n|---------|---------|----------|\n| Data 1  | Data 2  | Data 3   |\n"
-    ).run()
+    editor.chain().focus().insertTable({ rows: 3, cols: 3, withHeaderRow: true }).run()
   }, [editor])
 
   // ── Save / Publish ─────────────────────────────────────────────────────────
@@ -621,9 +594,9 @@ export function CreateArticleView({ onBack, articleId }: CreateArticleViewProps)
     if (!editor) return
     setIsLoading(true); setMessage(null)
 
-    const markdownContent = editor.storage.markdown.getMarkdown()
+    const htmlContent = editor.getHTML()
     const payload = {
-      title, slug: generateSlug(title), excerpt, content: markdownContent,
+      title, slug: generateSlug(title), excerpt, content: htmlContent,
       category_id: category || null, featured_image_url: featuredImageUrl,
       meta_title: metaTitle || null, meta_description: metaDescription || null,
       status: publish ? "published" : "draft",
@@ -868,10 +841,19 @@ export function CreateArticleView({ onBack, articleId }: CreateArticleViewProps)
                       "prose-code:bg-secondary prose-code:text-primary prose-code:rounded prose-code:px-1.5",
                       "prose-code:before:content-none prose-code:after:content-none",
                       "prose-img:rounded-xl prose-img:w-full",
-                      "prose-table:border-collapse prose-table:text-sm",
-                      "prose-th:border prose-th:border-border prose-th:bg-secondary/60 prose-th:px-4 prose-th:py-2.5 prose-th:font-semibold",
-                      "prose-td:border prose-td:border-border prose-td:px-4 prose-td:py-2.5",
+                      // Modern table styles
+                      "prose-table:w-full prose-table:border-collapse prose-table:my-6 prose-table:text-sm",
+                      "prose-th:border prose-th:border-border prose-th:bg-secondary/80 prose-th:px-4 prose-th:py-2.5 prose-th:font-semibold prose-th:text-foreground prose-th:text-left",
+                      "prose-td:border prose-td:border-border prose-td:px-4 prose-td:py-2.5 prose-td:text-foreground/80 prose-td:align-top",
+                      "[&_tbody_tr:nth-child(even)]:bg-secondary/30",
                       "prose-hr:border-border",
+                      // Card table styles
+                      "[&_.card-table-block]:grid [&_.card-table-block]:gap-4 [&_.card-table-block]:my-6",
+                      "[&_.card-table-block]:grid-cols-1 sm:[&_.card-table-block]:grid-cols-2",
+                      "[&_.card-table-card]:rounded-xl [&_.card-table-card]:border [&_.card-table-card]:border-border [&_.card-table-card]:bg-secondary/40 [&_.card-table-card]:p-4 [&_.card-table-card]:flex [&_.card-table-card]:flex-col [&_.card-table-card]:gap-2",
+                      "[&_.card-table-field]:flex [&_.card-table-field]:items-start [&_.card-table-field]:gap-2",
+                      "[&_.card-table-label]:text-[10px] [&_.card-table-label]:font-bold [&_.card-table-label]:uppercase [&_.card-table-label]:tracking-wide [&_.card-table-label]:text-primary [&_.card-table-label]:min-w-[90px] [&_.card-table-label]:pt-0.5 [&_.card-table-label]:shrink-0",
+                      "[&_.card-table-value]:text-sm [&_.card-table-value]:text-foreground/90 [&_.card-table-value]:leading-snug",
                     ].join(" ")}
                     dangerouslySetInnerHTML={{ __html: previewHtml }}
                   />

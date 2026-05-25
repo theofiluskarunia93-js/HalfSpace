@@ -104,7 +104,54 @@
   color: oklch(0.87 0.29 142);          /* --primary neon green */
 }
 
-/* ── Card Table Block (dari Card Design) ─────────────────── */
+/* ── Modern Table — prose context ────────────────────────── */
+
+.prose table {
+  width: 100%;
+  border-collapse: collapse;
+  margin: 1.5rem 0;
+  font-size: 0.875rem;
+  overflow: hidden;
+  border-radius: 0.5rem;
+}
+
+.prose table th {
+  border: 1px solid oklch(0.25 0 0);
+  background: oklch(0.18 0 0);
+  color: oklch(0.98 0 0);
+  font-weight: 600;
+  text-align: left;
+  padding: 0.625rem 1rem;
+}
+
+.prose table td {
+  border: 1px solid oklch(0.25 0 0);
+  padding: 0.625rem 1rem;
+  color: oklch(0.85 0 0);
+  vertical-align: top;
+}
+
+.prose table tbody tr:nth-child(even) {
+  background: oklch(0.15 0 0 / 0.4);
+}
+
+/* Light mode table override */
+.article-light-mode .prose table th {
+  border-color: #e5e7eb;
+  background: #f3f4f6;
+  color: #111827;
+}
+
+.article-light-mode .prose table td {
+  border-color: #e5e7eb;
+  color: #374151;
+}
+
+.article-light-mode .prose table tbody tr:nth-child(even) {
+  background: #f9fafb;
+}
+
+/* ── Card Table Block ────────────────────────────────────── */
 
 .card-table-block {
   display: grid;
@@ -146,14 +193,14 @@
   line-height: 1.5;
 }
 
-/* Light mode override */
+/* Light mode card override */
 .article-light-mode .card-table-card {
   border-color: #e5e7eb;
   background: #f9fafb;
 }
 
 .article-light-mode .card-table-label {
-  color: oklch(0.65 0.2 142);
+  color: oklch(0.55 0.18 142);
 }
 
 .article-light-mode .card-table-value {
