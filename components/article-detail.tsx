@@ -28,6 +28,21 @@ interface Article {
   categories: { name: string; slug: string } | null
 }
 
+// Interface khusus untuk related articles (tanpa field content)
+interface RelatedArticle {
+  id: string
+  title: string
+  slug: string
+  excerpt: string | null
+  featured_image_url: string | null
+  featured_image_alt: string | null
+  author: string
+  views: number
+  published_at: string
+  created_at: string
+  categories: { name: string; slug: string } | null
+}
+
 interface TocItem {
   id: string
   text: string
@@ -450,7 +465,7 @@ function AuthorCard() {
 
 // ─── Related Articles ──────────────────────────────────────────────────────
 function RelatedArticles({ currentId, categorySlug }: { currentId: string; categorySlug?: string }) {
-  const [articles, setArticles] = useState<Article[]>([])
+  const [articles, setArticles] = useState<RelatedArticle[]>([])
   const [isLoading, setIsLoading] = useState(true)
   const router = useRouter()
   const supabase = createClient()
@@ -471,7 +486,7 @@ function RelatedArticles({ currentId, categorySlug }: { currentId: string; categ
       }
 
       const { data } = await query
-      setArticles((data as Article[]) || [])
+      setArticles(((data as any[]) || []) as RelatedArticle[])
       setIsLoading(false)
     }
     fetchRelated()
@@ -880,6 +895,27 @@ export function ArticleDetail({ articleId }: ArticleDetailProps) {
                   style={{ fontSize: FONT_SIZE_VALUES[fontSizeIdx], color: isDark ? undefined : "#1f2937" }}
                   dangerouslySetInnerHTML={{ __html: processedContent || article.content || "" }}
                   itemProp="articleBody"
+                  ref={(el) => {
+                    if (!el) return
+                    // Inisialisasi tabbed block — pasang event listener ke semua tombol tab
+                    const initTabs = () => {
+                      el.querySelectorAll<HTMLElement>(".tabbed-block").forEach((block) => {
+                        if (block.dataset.tabInit) return
+                        block.dataset.tabInit = "1"
+                        block.querySelectorAll<HTMLElement>(".tbb").forEach((btn) => {
+                          btn.addEventListener("click", () => {
+                            const idx = btn.dataset.tab
+                            block.querySelectorAll(".tbb").forEach((b) => b.classList.remove("tbb-active"))
+                            block.querySelectorAll(".tbp").forEach((p) => p.classList.remove("tbp-active"))
+                            btn.classList.add("tbb-active")
+                            block.querySelector(`.tbp[data-panel="${idx}"]`)?.classList.add("tbp-active")
+                          })
+                        })
+                      })
+                    }
+                    // Jalankan setelah render selesai
+                    setTimeout(initTabs, 50)
+                  }}
                 />
 
                 {/* Share — bottom */}

@@ -42,7 +42,8 @@ function generateId() {
   return Math.random().toString(36).slice(2, 8)
 }
 
-function tableToModernHtml(tab: TableTabData): string {
+// ── Render satu tab modern sebagai <table> HTML ──────────────────────────────
+function renderModernTabHtml(tab: TableTabData): string {
   const ths = tab.headers.map((h) => `<th>${h}</th>`).join("")
   const trs = tab.rows
     .map((row) => `<tr>${row.map((c) => `<td>${c}</td>`).join("")}</tr>`)
@@ -50,24 +51,46 @@ function tableToModernHtml(tab: TableTabData): string {
   return `<table><thead><tr>${ths}</tr></thead><tbody>${trs}</tbody></table>`
 }
 
-/**
- * Card design → HTML murni (tidak di-markdown).
- * Dibungkus class "card-table-block" agar ArticleRenderer
- * bisa mendeteksi dan menampilkan tanpa parsing markdown.
- */
-function tableToCardHtml(tab: TableTabData): string {
+// ── Render satu tab card sebagai grid kartu ───────────────────────────────────
+function renderCardTabHtml(tab: TableTabData): string {
   const cards = tab.rows
     .map((row) => {
       const fields = tab.headers
-        .map(
-          (h, ci) =>
-            `<div class="card-table-field"><span class="card-table-label">${h}</span><span class="card-table-value">${row[ci] ?? ""}</span></div>`
+        .map((h, ci) =>
+          `<div class="ctf"><span class="ctl">${h}</span><span class="ctv">${row[ci] ?? ""}</span></div>`
         )
         .join("")
-      return `<div class="card-table-card">${fields}</div>`
+      return `<div class="ctc">${fields}</div>`
     })
     .join("")
-  return `<div class="card-table-block">${cards}</div>`
+  return `<div class="ctb">${cards}</div>`
+}
+
+/**
+ * Gabungkan semua tab menjadi satu blok bertab interaktif.
+ * Output: HTML dengan data-tabbed-block + script inline untuk interaktivitas.
+ * Disimpan di cardMapRef dan di-replace dari placeholder saat preview/save.
+ */
+function buildTabbedBlockHtml(tabs: TableTabData[], blockId: string): string {
+  const tabButtons = tabs
+    .map((tab, i) =>
+      `<button class="tbb${i === 0 ? " tbb-active" : ""}" data-tab="${i}">${tab.label}</button>`
+    )
+    .join("")
+
+  const tabPanels = tabs
+    .map((tab, i) => {
+      const inner = tab.style === "card" ? renderCardTabHtml(tab) : renderModernTabHtml(tab)
+      return `<div class="tbp${i === 0 ? " tbp-active" : ""}" data-panel="${i}">${inner}</div>`
+    })
+    .join("")
+
+  return (
+    `<div class="tabbed-block" data-block-id="${blockId}">` +
+    `<div class="tb-nav">${tabButtons}</div>` +
+    `<div class="tb-content">${tabPanels}</div>` +
+    `</div>`
+  )
 }
 
 const STORAGE_KEY_PREFIX = "cms_table_tabs_"
@@ -163,19 +186,34 @@ function TableStyleWidget({ articleId }: { articleId?: string | null }) {
     updateTab(tab.id, { headers })
   }
 
-  // ── Insert handler: tiap tab bisa berbeda style ───────────────────────────
+  // ── Insert handler: semua tab digabung jadi satu tabbed block ───────────
   const handleInsert = () => {
-    // Insert semua tab sebagai HTML — baik modern maupun card
-    for (const tab of tabs) {
-      if (tab.style === "card") {
-        const html = tableToCardHtml(tab)
-        const event = new CustomEvent("insert-table-html", { detail: html })
-        window.dispatchEvent(event)
-      } else {
-        const html = tableToModernHtml(tab)
-        const event = new CustomEvent("insert-table-html", { detail: html })
-        window.dispatchEvent(event)
+    if (tabs.length === 1 && tabs[0].style === "modern") {
+      // Single modern tab: insert langsung sebagai Tiptap table node (lebih ringan)
+      const makeCell = (text: string, isHeader = false): object => ({
+        type: isHeader ? "tableHeader" : "tableCell",
+        attrs: { colspan: 1, rowspan: 1, colwidth: null },
+        content: [{ type: "paragraph", content: text ? [{ type: "text", text }] : [] }],
+      })
+      const node = {
+        type: "table",
+        content: [
+          { type: "tableRow", content: tabs[0].headers.map((h) => makeCell(h, true)) },
+          ...tabs[0].rows.map((row) => ({
+            type: "tableRow",
+            content: row.map((c) => makeCell(c, false)),
+          })),
+        ],
       }
+      const event = new CustomEvent("insert-table-node", { detail: node })
+      window.dispatchEvent(event)
+    } else {
+      // Multi-tab atau ada card: buat tabbed block interaktif
+      const blockId = generateId()
+      const html = buildTabbedBlockHtml(tabs, blockId)
+      cardMapRef.current.set(blockId, html)
+      const event = new CustomEvent("insert-card-placeholder", { detail: blockId })
+      window.dispatchEvent(event)
     }
   }
 
@@ -408,6 +446,9 @@ export function CreateArticleView({ onBack, articleId }: CreateArticleViewProps)
 
   const [editorTab,   setEditorTab]   = useState<"write" | "preview">("write")
   const [previewHtml, setPreviewHtml] = useState("")
+  // Card HTML disimpan di Map (id → html) karena Tiptap strip custom class.
+  // Di Tiptap cukup insert placeholder teks [[CARD:id]], lalu replace saat preview/save.
+  const cardMapRef = useRef<Map<string, string>>(new Map())
 
   // ── Tiptap editor ──────────────────────────────────────────────────────────
   const editor = useEditor({
@@ -441,19 +482,32 @@ export function CreateArticleView({ onBack, articleId }: CreateArticleViewProps)
     content: "",
   })
 
-  // ── Listen for table insert (HTML — modern table & card design) ─────────
+  // ── Listen for modern table insert (JSON node — reliable untuk Tiptap) ────
   useEffect(() => {
     const handler = (e: Event) => {
-      const html = (e as CustomEvent<string>).detail
-      if (editor && html) {
-        // Insert sebagai HTML mentah ke dalam editor
-        editor.chain().focus().insertContent(html, {
-          parseOptions: { preserveWhitespace: "full" },
-        }).run()
+      const node = (e as CustomEvent<object>).detail
+      if (editor && node) {
+        editor.chain().focus().insertContent(node).run()
       }
     }
-    window.addEventListener("insert-table-html", handler)
-    return () => window.removeEventListener("insert-table-html", handler)
+    window.addEventListener("insert-table-node", handler)
+    return () => window.removeEventListener("insert-table-node", handler)
+  }, [editor])
+
+  // ── Listen for card placeholder insert ───────────────────────────────────
+  // Insert teks placeholder [[CARD:id]] ke posisi kursor di Tiptap.
+  // Placeholder ini di-replace dengan HTML card saat preview/save.
+  useEffect(() => {
+    const handler = (e: Event) => {
+      const cardId = (e as CustomEvent<string>).detail
+      if (!editor || !cardId) return
+      editor.chain().focus().insertContent({
+        type: "paragraph",
+        content: [{ type: "text", text: `[[CARD:${cardId}]]` }],
+      }).run()
+    }
+    window.addEventListener("insert-card-placeholder", handler)
+    return () => window.removeEventListener("insert-card-placeholder", handler)
   }, [editor])
 
   // ── Fetch meta (kategori + tags) ───────────────────────────────────────────
@@ -484,7 +538,14 @@ export function CreateArticleView({ onBack, articleId }: CreateArticleViewProps)
         setMetaTitle(data.meta_title || "")
         setMetaDescription(data.meta_description || "")
         setIsEditorChoice(data.is_editor_choice || false)
-        editor.commands.setContent(data.content || "")
+        // Restore tabbed-block / card-table-block dari konten ke cardMapRef
+        const raw = data.content || ""
+        const restored = raw
+          .replace(/<div class="tabbed-block" data-block-id="([^"]+)"[\s\S]*?<\/div>\s*<\/div>\s*<\/div>/g,
+            (match: string, id: string) => { cardMapRef.current.set(id, match); return `[[CARD:${id}]]` })
+          .replace(/<div class="card-table-block" data-card-id="([^"]+)"[\s\S]*?<\/div>/g,
+            (match: string, id: string) => { cardMapRef.current.set(id, match); return `[[CARD:${id}]]` })
+        editor.commands.setContent(restored || "")
       }
       const { data: articleTags } = await supabase
         .from("article_tags").select("tags(name)").eq("article_id", articleId)
@@ -519,10 +580,18 @@ export function CreateArticleView({ onBack, articleId }: CreateArticleViewProps)
     else if (e.key === "Backspace" && tagInput === "" && tags.length > 0) removeTag(tags[tags.length - 1])
   }
 
+  // ── Resolve card placeholders → HTML card sesungguhnya ──────────────────
+  const resolveCards = (html: string): string => {
+    return html.replace(/\[\[CARD:([a-z0-9]+)\]\]/g, (_, id) => {
+      return cardMapRef.current.get(id) ?? ""
+    })
+  }
+
   // ── Preview ────────────────────────────────────────────────────────────────
   useEffect(() => {
     if (editorTab !== "preview" || !editor) return
-    setPreviewHtml(editor.getHTML())
+    const raw = editor.getHTML()
+    setPreviewHtml(resolveCards(raw))
   }, [editorTab, editor])
 
   // ── Featured image ─────────────────────────────────────────────────────────
@@ -583,7 +652,7 @@ export function CreateArticleView({ onBack, articleId }: CreateArticleViewProps)
     if (!editor) return
     setIsLoading(true); setMessage(null)
 
-    const htmlContent = editor.getHTML()
+    const htmlContent = resolveCards(editor.getHTML())
     const payload = {
       title, slug: generateSlug(title), excerpt, content: htmlContent,
       category_id: category || null, featured_image_url: featuredImageUrl,
@@ -845,6 +914,24 @@ export function CreateArticleView({ onBack, articleId }: CreateArticleViewProps)
                       "[&_.card-table-value]:text-sm [&_.card-table-value]:text-foreground/90 [&_.card-table-value]:leading-snug",
                     ].join(" ")}
                     dangerouslySetInnerHTML={{ __html: previewHtml }}
+                  ref={(el) => {
+                    if (!el) return
+                    setTimeout(() => {
+                      el.querySelectorAll<HTMLElement>(".tabbed-block").forEach((block) => {
+                        if (block.dataset.tabInit) return
+                        block.dataset.tabInit = "1"
+                        block.querySelectorAll<HTMLElement>(".tbb").forEach((btn) => {
+                          btn.addEventListener("click", () => {
+                            const idx = btn.dataset.tab
+                            block.querySelectorAll(".tbb").forEach((b) => b.classList.remove("tbb-active"))
+                            block.querySelectorAll(".tbp").forEach((p) => p.classList.remove("tbp-active"))
+                            btn.classList.add("tbb-active")
+                            block.querySelector(`.tbp[data-panel="${idx}"]`)?.classList.add("tbp-active")
+                          })
+                        })
+                      })
+                    }, 50)
+                  }}
                   />
                 )}
               </div>
