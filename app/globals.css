@@ -255,3 +255,117 @@
 .prose-stone .card-table-value {
   color: #374151 !important;
 }
+
+/* ── modern-table — standalone class (dari TableStyleWidget) ── */
+.prose table.modern-table,
+table.modern-table {
+  width: 100% !important;
+  border-collapse: collapse !important;
+  margin: 1.5rem 0 !important;
+  font-size: 0.875rem !important;
+  border-radius: 0.5rem !important;
+  overflow: hidden !important;
+  border: none !important;
+}
+
+.prose table.modern-table th,
+table.modern-table th {
+  background: oklch(0.22 0.08 142) !important;
+  border: 1px solid oklch(0.22 0.06 142) !important;
+  color: oklch(0.98 0 0) !important;
+  font-weight: 600 !important;
+  text-align: left !important;
+  padding: 0.625rem 1rem !important;
+}
+
+.prose table.modern-table td,
+table.modern-table td {
+  border: 1px solid oklch(0.25 0 0) !important;
+  padding: 0.625rem 1rem !important;
+  color: oklch(0.85 0 0) !important;
+  vertical-align: top !important;
+  background: transparent !important;
+}
+
+.prose table.modern-table tbody tr:nth-child(even),
+table.modern-table tbody tr:nth-child(even) {
+  background: oklch(0.15 0 0 / 0.4) !important;
+}
+
+/* Light mode overrides untuk modern-table */
+.prose-stone table.modern-table th {
+  background: #166534 !important;
+  border-color: #86efac !important;
+  color: #ffffff !important;
+}
+
+.prose-stone table.modern-table td {
+  border-color: #e5e7eb !important;
+  color: #374151 !important;
+}
+
+.prose-stone table.modern-table tbody tr:nth-child(even) {
+  background: #f9fafb !important;
+}
+
+/* ── card-design — standalone class (dari TableStyleWidget) ─── */
+.prose .card-design,
+.card-design {
+  display: grid !important;
+  grid-template-columns: repeat(auto-fill, minmax(240px, 1fr)) !important;
+  gap: 1rem !important;
+  margin: 1.5rem 0 !important;
+  border: none !important;
+  background: transparent !important;
+}
+
+.prose .card-design-card,
+.card-design-card {
+  border-radius: 0.75rem !important;
+  border: 1px solid oklch(0.25 0 0) !important;
+  background: oklch(0.14 0 0) !important;
+  padding: 1rem 1.25rem !important;
+  display: flex !important;
+  flex-direction: column !important;
+  gap: 0.55rem !important;
+}
+
+.prose .card-design-field,
+.card-design-field {
+  display: flex !important;
+  align-items: flex-start !important;
+  gap: 0.5rem !important;
+}
+
+.prose .card-design-label,
+.card-design-label {
+  font-size: 0.7rem !important;
+  font-weight: 700 !important;
+  text-transform: uppercase !important;
+  letter-spacing: 0.05em !important;
+  color: oklch(0.87 0.29 142) !important;
+  min-width: 90px !important;
+  flex-shrink: 0 !important;
+  padding-top: 0.1rem !important;
+}
+
+.prose .card-design-value,
+.card-design-value {
+  font-size: 0.85rem !important;
+  color: oklch(0.9 0 0) !important;
+  line-height: 1.5 !important;
+}
+
+/* Light mode overrides untuk card-design */
+.prose-stone .card-design-card {
+  border-color: #e5e7eb !important;
+  background: #f9fafb !important;
+}
+
+.prose-stone .card-design-label {
+  color: oklch(0.55 0.18 142) !important;
+}
+
+.prose-stone .card-design-value {
+  color: #374151 !important;
+}

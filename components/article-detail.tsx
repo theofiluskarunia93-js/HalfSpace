@@ -884,12 +884,17 @@ export function ArticleDetail({ articleId }: ArticleDetailProps) {
                   className={[
                     "transition-all duration-300",
                     proseClass,
-                    // Card table grid
+                    // Card table grid (legacy class names)
                     "[&_.card-table-block]:grid [&_.card-table-block]:gap-4 [&_.card-table-block]:grid-cols-1 sm:[&_.card-table-block]:grid-cols-2",
                     isDark
                       ? "[&_.card-table-card]:border-border [&_.card-table-card]:bg-secondary/40 [&_.card-table-label]:text-primary [&_.card-table-value]:text-foreground/90"
                       : "[&_.card-table-card]:border-gray-200 [&_.card-table-card]:bg-gray-50 [&_.card-table-label]:!text-green-700 [&_.card-table-value]:!text-gray-800",
-                    // Light mode table text
+                    // card-design class (format baru dari TableStyleWidget)
+                    "[&_.card-design]:grid [&_.card-design]:gap-4 [&_.card-design]:my-6 [&_.card-design]:grid-cols-1 sm:[&_.card-design]:grid-cols-2",
+                    isDark
+                      ? "[&_.card-design-card]:border-border [&_.card-design-card]:bg-secondary/40 [&_.card-design-label]:text-primary [&_.card-design-value]:text-foreground/90"
+                      : "[&_.card-design-card]:border-gray-200 [&_.card-design-card]:bg-gray-50 [&_.card-design-label]:!text-green-700 [&_.card-design-value]:!text-gray-800",
+                    // Light mode table text (termasuk modern-table)
                     !isDark ? "[&_table_th]:!bg-gray-100 [&_table_th]:!text-gray-900 [&_table_th]:!border-gray-200 [&_table_td]:!text-gray-700 [&_table_td]:!border-gray-200 [&_table_tbody_tr:nth-child(even)]:!bg-gray-50" : "",
                   ].filter(Boolean).join(" ")}
                   style={{ fontSize: FONT_SIZE_VALUES[fontSizeIdx], color: isDark ? undefined : "#1f2937" }}

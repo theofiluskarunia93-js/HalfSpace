@@ -48,7 +48,8 @@ function renderModernTabHtml(tab: TableTabData): string {
   const trs = tab.rows
     .map((row) => `<tr>${row.map((c) => `<td>${c}</td>`).join("")}</tr>`)
     .join("")
-  return `<table><thead><tr>${ths}</tr></thead><tbody>${trs}</tbody></table>`
+  // class="modern-table" memastikan CSS & frontend renderer mengenali tabel ini
+  return `<table class="modern-table"><thead><tr>${ths}</tr></thead><tbody>${trs}</tbody></table>`
 }
 
 // ── Render satu tab card sebagai grid kartu ───────────────────────────────────
@@ -57,13 +58,16 @@ function renderCardTabHtml(tab: TableTabData): string {
     .map((row) => {
       const fields = tab.headers
         .map((h, ci) =>
-          `<div class="ctf"><span class="ctl">${h}</span><span class="ctv">${row[ci] ?? ""}</span></div>`
+          // Gunakan class card-design-* (semantik, konsisten dengan CSS & frontend)
+          `<div class="card-design-field"><span class="card-design-label">${h}</span><span class="card-design-value">${row[ci] ?? ""}</span></div>`
         )
         .join("")
-      return `<div class="ctc">${fields}</div>`
+      // class="card-design-card" pada setiap item kartu
+      return `<div class="card-design-card">${fields}</div>`
     })
     .join("")
-  return `<div class="ctb">${cards}</div>`
+  // class="card-design" pada wrapper grid
+  return `<div class="card-design">${cards}</div>`
 }
 
 /**
@@ -189,23 +193,13 @@ function TableStyleWidget({ articleId }: { articleId?: string | null }) {
   // ── Insert handler: semua tab digabung jadi satu tabbed block ───────────
   const handleInsert = () => {
     if (tabs.length === 1 && tabs[0].style === "modern") {
-      // Single modern tab: insert langsung sebagai Tiptap table node (lebih ringan)
-      const makeCell = (text: string, isHeader = false): object => ({
-        type: isHeader ? "tableHeader" : "tableCell",
-        attrs: { colspan: 1, rowspan: 1, colwidth: null },
-        content: [{ type: "paragraph", content: text ? [{ type: "text", text }] : [] }],
-      })
-      const node = {
-        type: "table",
-        content: [
-          { type: "tableRow", content: tabs[0].headers.map((h) => makeCell(h, true)) },
-          ...tabs[0].rows.map((row) => ({
-            type: "tableRow",
-            content: row.map((c) => makeCell(c, false)),
-          })),
-        ],
-      }
-      const event = new CustomEvent("insert-table-node", { detail: node })
+      // Single modern tab: insert sebagai HTML dengan class "modern-table"
+      // agar class tersimpan di konten dan tampil konsisten di preview & frontend
+      const blockId = generateId()
+      const html = renderModernTabHtml(tabs[0])
+      // Bungkus dalam div placeholder agar resolveCards bisa replace-nya
+      cardMapRef.current.set(blockId, html)
+      const event = new CustomEvent("insert-card-placeholder", { detail: blockId })
       window.dispatchEvent(event)
     } else {
       // Multi-tab atau ada card: buat tabbed block interaktif
@@ -538,13 +532,27 @@ export function CreateArticleView({ onBack, articleId }: CreateArticleViewProps)
         setMetaTitle(data.meta_title || "")
         setMetaDescription(data.meta_description || "")
         setIsEditorChoice(data.is_editor_choice || false)
-        // Restore tabbed-block / card-table-block dari konten ke cardMapRef
+        // Restore tabbed-block / card-table-block / modern-table / card-design dari konten ke cardMapRef
         const raw = data.content || ""
         const restored = raw
           .replace(/<div class="tabbed-block" data-block-id="([^"]+)"[\s\S]*?<\/div>\s*<\/div>\s*<\/div>/g,
             (match: string, id: string) => { cardMapRef.current.set(id, match); return `[[CARD:${id}]]` })
           .replace(/<div class="card-table-block" data-card-id="([^"]+)"[\s\S]*?<\/div>/g,
             (match: string, id: string) => { cardMapRef.current.set(id, match); return `[[CARD:${id}]]` })
+          // Format baru: <table class="modern-table"> langsung (single tab)
+          .replace(/(<table class="modern-table">[\s\S]*?<\/table>)/g,
+            (match: string) => {
+              const id = generateId()
+              cardMapRef.current.set(id, match)
+              return `[[CARD:${id}]]`
+            })
+          // Format baru: <div class="card-design"> langsung (single card tab)
+          .replace(/(<div class="card-design">[\s\S]*?<\/div>)/g,
+            (match: string) => {
+              const id = generateId()
+              cardMapRef.current.set(id, match)
+              return `[[CARD:${id}]]`
+            })
         editor.commands.setContent(restored || "")
       }
       const { data: articleTags } = await supabase
@@ -905,13 +913,19 @@ export function CreateArticleView({ onBack, articleId }: CreateArticleViewProps)
                       "prose-td:border prose-td:border-border prose-td:px-4 prose-td:py-2.5 prose-td:text-foreground/80 prose-td:align-top",
                       "[&_tbody_tr:nth-child(even)]:bg-secondary/30",
                       "prose-hr:border-border",
-                      // Card table styles
+                      // Card table styles (legacy class names)
                       "[&_.card-table-block]:grid [&_.card-table-block]:gap-4 [&_.card-table-block]:my-6",
                       "[&_.card-table-block]:grid-cols-1 sm:[&_.card-table-block]:grid-cols-2",
                       "[&_.card-table-card]:rounded-xl [&_.card-table-card]:border [&_.card-table-card]:border-border [&_.card-table-card]:bg-secondary/40 [&_.card-table-card]:p-4 [&_.card-table-card]:flex [&_.card-table-card]:flex-col [&_.card-table-card]:gap-2",
                       "[&_.card-table-field]:flex [&_.card-table-field]:items-start [&_.card-table-field]:gap-2",
                       "[&_.card-table-label]:text-[10px] [&_.card-table-label]:font-bold [&_.card-table-label]:uppercase [&_.card-table-label]:tracking-wide [&_.card-table-label]:text-primary [&_.card-table-label]:min-w-[90px] [&_.card-table-label]:pt-0.5 [&_.card-table-label]:shrink-0",
                       "[&_.card-table-value]:text-sm [&_.card-table-value]:text-foreground/90 [&_.card-table-value]:leading-snug",
+                      // card-design class (format baru dari TableStyleWidget)
+                      "[&_.card-design]:grid [&_.card-design]:gap-4 [&_.card-design]:my-6 [&_.card-design]:grid-cols-1",
+                      "[&_.card-design-card]:rounded-xl [&_.card-design-card]:border [&_.card-design-card]:border-border [&_.card-design-card]:bg-secondary/40 [&_.card-design-card]:p-4 [&_.card-design-card]:flex [&_.card-design-card]:flex-col [&_.card-design-card]:gap-2",
+                      "[&_.card-design-field]:flex [&_.card-design-field]:items-start [&_.card-design-field]:gap-2",
+                      "[&_.card-design-label]:text-[10px] [&_.card-design-label]:font-bold [&_.card-design-label]:uppercase [&_.card-design-label]:tracking-wide [&_.card-design-label]:text-primary [&_.card-design-label]:min-w-[90px] [&_.card-design-label]:pt-0.5 [&_.card-design-label]:shrink-0",
+                      "[&_.card-design-value]:text-sm [&_.card-design-value]:text-foreground/90 [&_.card-design-value]:leading-snug",
                     ].join(" ")}
                     dangerouslySetInnerHTML={{ __html: previewHtml }}
                   ref={(el) => {

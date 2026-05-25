@@ -290,7 +290,7 @@
   background: oklch(0.15 0 0 / 0.4);
 }
 
-/* Card inside tabbed block */
+/* Card inside tabbed block — class lama (ctb/ctc/ctf/ctl/ctv) */
 .tabbed-block .ctb {
   display: grid;
   grid-template-columns: repeat(auto-fill, minmax(260px, 1fr));
@@ -328,6 +328,106 @@
   font-size: 0.85rem;
   color: oklch(0.9 0 0);
   line-height: 1.5;
+}
+
+/* ── modern-table — standalone (tidak dalam tabbed-block) ─── */
+table.modern-table {
+  width: 100%;
+  border-collapse: collapse;
+  font-size: 0.875rem;
+  margin: 1.5rem 0;
+  border-radius: 0.5rem;
+  overflow: hidden;
+}
+
+table.modern-table th {
+  background: oklch(0.22 0.08 142);
+  border: 1px solid oklch(0.22 0.06 142);
+  color: oklch(0.98 0 0);
+  font-weight: 600;
+  text-align: left;
+  padding: 0.625rem 1rem;
+}
+
+table.modern-table td {
+  border: 1px solid oklch(0.25 0 0);
+  padding: 0.625rem 1rem;
+  color: oklch(0.85 0 0);
+  vertical-align: top;
+}
+
+table.modern-table tbody tr:nth-child(even) {
+  background: oklch(0.15 0 0 / 0.4);
+}
+
+/* ── card-design — standalone grid kartu ──────────────────── */
+.card-design {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(260px, 1fr));
+  gap: 0.875rem;
+  margin: 1.5rem 0;
+}
+
+.card-design-card {
+  border-radius: 0.625rem;
+  border: 1px solid oklch(0.25 0 0);
+  background: oklch(0.15 0 0);
+  padding: 0.875rem 1rem;
+  display: flex;
+  flex-direction: column;
+  gap: 0.5rem;
+}
+
+.card-design-field {
+  display: flex;
+  align-items: flex-start;
+  gap: 0.5rem;
+}
+
+.card-design-label {
+  font-size: 0.7rem;
+  font-weight: 700;
+  text-transform: uppercase;
+  letter-spacing: 0.05em;
+  color: oklch(0.87 0.29 142);
+  min-width: 80px;
+  padding-top: 0.1rem;
+  flex-shrink: 0;
+}
+
+.card-design-value {
+  font-size: 0.85rem;
+  color: oklch(0.9 0 0);
+  line-height: 1.5;
+}
+
+/* Light mode overrides untuk card-design standalone */
+.article-light-mode table.modern-table th {
+  background: #166534;
+  border-color: #86efac;
+  color: #ffffff;
+}
+
+.article-light-mode table.modern-table td {
+  border-color: #e5e7eb;
+  color: #374151;
+}
+
+.article-light-mode table.modern-table tbody tr:nth-child(even) {
+  background: #f9fafb;
+}
+
+.article-light-mode .card-design-card {
+  border-color: #e5e7eb;
+  background: #f9fafb;
+}
+
+.article-light-mode .card-design-label {
+  color: #166534;
+}
+
+.article-light-mode .card-design-value {
+  color: #374151;
 }
 
 /* Light mode tabbed block */
