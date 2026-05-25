@@ -4,6 +4,10 @@ import { useState, useEffect, useRef, useCallback } from "react"
 import { useEditor, EditorContent } from "@tiptap/react"
 import StarterKit from "@tiptap/starter-kit"
 import { Markdown } from "tiptap-markdown"
+import Table from "@tiptap/extension-table"
+import TableRow from "@tiptap/extension-table-row"
+import TableHeader from "@tiptap/extension-table-header"
+import TableCell from "@tiptap/extension-table-cell"
 import {
   ArrowLeft, Save, Image as ImageIcon, X, Plus, Eye,
   Bold, Italic, List, ListOrdered, Link2, Quote,
@@ -412,6 +416,10 @@ export function CreateArticleView({ onBack, articleId }: CreateArticleViewProps)
         transformCopiedText: true,
         transformPastedText: true,
       }),
+      Table.configure({ resizable: true }),
+      TableRow,
+      TableHeader,
+      TableCell,
     ],
     editorProps: {
       attributes: {
@@ -527,11 +535,29 @@ export function CreateArticleView({ onBack, articleId }: CreateArticleViewProps)
   // ── Preview ────────────────────────────────────────────────────────────────
   useEffect(() => {
     if (editorTab !== "preview" || !editor) return
-    const rawContent = editor.storage.markdown.getMarkdown()
+
+    // Ambil HTML langsung dari Tiptap agar card-table-block & tabel native terjaga utuh
+    const rawHtml = editor.getHTML()
+
+    // Pisahkan segmen card-table-block agar tidak diparse ulang oleh marked
+    const CARD_PLACEHOLDER = "%%CARD_BLOCK_%%"
+    const cardBlocks: string[] = []
+    const sanitized = rawHtml.replace(
+      /<div class="card-table-block">[\s\S]*?<\/div>/g,
+      (match) => { cardBlocks.push(match); return CARD_PLACEHOLDER }
+    )
+
     import("marked").then(({ marked }) => {
-      marked.use({ gfm: true, breaks: true })
-      try { setPreviewHtml(marked.parse(rawContent) as string) }
-      catch { setPreviewHtml("<p>Gagal merender preview.</p>") }
+      try {
+        const parsed = marked.parse(sanitized, { async: false }) as string
+        let result = parsed
+        cardBlocks.forEach((block) => {
+          result = result.replace(CARD_PLACEHOLDER, block)
+        })
+        setPreviewHtml(result)
+      } catch {
+        setPreviewHtml("<p>Gagal merender preview.</p>")
+      }
     })
   }, [editorTab, editor])
 

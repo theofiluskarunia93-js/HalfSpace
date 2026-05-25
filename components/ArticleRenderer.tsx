@@ -6,39 +6,41 @@ import { marked, Tokens } from "marked"
 // ─── Konfigurasi marked ──────────────────────────────────────────────────────
 // Identik dengan tab Preview di CMS editor — dipasang sekali di module level.
 
-marked.use({
-  gfm: true,
-  breaks: true,
-  renderer: {
-    image({ href, title, text }: Tokens.Image) {
-      if (!href || href === "null" || href === "undefined") return ""
-      const safeHref = href.trim()
-      const safeAlt  = text || ""
-      const titleAttr = title ? ` title="${title}"` : ""
-      return `<figure class="article-figure">
+// ─── Konfigurasi marked ──────────────────────────────────────────────────────
+// Identik dengan tab Preview di CMS editor — dipasang sekali di module level.
+
+const renderer = new marked.Renderer()
+
+renderer.image = ({ href, title, text }: Tokens.Image) => {
+  if (!href || href === "null" || href === "undefined") return ""
+  const safeHref = href.trim()
+  const safeAlt  = text || ""
+  const titleAttr = title ? ` title="${title}"` : ""
+  return `<figure class="article-figure">
   <img src="${safeHref}" alt="${safeAlt}"${titleAttr} class="article-img" loading="lazy" decoding="async" />
   ${safeAlt ? `<figcaption>${safeAlt}</figcaption>` : ""}
 </figure>`
-    },
+}
 
-    heading({ text, depth }: Tokens.Heading) {
-      const cleanText = text.replace(/<[^>]+>/g, "")
-      const id = cleanText
-        .toLowerCase()
-        .replace(/[^\w\s-]/g, "")
-        .trim()
-        .replace(/\s+/g, "-")
-      return `<h${depth} id="${id}">${text}</h${depth}>\n`
-    },
+renderer.heading = ({ text, depth }: Tokens.Heading) => {
+  const cleanText = text.replace(/<[^>]+>/g, "")
+  const id = cleanText
+    .toLowerCase()
+    .replace(/[^\w\s-]/g, "")
+    .trim()
+    .replace(/\s+/g, "-")
+  return `<h${depth} id="${id}">${text}</h${depth}>\n`
+}
 
-    link({ href, title, text }: Tokens.Link) {
-      const isExternal = href?.startsWith("http://") || href?.startsWith("https://")
-      const titleAttr    = title ? ` title="${title}"` : ""
-      const externalAttr = isExternal ? ` target="_blank" rel="noopener noreferrer"` : ""
-      return `<a href="${href}"${titleAttr}${externalAttr}>${text}</a>`
-    },
-  },
-})
+renderer.link = ({ href, title, text }: Tokens.Link) => {
+  const isExternal = href?.startsWith("http://") || href?.startsWith("https://")
+  const titleAttr    = title ? ` title="${title}"` : ""
+  const externalAttr = isExternal ? ` target="_blank" rel="noopener noreferrer"` : ""
+  return `<a href="${href}"${titleAttr}${externalAttr}>${text}</a>`
+}
+
+marked.use({ renderer })
+marked.setOptions({ gfm: true, breaks: true })
 
 // ─── Helpers ─────────────────────────────────────────────────────────────────
 
@@ -51,8 +53,21 @@ function isHtml(content: string): boolean {
 function contentToHtml(content: string): string {
   if (!content) return ""
   if (isHtml(content)) return content
+
+  // Pisahkan card-table-block dari markdown agar tidak diparse marked
+  const CARD_PLACEHOLDER = "%%CARD_BLOCK_%%"
+  const cardBlocks: string[] = []
+  const sanitized = content.replace(
+    /<div class="card-table-block">[\s\S]*?<\/div>/g,
+    (match) => { cardBlocks.push(match); return CARD_PLACEHOLDER }
+  )
+
   try {
-    return marked.parse(content) as string
+    let parsed = marked.parse(sanitized, { async: false }) as string
+    cardBlocks.forEach((block) => {
+      parsed = parsed.replace(CARD_PLACEHOLDER, block)
+    })
+    return parsed
   } catch (err) {
     console.error("[ArticleRenderer] marked parse error:", err)
     return content.split("\n\n").map((p) => `<p>${p}</p>`).join("")
