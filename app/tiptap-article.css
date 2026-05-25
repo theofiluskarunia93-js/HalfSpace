@@ -488,3 +488,121 @@ table.modern-table tbody tr:nth-child(even) {
 .article-light-mode .tabbed-block .ctv {
   color: #374151;
 }
+
+/* ── Match Card Grid ─────────────────────────────────────── */
+
+.match-card-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(280px, 1fr));
+  gap: 1rem;
+  margin: 1rem 0;
+}
+
+.match-card {
+  border-radius: 0.75rem;
+  border: 1px solid oklch(0.22 0 0);
+  background: oklch(0.14 0 0);
+  padding: 1rem 1.25rem;
+  display: flex;
+  flex-direction: column;
+  gap: 0.625rem;
+}
+
+.match-card-top {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+}
+
+.match-card-badge {
+  display: inline-block;
+  background: oklch(0.87 0.29 142);
+  color: oklch(0.08 0 0);
+  font-size: 0.7rem;
+  font-weight: 800;
+  letter-spacing: 0.06em;
+  padding: 0.2rem 0.65rem;
+  border-radius: 9999px;
+}
+
+.match-card-date {
+  font-size: 0.75rem;
+  color: oklch(0.6 0 0);
+}
+
+.match-card-teams {
+  display: flex;
+  align-items: center;
+  gap: 0.5rem;
+  flex-wrap: wrap;
+}
+
+.match-card-team {
+  font-size: 1rem;
+  font-weight: 700;
+  color: oklch(0.97 0 0);
+}
+
+.match-card-vs {
+  font-size: 0.85rem;
+  font-weight: 700;
+  color: oklch(0.87 0.29 142);
+  padding: 0 0.1rem;
+}
+
+.match-card-bottom {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  flex-wrap: wrap;
+  gap: 0.5rem;
+}
+
+.match-card-time {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.3rem;
+  background: oklch(0.1 0 0);
+  border: 1px solid oklch(0.22 0 0);
+  border-radius: 0.375rem;
+  padding: 0.25rem 0.6rem;
+  font-size: 0.8rem;
+  font-weight: 700;
+  color: oklch(0.95 0 0);
+}
+
+.match-card-stadium {
+  font-size: 0.75rem;
+  color: oklch(0.6 0 0);
+  text-align: right;
+}
+
+/* Match card inside tabbed block — nav & content padding udah ada di .tb-content */
+.tabbed-block .match-card-grid {
+  margin: 0;
+}
+
+/* Light mode match card */
+.article-light-mode .match-card {
+  border-color: #e5e7eb;
+  background: #ffffff;
+  box-shadow: 0 1px 3px 0 rgb(0 0 0 / 0.07);
+}
+
+.article-light-mode .match-card-date {
+  color: #6b7280;
+}
+
+.article-light-mode .match-card-team {
+  color: #111827;
+}
+
+.article-light-mode .match-card-time {
+  background: #f3f4f6;
+  border-color: #e5e7eb;
+  color: #111827;
+}
+
+.article-light-mode .match-card-stadium {
+  color: #6b7280;
+}

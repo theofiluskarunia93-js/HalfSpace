@@ -13,7 +13,7 @@ import {
   ArrowLeft, Save, Image as ImageIcon, X, Plus, Eye,
   Bold, Italic, List, ListOrdered, Link2, Quote,
   Code2, Minus, Heading1, Heading2, Heading3,
-  Undo2, Redo2, Table as TableIcon, LayoutGrid, Star,
+  Undo2, Redo2, Table as TableIcon, Star,
 } from "lucide-react"
 import { Button } from "@/components/ui/button"
 import { Input } from "@/components/ui/input"
@@ -26,139 +26,91 @@ interface CreateArticleViewProps {
   articleId?: string | null
 }
 
-type TableStyle = "modern" | "card"
-
-interface TableTabData {
-  id: string
-  label: string
-  style: TableStyle
-  headers: string[]
-  rows: string[][]
-}
-
 // ─── Helpers ─────────────────────────────────────────────────────────────────
 
 function generateId() {
   return Math.random().toString(36).slice(2, 8)
 }
 
-// ── Render satu tab modern sebagai <table> HTML ──────────────────────────────
-function renderModernTabHtml(tab: TableTabData): string {
-  const ths = tab.headers.map((h) => `<th>${h}</th>`).join("")
-  const trs = tab.rows
-    .map((row) => `<tr>${row.map((c) => `<td>${c}</td>`).join("")}</tr>`)
-    .join("")
-  // class="modern-table" memastikan CSS & frontend renderer mengenali tabel ini
-  return `<table class="modern-table"><thead><tr>${ths}</tr></thead><tbody>${trs}</tbody></table>`
+// ─── Match Card Widget ────────────────────────────────────────────────────────
+
+interface MatchEntry {
+  id: string
+  homeTeam: string
+  awayTeam: string
+  date: string      // e.g. "Jumat, 12 Juni 2026"
+  time: string      // e.g. "02.00 WIB"
+  stadium: string
 }
 
-// ── Render satu tab card sebagai grid kartu ───────────────────────────────────
-function renderCardTabHtml(tab: TableTabData): string {
-  const cards = tab.rows
-    .map((row) => {
-      const fields = tab.headers
-        .map((h, ci) =>
-          // Gunakan class card-design-* (semantik, konsisten dengan CSS & frontend)
-          `<div class="card-design-field"><span class="card-design-label">${h}</span><span class="card-design-value">${row[ci] ?? ""}</span></div>`
-        )
-        .join("")
-      // class="card-design-card" pada setiap item kartu
-      return `<div class="card-design-card">${fields}</div>`
-    })
-    .join("")
-  // class="card-design" pada wrapper grid
-  return `<div class="card-design">${cards}</div>`
+interface MatchTab {
+  id: string
+  label: string     // e.g. "Grup A"
+  matches: MatchEntry[]
 }
 
-/**
- * Gabungkan semua tab menjadi satu blok bertab interaktif.
- * Output: HTML dengan data-tabbed-block + script inline untuk interaktivitas.
- * Disimpan di cardMapRef dan di-replace dari placeholder saat preview/save.
- */
-function buildTabbedBlockHtml(tabs: TableTabData[], blockId: string): string {
-  const tabButtons = tabs
-    .map((tab, i) =>
-      `<button class="tbb${i === 0 ? " tbb-active" : ""}" data-tab="${i}">${tab.label}</button>`
-    )
-    .join("")
+function makeMatch(): MatchEntry {
+  return { id: generateId(), homeTeam: "", awayTeam: "", date: "", time: "", stadium: "" }
+}
 
-  const tabPanels = tabs
-    .map((tab, i) => {
-      const inner = tab.style === "card" ? renderCardTabHtml(tab) : renderModernTabHtml(tab)
-      return `<div class="tbp${i === 0 ? " tbp-active" : ""}" data-panel="${i}">${inner}</div>`
-    })
-    .join("")
+function makeMatchTab(index: number): MatchTab {
+  return { id: generateId(), label: `Grup ${String.fromCharCode(65 + index)}`, matches: [makeMatch()] }
+}
 
+/** Render satu tab pertandingan menjadi HTML match-card-grid */
+function renderMatchTabHtml(tab: MatchTab): string {
+  const cards = tab.matches.map((m) => `
+<div class="match-card">
+  <div class="match-card-top">
+    <span class="match-card-badge">${tab.label.toUpperCase()}</span>
+    <span class="match-card-date">${m.date}</span>
+  </div>
+  <div class="match-card-teams">
+    <span class="match-card-team">${m.homeTeam}</span>
+    <span class="match-card-vs">vs</span>
+    <span class="match-card-team">${m.awayTeam}</span>
+  </div>
+  <div class="match-card-bottom">
+    <span class="match-card-time">⏰ ${m.time}</span>
+    <span class="match-card-stadium">${m.stadium}</span>
+  </div>
+</div>`).join("")
+  return `<div class="match-card-grid">${cards}</div>`
+}
+
+/** Bungkus semua tab jadwal menjadi tabbed-block HTML */
+function buildMatchTabbedHtml(tabs: MatchTab[], blockId: string): string {
+  const buttons = tabs
+    .map((t, i) => `<button class="tbb${i === 0 ? " tbb-active" : ""}" data-tab="${i}">${t.label}</button>`)
+    .join("")
+  const panels = tabs
+    .map((t, i) => `<div class="tbp${i === 0 ? " tbp-active" : ""}" data-panel="${i}">${renderMatchTabHtml(t)}</div>`)
+    .join("")
   return (
     `<div class="tabbed-block" data-block-id="${blockId}">` +
-    `<div class="tb-nav">${tabButtons}</div>` +
-    `<div class="tb-content">${tabPanels}</div>` +
+    `<div class="tb-nav">${buttons}</div>` +
+    `<div class="tb-content">${panels}</div>` +
     `</div>`
   )
 }
 
-const STORAGE_KEY_PREFIX = "cms_table_tabs_"
-
-// ─── TableStyleWidget ─────────────────────────────────────────────────────────
-
-function TableStyleWidget({ articleId }: { articleId?: string | null }) {
-  const storageKey = STORAGE_KEY_PREFIX + (articleId || "new")
-
-  const defaultTab = (): TableTabData => ({
-    id: generateId(),
-    label: "Tab 1",
-    style: "modern",
-    headers: ["Kolom 1", "Kolom 2", "Kolom 3"],
-    rows: [["Data 1", "Data 2", "Data 3"]],
-  })
-
-  const [tabs, setTabs] = useState<TableTabData[]>(() => {
-    if (typeof window === "undefined") return [defaultTab()]
-    try {
-      const saved = localStorage.getItem(storageKey)
-      if (saved) return JSON.parse(saved)
-    } catch {}
-    return [defaultTab()]
-  })
-
-  const [activeTab, setActiveTab] = useState<string>(() => {
-    if (typeof window === "undefined") return ""
-    try {
-      const saved = localStorage.getItem(storageKey + "_active")
-      if (saved) return saved
-    } catch {}
-    return ""
-  })
-
-  useEffect(() => {
-    try { localStorage.setItem(storageKey, JSON.stringify(tabs)) } catch {}
-  }, [tabs, storageKey])
+function MatchCardWidget({ onInsert }: { onInsert: (html: string, blockId: string) => void }) {
+  const [tabs, setTabs] = useState<MatchTab[]>([makeMatchTab(0)])
+  const [activeTab, setActiveTab] = useState<string>(() => "")
 
   useEffect(() => {
     if (!activeTab && tabs.length > 0) setActiveTab(tabs[0].id)
   }, [tabs, activeTab])
 
-  useEffect(() => {
-    if (activeTab) {
-      try { localStorage.setItem(storageKey + "_active", activeTab) } catch {}
-    }
-  }, [activeTab, storageKey])
-
   const currentTab = tabs.find((t) => t.id === activeTab) ?? tabs[0]
 
-  const updateTab = (id: string, patch: Partial<TableTabData>) =>
+  const updateTab = (id: string, patch: Partial<MatchTab>) =>
     setTabs((prev) => prev.map((t) => (t.id === id ? { ...t, ...patch } : t)))
 
   const addTab = () => {
-    const newTab: TableTabData = {
-      id: generateId(),
-      label: `Tab ${tabs.length + 1}`,
-      style: "modern",
-      headers: ["Kolom 1", "Kolom 2", "Kolom 3"],
-      rows: [["Data 1", "Data 2", "Data 3"]],
-    }
-    setTabs((prev) => [...prev, newTab])
-    setActiveTab(newTab.id)
+    const t = makeMatchTab(tabs.length)
+    setTabs((prev) => [...prev, t])
+    setActiveTab(t.id)
   }
 
   const removeTab = (id: string) => {
@@ -169,46 +121,29 @@ function TableStyleWidget({ articleId }: { articleId?: string | null }) {
     })
   }
 
-  const addRow = (tab: TableTabData) =>
-    updateTab(tab.id, { rows: [...tab.rows, tab.headers.map(() => "")] })
-
-  const addCol = (tab: TableTabData) =>
-    updateTab(tab.id, {
-      headers: [...tab.headers, `Kolom ${tab.headers.length + 1}`],
-      rows: tab.rows.map((r) => [...r, ""]),
-    })
-
-  const updateCell = (tab: TableTabData, row: number, col: number, value: string) => {
-    const rows = tab.rows.map((r, ri) =>
-      r.map((c, ci) => (ri === row && ci === col ? value : c))
-    )
-    updateTab(tab.id, { rows })
+  const updateMatch = (tabId: string, matchId: string, patch: Partial<MatchEntry>) => {
+    setTabs((prev) => prev.map((t) => t.id !== tabId ? t : {
+      ...t,
+      matches: t.matches.map((m) => m.id === matchId ? { ...m, ...patch } : m),
+    }))
   }
 
-  const updateHeader = (tab: TableTabData, col: number, value: string) => {
-    const headers = tab.headers.map((h, i) => (i === col ? value : h))
-    updateTab(tab.id, { headers })
-  }
+  const addMatch = (tabId: string) =>
+    setTabs((prev) => prev.map((t) => t.id !== tabId ? t : { ...t, matches: [...t.matches, makeMatch()] }))
 
-  // ── Insert handler: semua tab digabung jadi satu tabbed block ───────────
+  const removeMatch = (tabId: string, matchId: string) =>
+    setTabs((prev) => prev.map((t) => t.id !== tabId ? t : {
+      ...t, matches: t.matches.filter((m) => m.id !== matchId),
+    }))
+
   const handleInsert = () => {
-    if (tabs.length === 1 && tabs[0].style === "modern") {
-      // Single modern tab: insert sebagai HTML dengan class "modern-table"
-      // agar class tersimpan di konten dan tampil konsisten di preview & frontend
-      const blockId = generateId()
-      const html = renderModernTabHtml(tabs[0])
-      // Bungkus dalam div placeholder agar resolveCards bisa replace-nya
-      // cardMapRef.current.set(blockId, html)
-      const event = new CustomEvent("insert-card-placeholder", { detail: blockId })
-      window.dispatchEvent(event)
-    } else {
-      // Multi-tab atau ada card: buat tabbed block interaktif
-      const blockId = generateId()
-      const html = buildTabbedBlockHtml(tabs, blockId)
-      // cardMapRef.current.set(blockId, html)
-      const event = new CustomEvent("insert-card-placeholder", { detail: blockId })
-      window.dispatchEvent(event)
-    }
+    const blockId = generateId()
+    const validTabs = tabs.filter((t) => t.matches.some((m) => m.homeTeam || m.awayTeam))
+    if (!validTabs.length) return
+    const html = validTabs.length === 1
+      ? renderMatchTabHtml(validTabs[0])
+      : buildMatchTabbedHtml(validTabs, blockId)
+    onInsert(html, blockId)
   }
 
   if (!currentTab) return null
@@ -216,156 +151,114 @@ function TableStyleWidget({ articleId }: { articleId?: string | null }) {
   return (
     <div className="rounded-xl border border-border bg-card overflow-hidden">
       {/* Header */}
-      <div className="flex items-center gap-2 border-b border-border bg-secondary/30 px-4 py-3">
-        <LayoutGrid className="h-4 w-4 text-primary" />
-        <span className="text-sm font-semibold text-foreground">Table Style</span>
+      <div className="flex items-center justify-between border-b border-border bg-secondary/30 px-4 py-3">
+        <div className="flex items-center gap-2">
+          <TableIcon className="h-4 w-4 text-primary" />
+          <span className="text-sm font-semibold text-foreground">Jadwal Pertandingan</span>
+        </div>
+        <span className="text-[10px] text-muted-foreground/60">Tab = Grup / Ronde</span>
       </div>
 
       {/* Tab bar */}
-      <div className="flex items-center gap-1 border-b border-border bg-secondary/20 px-3 py-2 overflow-x-auto">
+      <div className="flex items-center gap-1 overflow-x-auto border-b border-border bg-secondary/20 px-3 py-2">
         {tabs.map((tab) => (
           <div
             key={tab.id}
+            onClick={() => setActiveTab(tab.id)}
             className={[
-              "flex items-center gap-1.5 rounded-md px-3 py-1 text-sm font-medium cursor-pointer transition-colors shrink-0",
+              "flex shrink-0 cursor-pointer items-center gap-1.5 rounded-md px-2.5 py-1 text-xs font-semibold transition-colors",
               tab.id === activeTab
                 ? "bg-primary/20 text-primary"
-                : "text-muted-foreground hover:text-foreground hover:bg-secondary",
+                : "text-muted-foreground hover:bg-secondary hover:text-foreground",
             ].join(" ")}
-            onClick={() => setActiveTab(tab.id)}
           >
             <input
               value={tab.label}
               onChange={(e) => { e.stopPropagation(); updateTab(tab.id, { label: e.target.value }) }}
               onClick={(e) => e.stopPropagation()}
-              className="bg-transparent border-none outline-none w-16 text-inherit text-sm"
+              className="w-14 bg-transparent text-inherit outline-none text-xs font-semibold"
             />
             {tabs.length > 1 && (
-              <button
-                onClick={(e) => { e.stopPropagation(); removeTab(tab.id) }}
-                className="text-muted-foreground hover:text-destructive transition-colors"
-              >
+              <button onClick={(e) => { e.stopPropagation(); removeTab(tab.id) }}
+                className="text-muted-foreground/50 hover:text-destructive">
                 <X className="h-3 w-3" />
               </button>
             )}
           </div>
         ))}
-        <button
-          onClick={addTab}
-          className="ml-1 flex items-center gap-1 rounded-md px-2 py-1 text-xs text-muted-foreground hover:text-primary hover:bg-secondary transition-colors shrink-0"
-        >
-          <Plus className="h-3.5 w-3.5" />
-          Add Tab
+        <button onClick={addTab}
+          className="ml-1 flex shrink-0 items-center gap-1 rounded-md px-2 py-1 text-xs text-muted-foreground hover:bg-secondary hover:text-primary transition-colors">
+          <Plus className="h-3 w-3" /> Grup
         </button>
       </div>
 
-      {/* Style selector — per tab aktif */}
-      <div className="flex items-center gap-3 border-b border-border px-4 py-3">
-        <span className="text-xs text-muted-foreground font-medium">Desain:</span>
-        {(["modern", "card"] as TableStyle[]).map((style) => (
-          <button
-            key={style}
-            onClick={() => updateTab(currentTab.id, { style })}
-            className={[
-              "rounded-md px-3 py-1 text-xs font-medium transition-colors border",
-              currentTab.style === style
-                ? "border-primary bg-primary/10 text-primary"
-                : "border-border text-muted-foreground hover:border-primary/50 hover:text-foreground",
-            ].join(" ")}
-          >
-            {style === "modern" ? "Modern Table" : "Card Design"}
-          </button>
-        ))}
-        {/* Hint mode */}
-        <span className="ml-auto text-[10px] text-muted-foreground/60">
-          {currentTab.style === "card"
-            ? "⚡ Card → output HTML langsung"
-            : "📋 Modern → output Markdown"}
-        </span>
-      </div>
-
-      {/* Table preview */}
-      <div className="p-4 overflow-x-auto">
-        {currentTab.style === "modern" ? (
-          <table className="w-full border-collapse text-sm">
-            <thead>
-              <tr className="bg-primary/10">
-                {currentTab.headers.map((h, ci) => (
-                  <th key={ci} className="border border-border px-3 py-2 text-left font-semibold text-foreground">
-                    <input
-                      value={h}
-                      onChange={(e) => updateHeader(currentTab, ci, e.target.value)}
-                      className="bg-transparent border-none outline-none w-full font-semibold text-foreground"
-                      placeholder={`Kolom ${ci + 1}`}
-                    />
-                  </th>
-                ))}
-              </tr>
-            </thead>
-            <tbody>
-              {currentTab.rows.map((row, ri) => (
-                <tr key={ri} className={ri % 2 === 0 ? "" : "bg-secondary/20"}>
-                  {row.map((cell, ci) => (
-                    <td key={ci} className="border border-border px-3 py-2 text-foreground/80">
-                      <input
-                        value={cell}
-                        onChange={(e) => updateCell(currentTab, ri, ci, e.target.value)}
-                        className="bg-transparent border-none outline-none w-full text-foreground/80"
-                        placeholder="Data..."
-                      />
-                    </td>
-                  ))}
-                </tr>
-              ))}
-            </tbody>
-          </table>
-        ) : (
-          /* Card Design — preview */
-          <div className="grid gap-3 sm:grid-cols-2">
-            {currentTab.rows.map((row, ri) => (
-              <div key={ri} className="rounded-lg border border-border bg-secondary/30 p-4 space-y-2">
-                {currentTab.headers.map((header, ci) => (
-                  <div key={ci} className="flex items-start gap-2">
-                    <span className="text-xs font-semibold text-primary min-w-[80px]">{header}</span>
-                    <input
-                      value={row[ci] ?? ""}
-                      onChange={(e) => updateCell(currentTab, ri, ci, e.target.value)}
-                      className="flex-1 bg-transparent border-none outline-none text-xs text-foreground/80"
-                      placeholder="Data..."
-                    />
-                  </div>
-                ))}
-              </div>
-            ))}
+      {/* Match list */}
+      <div className="max-h-72 overflow-y-auto p-3 space-y-2">
+        {currentTab.matches.map((match, idx) => (
+          <div key={match.id} className="rounded-lg border border-border bg-secondary/20 p-3 space-y-2">
+            <div className="flex items-center justify-between">
+              <span className="text-[10px] font-bold uppercase tracking-wider text-primary">Pertandingan {idx + 1}</span>
+              {currentTab.matches.length > 1 && (
+                <button onClick={() => removeMatch(currentTab.id, match.id)}
+                  className="text-muted-foreground/50 hover:text-destructive">
+                  <X className="h-3.5 w-3.5" />
+                </button>
+              )}
+            </div>
+            {/* Teams row */}
+            <div className="flex items-center gap-1.5">
+              <input
+                value={match.homeTeam}
+                onChange={(e) => updateMatch(currentTab.id, match.id, { homeTeam: e.target.value })}
+                placeholder="Tim Kandang"
+                className="flex-1 rounded border border-border bg-card px-2 py-1 text-xs text-foreground placeholder:text-muted-foreground/40 outline-none focus:border-primary"
+              />
+              <span className="text-[10px] font-bold text-primary shrink-0">VS</span>
+              <input
+                value={match.awayTeam}
+                onChange={(e) => updateMatch(currentTab.id, match.id, { awayTeam: e.target.value })}
+                placeholder="Tim Tamu"
+                className="flex-1 rounded border border-border bg-card px-2 py-1 text-xs text-foreground placeholder:text-muted-foreground/40 outline-none focus:border-primary"
+              />
+            </div>
+            {/* Date & time & stadium */}
+            <div className="grid grid-cols-3 gap-1.5">
+              <input
+                value={match.date}
+                onChange={(e) => updateMatch(currentTab.id, match.id, { date: e.target.value })}
+                placeholder="Jumat, 12 Juni 2026"
+                className="col-span-1 rounded border border-border bg-card px-2 py-1 text-xs text-foreground placeholder:text-muted-foreground/40 outline-none focus:border-primary"
+              />
+              <input
+                value={match.time}
+                onChange={(e) => updateMatch(currentTab.id, match.id, { time: e.target.value })}
+                placeholder="02.00 WIB"
+                className="rounded border border-border bg-card px-2 py-1 text-xs text-foreground placeholder:text-muted-foreground/40 outline-none focus:border-primary"
+              />
+              <input
+                value={match.stadium}
+                onChange={(e) => updateMatch(currentTab.id, match.id, { stadium: e.target.value })}
+                placeholder="Nama Stadion"
+                className="rounded border border-border bg-card px-2 py-1 text-xs text-foreground placeholder:text-muted-foreground/40 outline-none focus:border-primary"
+              />
+            </div>
           </div>
-        )}
-
-        {/* Add row / col buttons */}
-        <div className="mt-3 flex items-center gap-2">
-          <button
-            onClick={() => addRow(currentTab)}
-            className="flex items-center gap-1 rounded px-2 py-1 text-xs text-muted-foreground hover:text-primary hover:bg-secondary transition-colors"
-          >
-            <Plus className="h-3 w-3" /> Tambah Baris
-          </button>
-          <button
-            onClick={() => addCol(currentTab)}
-            className="flex items-center gap-1 rounded px-2 py-1 text-xs text-muted-foreground hover:text-primary hover:bg-secondary transition-colors"
-          >
-            <Plus className="h-3 w-3" /> Tambah Kolom
-          </button>
-        </div>
+        ))}
+        <button
+          onClick={() => addMatch(currentTab.id)}
+          className="flex w-full items-center justify-center gap-1.5 rounded-md border border-dashed border-border py-2 text-xs text-muted-foreground hover:border-primary hover:text-primary transition-colors">
+          <Plus className="h-3.5 w-3.5" /> Tambah Pertandingan
+        </button>
       </div>
 
-      {/* Insert to editor */}
+      {/* Insert button */}
       <div className="border-t border-border px-4 py-3 flex items-center justify-between">
         <span className="text-xs text-muted-foreground">
-          Klik Insert untuk memasukkan tabel ke artikel
+          {tabs.length > 1 ? `${tabs.length} grup · tab interaktif` : "1 grup · tanpa tab"}
         </span>
         <button
           onClick={handleInsert}
-          className="flex items-center gap-1.5 rounded-md bg-primary/10 px-3 py-1.5 text-xs font-medium text-primary hover:bg-primary/20 transition-colors"
-        >
+          className="flex items-center gap-1.5 rounded-md bg-primary/10 px-3 py-1.5 text-xs font-semibold text-primary hover:bg-primary/20 transition-colors">
           <TableIcon className="h-3.5 w-3.5" />
           Insert ke Artikel
         </button>
@@ -426,6 +319,9 @@ export function CreateArticleView({ onBack, articleId }: CreateArticleViewProps)
 
   // ── Editor Choice toggle ──────────────────────────────────────────────────
   const [isEditorChoice, setIsEditorChoice] = useState(false)
+
+  // ── Card Style toggle — tersinkron dengan toolbar insert table ────────────
+  const [isCardStyle, setIsCardStyle] = useState(false)
 
   const [featuredImagePreview, setFeaturedImagePreview] = useState<string | null>(null)
   const [featuredImageUrl,     setFeaturedImageUrl]     = useState<string | null>(null)
@@ -633,8 +529,19 @@ export function CreateArticleView({ onBack, articleId }: CreateArticleViewProps)
 
   const handleInsertTable = useCallback(() => {
     if (!editor) return
-    editor.chain().focus().insertTable({ rows: 3, cols: 3, withHeaderRow: true }).run()
-  }, [editor])
+    if (isCardStyle) {
+      // Insert card design placeholder — format card-design HTML
+      const cardHtml = `<div class="card-design"><div class="card-design-card"><div class="card-design-field"><span class="card-design-label">Label</span><span class="card-design-value">Nilai</span></div></div></div>`
+      const blockId = generateId()
+      cardMapRef.current.set(blockId, cardHtml)
+      editor.chain().focus().insertContent({
+        type: "paragraph",
+        content: [{ type: "text", text: `[[CARD:${blockId}]]` }],
+      }).run()
+    } else {
+      editor.chain().focus().insertTable({ rows: 3, cols: 3, withHeaderRow: true }).run()
+    }
+  }, [editor, isCardStyle])
 
   // ── Save / Publish ─────────────────────────────────────────────────────────
   const generateSlug = (text: string) =>
@@ -926,6 +833,26 @@ export function CreateArticleView({ onBack, articleId }: CreateArticleViewProps)
                       "[&_.card-design-field]:flex [&_.card-design-field]:items-start [&_.card-design-field]:gap-2",
                       "[&_.card-design-label]:text-[10px] [&_.card-design-label]:font-bold [&_.card-design-label]:uppercase [&_.card-design-label]:tracking-wide [&_.card-design-label]:text-primary [&_.card-design-label]:min-w-[90px] [&_.card-design-label]:pt-0.5 [&_.card-design-label]:shrink-0",
                       "[&_.card-design-value]:text-sm [&_.card-design-value]:text-foreground/90 [&_.card-design-value]:leading-snug",
+                      // match-card styles (jadwal pertandingan)
+                      "[&_.match-card-grid]:grid [&_.match-card-grid]:gap-4 [&_.match-card-grid]:my-4 [&_.match-card-grid]:grid-cols-1 sm:[&_.match-card-grid]:grid-cols-2",
+                      "[&_.match-card]:rounded-xl [&_.match-card]:border [&_.match-card]:border-border [&_.match-card]:bg-secondary/30 [&_.match-card]:p-4 [&_.match-card]:flex [&_.match-card]:flex-col [&_.match-card]:gap-2.5",
+                      "[&_.match-card-top]:flex [&_.match-card-top]:items-center [&_.match-card-top]:justify-between",
+                      "[&_.match-card-badge]:rounded-full [&_.match-card-badge]:bg-primary [&_.match-card-badge]:text-[10px] [&_.match-card-badge]:font-extrabold [&_.match-card-badge]:tracking-wide [&_.match-card-badge]:text-black [&_.match-card-badge]:px-2.5 [&_.match-card-badge]:py-0.5",
+                      "[&_.match-card-date]:text-xs [&_.match-card-date]:text-muted-foreground",
+                      "[&_.match-card-teams]:flex [&_.match-card-teams]:items-center [&_.match-card-teams]:gap-2 [&_.match-card-teams]:flex-wrap",
+                      "[&_.match-card-team]:text-base [&_.match-card-team]:font-bold [&_.match-card-team]:text-foreground",
+                      "[&_.match-card-vs]:text-sm [&_.match-card-vs]:font-bold [&_.match-card-vs]:text-primary",
+                      "[&_.match-card-bottom]:flex [&_.match-card-bottom]:items-center [&_.match-card-bottom]:justify-between [&_.match-card-bottom]:flex-wrap [&_.match-card-bottom]:gap-2",
+                      "[&_.match-card-time]:rounded [&_.match-card-time]:border [&_.match-card-time]:border-border [&_.match-card-time]:bg-black/30 [&_.match-card-time]:px-2 [&_.match-card-time]:py-1 [&_.match-card-time]:text-xs [&_.match-card-time]:font-bold [&_.match-card-time]:text-foreground",
+                      "[&_.match-card-stadium]:text-xs [&_.match-card-stadium]:text-muted-foreground",
+                      // tabbed-block nav styles
+                      "[&_.tabbed-block]:rounded-xl [&_.tabbed-block]:border [&_.tabbed-block]:border-border [&_.tabbed-block]:overflow-hidden [&_.tabbed-block]:my-6",
+                      "[&_.tb-nav]:flex [&_.tb-nav]:flex-wrap [&_.tb-nav]:gap-1.5 [&_.tb-nav]:p-2.5 [&_.tb-nav]:bg-secondary/40 [&_.tb-nav]:border-b [&_.tb-nav]:border-border",
+                      "[&_.tbb]:rounded-md [&_.tbb]:px-3 [&_.tbb]:py-1 [&_.tbb]:text-xs [&_.tbb]:font-semibold [&_.tbb]:cursor-pointer [&_.tbb]:border [&_.tbb]:border-border [&_.tbb]:bg-secondary [&_.tbb]:text-muted-foreground [&_.tbb]:transition-colors",
+                      "[&_.tbb-active]:bg-primary [&_.tbb-active]:border-primary [&_.tbb-active]:text-black",
+                      "[&_.tb-content]:p-4 [&_.tb-content]:bg-card",
+                      "[&_.tbp]:hidden",
+                      "[&_.tbp-active]:block",
                     ].join(" ")}
                     dangerouslySetInnerHTML={{ __html: previewHtml }}
                   ref={(el) => {
@@ -952,8 +879,50 @@ export function CreateArticleView({ onBack, articleId }: CreateArticleViewProps)
             )}
           </div>
 
-          {/* ── Table Style Widget ── */}
-          <TableStyleWidget articleId={articleId} />
+          {/* ── Card Style Toggle ── */}
+          <div className="rounded-xl border border-border bg-card p-5">
+            <div className="flex items-center justify-between">
+              <div className="flex items-center gap-2">
+                <TableIcon className={`h-4 w-4 ${isCardStyle ? "text-primary" : "text-muted-foreground"}`} />
+                <h3 className="text-sm font-semibold text-foreground">Card Style</h3>
+              </div>
+              {/* Toggle switch */}
+              <button
+                type="button"
+                role="switch"
+                aria-checked={isCardStyle}
+                onClick={() => setIsCardStyle((v) => !v)}
+                className={[
+                  "relative inline-flex h-6 w-11 items-center rounded-full transition-colors focus:outline-none focus:ring-2 focus:ring-primary/50",
+                  isCardStyle ? "bg-primary" : "bg-secondary",
+                ].join(" ")}
+              >
+                <span
+                  className={[
+                    "inline-block h-4 w-4 rounded-full bg-white shadow transition-transform",
+                    isCardStyle ? "translate-x-6" : "translate-x-1",
+                  ].join(" ")}
+                />
+              </button>
+            </div>
+            <p className="mt-2 text-xs text-muted-foreground leading-relaxed">
+              {isCardStyle
+                ? "✅ Tabel akan dimasukkan dalam format Card Design."
+                : "Aktifkan untuk mengubah tabel menjadi tampilan Card Design."}
+            </p>
+          </div>
+
+          {/* ── Match Card Widget ── */}
+          <MatchCardWidget
+            onInsert={(html, blockId) => {
+              if (!editor) return
+              cardMapRef.current.set(blockId, html)
+              editor.chain().focus().insertContent({
+                type: "paragraph",
+                content: [{ type: "text", text: `[[CARD:${blockId}]]` }],
+              }).run()
+            }}
+          />
 
         </div>
 
