@@ -2,13 +2,13 @@
 
 import { useState, useEffect, useRef, useCallback } from "react"
 import { useEditor, EditorContent } from "@tiptap/react"
-import StarterKit from "@tiptap/starter-kit"
+import { StarterKit } from "@tiptap/starter-kit"
 import { Image as TiptapImage } from "@tiptap/extension-image"
 import { Link as TiptapLink } from "@tiptap/extension-link"
-import Table from "@tiptap/extension-table"
-import TableRow from "@tiptap/extension-table-row"
-import TableHeader from "@tiptap/extension-table-header"
-import TableCell from "@tiptap/extension-table-cell"
+import { Table } from "@tiptap/extension-table"
+import { TableRow } from "@tiptap/extension-table-row"
+import { TableHeader } from "@tiptap/extension-table-header"
+import { TableCell } from "@tiptap/extension-table-cell"
 import {
   ArrowLeft, Save, Image as ImageIcon, X, Plus, Eye,
   Bold, Italic, List, ListOrdered, Link2, Quote,
@@ -198,14 +198,14 @@ function TableStyleWidget({ articleId }: { articleId?: string | null }) {
       const blockId = generateId()
       const html = renderModernTabHtml(tabs[0])
       // Bungkus dalam div placeholder agar resolveCards bisa replace-nya
-      cardMapRef.current.set(blockId, html)
+      // cardMapRef.current.set(blockId, html)
       const event = new CustomEvent("insert-card-placeholder", { detail: blockId })
       window.dispatchEvent(event)
     } else {
       // Multi-tab atau ada card: buat tabbed block interaktif
       const blockId = generateId()
       const html = buildTabbedBlockHtml(tabs, blockId)
-      cardMapRef.current.set(blockId, html)
+      // cardMapRef.current.set(blockId, html)
       const event = new CustomEvent("insert-card-placeholder", { detail: blockId })
       window.dispatchEvent(event)
     }
