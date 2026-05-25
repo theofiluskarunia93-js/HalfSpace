@@ -135,16 +135,16 @@
 }
 
 ::-webkit-scrollbar-track {
-  background: oklch(0.12 0 0);
+  background: var(--background);
 }
 
 ::-webkit-scrollbar-thumb {
-  background: oklch(0.3 0 0);
+  background: var(--border);
   border-radius: 4px;
 }
 
 ::-webkit-scrollbar-thumb:hover {
-  background: oklch(0.87 0.29 142);
+  background: var(--primary);
 }
 
 /* Hide scrollbar for horizontal scroll containers */
@@ -160,22 +160,22 @@
 /* Neon glow effect for primary/green elements */
 .neon-glow {
   text-shadow: 
-    0 0 10px oklch(0.87 0.29 142 / 0.8),
-    0 0 20px oklch(0.87 0.29 142 / 0.6),
-    0 0 40px oklch(0.87 0.29 142 / 0.4);
+    0 0 10px color-mix(in oklch, var(--primary) 80%, transparent),
+    0 0 20px color-mix(in oklch, var(--primary) 60%, transparent),
+    0 0 40px color-mix(in oklch, var(--primary) 40%, transparent);
 }
 
 .neon-glow-box {
   box-shadow: 
-    0 0 10px oklch(0.87 0.29 142 / 0.6),
-    0 0 20px oklch(0.87 0.29 142 / 0.4),
-    0 0 30px oklch(0.87 0.29 142 / 0.2);
+    0 0 10px color-mix(in oklch, var(--primary) 60%, transparent),
+    0 0 20px color-mix(in oklch, var(--primary) 40%, transparent),
+    0 0 30px color-mix(in oklch, var(--primary) 20%, transparent);
 }
 
 .neon-glow-subtle {
   text-shadow: 
-    0 0 8px oklch(0.87 0.29 142 / 0.5),
-    0 0 16px oklch(0.87 0.29 142 / 0.3);
+    0 0 8px color-mix(in oklch, var(--primary) 50%, transparent),
+    0 0 16px color-mix(in oklch, var(--primary) 30%, transparent);
 }
 
 /* Neon glow on hover (desktop) and active/press (mobile) for nav buttons */
@@ -185,17 +185,17 @@
 }
 
 .neon-nav-btn:hover {
-  color: oklch(0.87 0.29 142);
+  color: var(--primary);
   text-shadow: 
-    0 0 8px oklch(0.87 0.29 142 / 0.9),
-    0 0 20px oklch(0.87 0.29 142 / 0.6);
+    0 0 8px color-mix(in oklch, var(--primary) 90%, transparent),
+    0 0 20px color-mix(in oklch, var(--primary) 60%, transparent);
 }
 
 .neon-nav-btn:active {
-  color: oklch(0.87 0.29 142);
+  color: var(--primary);
   text-shadow: 
-    0 0 8px oklch(0.87 0.29 142 / 0.9),
-    0 0 20px oklch(0.87 0.29 142 / 0.6);
+    0 0 8px color-mix(in oklch, var(--primary) 90%, transparent),
+    0 0 20px color-mix(in oklch, var(--primary) 60%, transparent);
 }
 
 /* ── Card Table Block & Card Design (Gabungan Selector Agar Bersih) ── */
@@ -213,8 +213,8 @@
 .prose .card-design-card,
 .card-design-card {
   border-radius: 0.75rem !important;
-  border: 1px solid oklch(0.25 0 0) !important;
-  background: oklch(0.14 0 0) !important;
+  border: 1px solid var(--border) !important;
+  background: var(--card) !important;
   padding: 1rem 1.25rem !important;
   display: flex !important;
   flex-direction: column !important;
@@ -236,7 +236,7 @@
   font-weight: 700 !important;
   text-transform: uppercase !important;
   letter-spacing: 0.05em !important;
-  color: oklch(0.87 0.29 142) !important;
+  color: var(--primary) !important;
   min-width: 90px !important;
   flex-shrink: 0 !important;
   padding-top: 0.1rem !important;
@@ -246,24 +246,31 @@
 .prose .card-design-value,
 .card-design-value {
   font-size: 0.85rem !important;
-  color: oklch(0.9 0 0) !important;
+  color: var(--foreground) !important;
   line-height: 1.5 !important;
 }
 
-/* Light mode (prose-stone) overrides untuk kedua jenis kartu */
-.prose-stone .card-table-card,
-.prose-stone .card-design-card {
+/* Light mode overrides untuk kedua jenis kartu
+   Pakai .article-light-mode (bukan .prose-stone yang tidak dipakai) */
+.article-light-mode .prose .card-table-card,
+.article-light-mode .prose .card-design-card,
+.article-light-mode .card-table-card,
+.article-light-mode .card-design-card {
   border-color: #e5e7eb !important;
   background: #f9fafb !important;
 }
 
-.prose-stone .card-table-label,
-.prose-stone .card-design-label {
-  color: oklch(0.55 0.18 142) !important;
+.article-light-mode .prose .card-table-label,
+.article-light-mode .prose .card-design-label,
+.article-light-mode .card-table-label,
+.article-light-mode .card-design-label {
+  color: oklch(0.45 0.18 142) !important;
 }
 
-.prose-stone .card-table-value,
-.prose-stone .card-design-value {
+.article-light-mode .prose .card-table-value,
+.article-light-mode .prose .card-design-value,
+.article-light-mode .card-table-value,
+.article-light-mode .card-design-value {
   color: #374151 !important;
 }
 
@@ -281,9 +288,9 @@ table.modern-table {
 
 .prose table.modern-table th,
 table.modern-table th {
-  background: oklch(0.22 0.08 142) !important;
-  border: 1px solid oklch(0.22 0.06 142) !important;
-  color: oklch(0.98 0 0) !important;
+  background: color-mix(in oklch, var(--primary) 25%, var(--card)) !important;
+  border: 1px solid color-mix(in oklch, var(--primary) 30%, transparent) !important;
+  color: var(--foreground) !important;
   font-weight: 600 !important;
   text-align: left !important;
   padding: 0.625rem 1rem !important;
@@ -291,30 +298,34 @@ table.modern-table th {
 
 .prose table.modern-table td,
 table.modern-table td {
-  border: 1px solid oklch(0.25 0 0) !important;
+  border: 1px solid var(--border) !important;
   padding: 0.625rem 1rem !important;
-  color: oklch(0.85 0 0) !important;
+  color: var(--foreground) !important;
   vertical-align: top !important;
   background: transparent !important;
 }
 
 .prose table.modern-table tbody tr:nth-child(even),
 table.modern-table tbody tr:nth-child(even) {
-  background: oklch(0.15 0 0 / 0.4) !important;
+  background: var(--secondary) !important;
 }
 
-/* Light mode overrides untuk modern-table */
-.prose-stone table.modern-table th {
+/* Light mode overrides untuk modern-table
+   Pakai .article-light-mode (bukan .prose-stone yang tidak dipakai) */
+.article-light-mode .prose table.modern-table th,
+.article-light-mode table.modern-table th {
   background: #166534 !important;
   border-color: #86efac !important;
   color: #ffffff !important;
 }
 
-.prose-stone table.modern-table td {
+.article-light-mode .prose table.modern-table td,
+.article-light-mode table.modern-table td {
   border-color: #e5e7eb !important;
   color: #374151 !important;
 }
 
-.prose-stone table.modern-table tbody tr:nth-child(even) {
+.article-light-mode .prose table.modern-table tbody tr:nth-child(even),
+.article-light-mode table.modern-table tbody tr:nth-child(even) {
   background: #f9fafb !important;
 }
