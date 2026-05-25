@@ -140,8 +140,9 @@ function MatchCardWidget({ onInsert }: { onInsert: (html: string, blockId: strin
     const blockId = generateId()
     const validTabs = tabs.filter((t) => t.matches.some((m) => m.homeTeam || m.awayTeam))
     if (!validTabs.length) return
+    // Selalu wrap dengan data-block-id agar restore saat edit bisa menemukan blok ini
     const html = validTabs.length === 1
-      ? renderMatchTabHtml(validTabs[0])
+      ? `<div class="match-block" data-block-id="${blockId}">${renderMatchTabHtml(validTabs[0])}</div>`
       : buildMatchTabbedHtml(validTabs, blockId)
     onInsert(html, blockId)
   }
@@ -428,27 +429,49 @@ export function CreateArticleView({ onBack, articleId }: CreateArticleViewProps)
         setMetaTitle(data.meta_title || "")
         setMetaDescription(data.meta_description || "")
         setIsEditorChoice(data.is_editor_choice || false)
-        // Restore tabbed-block / card-table-block / modern-table / card-design dari konten ke cardMapRef
+        // Restore semua blok berdasarkan data-block-id
+        // Strategi: scan HTML untuk semua elemen dengan data-block-id, simpan ke cardMapRef
         const raw = data.content || ""
-        const restored = raw
-          .replace(/<div class="tabbed-block" data-block-id="([^"]+)"[\s\S]*?<\/div>\s*<\/div>\s*<\/div>/g,
-            (match: string, id: string) => { cardMapRef.current.set(id, match); return `[[CARD:${id}]]` })
-          .replace(/<div class="card-table-block" data-card-id="([^"]+)"[\s\S]*?<\/div>/g,
-            (match: string, id: string) => { cardMapRef.current.set(id, match); return `[[CARD:${id}]]` })
-          // Format baru: <table class="modern-table"> langsung (single tab)
-          .replace(/(<table class="modern-table">[\s\S]*?<\/table>)/g,
+
+        // Parse HTML di sisi client untuk ekstrak blok dengan data-block-id
+        const parser = typeof DOMParser !== "undefined" ? new DOMParser() : null
+        let restored = raw
+
+        if (parser) {
+          const doc = parser.parseFromString(raw, "text/html")
+          // Cari semua elemen top-level yang punya data-block-id
+          doc.querySelectorAll("[data-block-id]").forEach((el) => {
+            const id = el.getAttribute("data-block-id")
+            if (!id) return
+            cardMapRef.current.set(id, el.outerHTML)
+            // Ganti di string restored dengan placeholder
+            restored = restored.replace(el.outerHTML, `[[CARD:${id}]]`)
+          })
+
+          // Fallback: modern-table tanpa data-block-id
+          restored = restored.replace(/(<table class="modern-table">[\s\S]*?<\/table>)/g,
             (match: string) => {
               const id = generateId()
               cardMapRef.current.set(id, match)
               return `[[CARD:${id}]]`
             })
-          // Format baru: <div class="card-design"> langsung (single card tab)
-          .replace(/(<div class="card-design">[\s\S]*?<\/div>)/g,
+
+          // Fallback: card-design standalone tanpa data-block-id
+          restored = restored.replace(/(<div class="card-design">[\s\S]*?<\/div>)/g,
             (match: string) => {
               const id = generateId()
               cardMapRef.current.set(id, match)
               return `[[CARD:${id}]]`
             })
+        } else {
+          // SSR fallback — regex sederhana
+          restored = raw
+            .replace(/(<div[^>]+data-block-id="([^"]+)"[\s\S]*?<\/div>)/g,
+              (match: string, _full: string, id: string) => {
+                cardMapRef.current.set(id, match)
+                return `[[CARD:${id}]]`
+              })
+        }
         editor.commands.setContent(restored || "")
       }
       const { data: articleTags } = await supabase
@@ -834,6 +857,7 @@ export function CreateArticleView({ onBack, articleId }: CreateArticleViewProps)
                       "[&_.card-design-label]:text-[10px] [&_.card-design-label]:font-bold [&_.card-design-label]:uppercase [&_.card-design-label]:tracking-wide [&_.card-design-label]:text-primary [&_.card-design-label]:min-w-[90px] [&_.card-design-label]:pt-0.5 [&_.card-design-label]:shrink-0",
                       "[&_.card-design-value]:text-sm [&_.card-design-value]:text-foreground/90 [&_.card-design-value]:leading-snug",
                       // match-card styles (jadwal pertandingan)
+                      "[&_.match-block]:my-6",
                       "[&_.match-card-grid]:grid [&_.match-card-grid]:gap-4 [&_.match-card-grid]:my-4 [&_.match-card-grid]:grid-cols-1 sm:[&_.match-card-grid]:grid-cols-2",
                       "[&_.match-card]:rounded-xl [&_.match-card]:border [&_.match-card]:border-border [&_.match-card]:bg-secondary/30 [&_.match-card]:p-4 [&_.match-card]:flex [&_.match-card]:flex-col [&_.match-card]:gap-2.5",
                       "[&_.match-card-top]:flex [&_.match-card-top]:items-center [&_.match-card-top]:justify-between",
@@ -879,6 +903,11 @@ export function CreateArticleView({ onBack, articleId }: CreateArticleViewProps)
             )}
           </div>
 
+        </div>
+
+        {/* ── Sidebar ── */}
+        <div className="space-y-5">
+
           {/* ── Card Style Toggle ── */}
           <div className="rounded-xl border border-border bg-card p-5">
             <div className="flex items-center justify-between">
@@ -886,7 +915,6 @@ export function CreateArticleView({ onBack, articleId }: CreateArticleViewProps)
                 <TableIcon className={`h-4 w-4 ${isCardStyle ? "text-primary" : "text-muted-foreground"}`} />
                 <h3 className="text-sm font-semibold text-foreground">Card Style</h3>
               </div>
-              {/* Toggle switch */}
               <button
                 type="button"
                 role="switch"
@@ -897,12 +925,10 @@ export function CreateArticleView({ onBack, articleId }: CreateArticleViewProps)
                   isCardStyle ? "bg-primary" : "bg-secondary",
                 ].join(" ")}
               >
-                <span
-                  className={[
-                    "inline-block h-4 w-4 rounded-full bg-white shadow transition-transform",
-                    isCardStyle ? "translate-x-6" : "translate-x-1",
-                  ].join(" ")}
-                />
+                <span className={[
+                  "inline-block h-4 w-4 rounded-full bg-white shadow transition-transform",
+                  isCardStyle ? "translate-x-6" : "translate-x-1",
+                ].join(" ")} />
               </button>
             </div>
             <p className="mt-2 text-xs text-muted-foreground leading-relaxed">
@@ -912,22 +938,19 @@ export function CreateArticleView({ onBack, articleId }: CreateArticleViewProps)
             </p>
           </div>
 
-          {/* ── Match Card Widget ── */}
-          <MatchCardWidget
-            onInsert={(html, blockId) => {
-              if (!editor) return
-              cardMapRef.current.set(blockId, html)
-              editor.chain().focus().insertContent({
-                type: "paragraph",
-                content: [{ type: "text", text: `[[CARD:${blockId}]]` }],
-              }).run()
-            }}
-          />
-
-        </div>
-
-        {/* ── Sidebar ── */}
-        <div className="space-y-5">
+          {/* ── Match Card Widget — hanya muncul saat Card Style OFF ── */}
+          {!isCardStyle && (
+            <MatchCardWidget
+              onInsert={(html, blockId) => {
+                if (!editor) return
+                cardMapRef.current.set(blockId, html)
+                editor.chain().focus().insertContent({
+                  type: "paragraph",
+                  content: [{ type: "text", text: `[[CARD:${blockId}]]` }],
+                }).run()
+              }}
+            />
+          )}
 
           {/* ── Editor Choice Toggle ── */}
           <div className="rounded-xl border border-border bg-card p-5">
