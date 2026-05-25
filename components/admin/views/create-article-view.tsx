@@ -42,11 +42,12 @@ function generateId() {
   return Math.random().toString(36).slice(2, 8)
 }
 
-function tableToMarkdown(tab: TableTabData): string {
-  const header  = `| ${tab.headers.join(" | ")} |`
-  const divider = `| ${tab.headers.map(() => "---").join(" | ")} |`
-  const rows    = tab.rows.map((row) => `| ${row.join(" | ")} |`).join("\n")
-  return `\n${header}\n${divider}\n${rows}\n`
+function tableToModernHtml(tab: TableTabData): string {
+  const ths = tab.headers.map((h) => `<th>${h}</th>`).join("")
+  const trs = tab.rows
+    .map((row) => `<tr>${row.map((c) => `<td>${c}</td>`).join("")}</tr>`)
+    .join("")
+  return `<table><thead><tr>${ths}</tr></thead><tbody>${trs}</tbody></table>`
 }
 
 /**
@@ -164,15 +165,15 @@ function TableStyleWidget({ articleId }: { articleId?: string | null }) {
 
   // ── Insert handler: tiap tab bisa berbeda style ───────────────────────────
   const handleInsert = () => {
-    // Insert semua tab — tiap tab sesuai style-nya sendiri
+    // Insert semua tab sebagai HTML — baik modern maupun card
     for (const tab of tabs) {
       if (tab.style === "card") {
         const html = tableToCardHtml(tab)
         const event = new CustomEvent("insert-table-html", { detail: html })
         window.dispatchEvent(event)
       } else {
-        const md = tableToMarkdown(tab)
-        const event = new CustomEvent("insert-table-markdown", { detail: md })
+        const html = tableToModernHtml(tab)
+        const event = new CustomEvent("insert-table-html", { detail: html })
         window.dispatchEvent(event)
       }
     }
@@ -440,19 +441,7 @@ export function CreateArticleView({ onBack, articleId }: CreateArticleViewProps)
     content: "",
   })
 
-  // ── Listen for table insert (markdown) ───────────────────────────────────
-  useEffect(() => {
-    const handler = (e: Event) => {
-      const markdown = (e as CustomEvent<string>).detail
-      if (editor && markdown) {
-        editor.chain().focus().insertContent(markdown).run()
-      }
-    }
-    window.addEventListener("insert-table-markdown", handler)
-    return () => window.removeEventListener("insert-table-markdown", handler)
-  }, [editor])
-
-  // ── Listen for table insert (HTML — card design) ──────────────────────────
+  // ── Listen for table insert (HTML — modern table & card design) ─────────
   useEffect(() => {
     const handler = (e: Event) => {
       const html = (e as CustomEvent<string>).detail

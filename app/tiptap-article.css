@@ -116,8 +116,8 @@
 }
 
 .prose table th {
-  border: 1px solid oklch(0.25 0 0);
-  background: oklch(0.18 0 0);
+  border: 1px solid oklch(0.22 0.06 142);
+  background: oklch(0.22 0.08 142);
   color: oklch(0.98 0 0);
   font-weight: 600;
   text-align: left;
@@ -137,9 +137,9 @@
 
 /* Light mode table override */
 .article-light-mode .prose table th {
-  border-color: #e5e7eb;
-  background: #f3f4f6;
-  color: #111827;
+  border-color: #86efac;
+  background: #166534;
+  color: #ffffff;
 }
 
 .article-light-mode .prose table td {

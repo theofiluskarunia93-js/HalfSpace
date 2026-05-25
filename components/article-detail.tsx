@@ -617,13 +617,11 @@ export function ArticleDetail({ articleId }: ArticleDetailProps) {
     setIsDark((v) => !v)
 
   // Prose classes yang adaptif terhadap font size & dark/light mode
+  // Font size values per step (in rem)
+  const FONT_SIZE_VALUES = ["0.875rem", "1rem", "1.125rem", "1.25rem"]
+
   const proseClass = [
-    "max-w-none prose",
-    // Font size — apply langsung ke prose variant
-    FONT_SIZES[fontSizeIdx] === "text-sm" ? "prose-sm"  :
-    FONT_SIZES[fontSizeIdx] === "text-lg" ? "prose-lg"  :
-    FONT_SIZES[fontSizeIdx] === "text-xl" ? "prose-xl"  :
-    "prose-base",
+    "max-w-none prose prose-base",
     // Mode warna
     isDark ? "prose-invert" : "",
     // Heading
@@ -871,16 +869,15 @@ export function ArticleDetail({ articleId }: ArticleDetailProps) {
                   className={[
                     "transition-all duration-300",
                     proseClass,
-                    // Apply font-size class directly so text-sm/base/lg/xl actually works
-                    FONT_SIZES[fontSizeIdx],
-                    // Light mode: force dark text on white bg
-                    !isDark ? "text-gray-800 [&_*]:text-gray-800 [&_h1]:text-gray-900 [&_h2]:text-gray-900 [&_h3]:text-gray-900 [&_strong]:text-gray-900 [&_a]:text-primary" : "",
-                    // Card table always visible in both modes
-                    "[&_.card-table-block]:grid [&_.card-table-block]:gap-4",
+                    // Card table grid
+                    "[&_.card-table-block]:grid [&_.card-table-block]:gap-4 [&_.card-table-block]:grid-cols-1 sm:[&_.card-table-block]:grid-cols-2",
                     isDark
                       ? "[&_.card-table-card]:border-border [&_.card-table-card]:bg-secondary/40 [&_.card-table-label]:text-primary [&_.card-table-value]:text-foreground/90"
-                      : "[&_.card-table-card]:border-gray-200 [&_.card-table-card]:bg-gray-50 [&_.card-table-label]:text-primary [&_.card-table-value]:text-gray-800",
+                      : "[&_.card-table-card]:border-gray-200 [&_.card-table-card]:bg-gray-50 [&_.card-table-label]:!text-green-700 [&_.card-table-value]:!text-gray-800",
+                    // Light mode table text
+                    !isDark ? "[&_table_th]:!bg-gray-100 [&_table_th]:!text-gray-900 [&_table_th]:!border-gray-200 [&_table_td]:!text-gray-700 [&_table_td]:!border-gray-200 [&_table_tbody_tr:nth-child(even)]:!bg-gray-50" : "",
                   ].filter(Boolean).join(" ")}
+                  style={{ fontSize: FONT_SIZE_VALUES[fontSizeIdx], color: isDark ? undefined : "#1f2937" }}
                   dangerouslySetInnerHTML={{ __html: processedContent || article.content || "" }}
                   itemProp="articleBody"
                 />
