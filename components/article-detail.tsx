@@ -606,8 +606,8 @@ export function ArticleDetail({ articleId }: ArticleDetailProps) {
     "prose-h2:text-2xl prose-h2:mt-8 prose-h2:mb-4 prose-h2:border-b prose-h2:pb-2 prose-h2:border-border",
     "prose-h3:text-xl prose-h3:mt-6 prose-h3:mb-3",
     "prose-p:leading-relaxed prose-p:mb-5 prose-p:text-[17px] sm:prose-p:text-lg",
-    // Links
-    "prose-a:text-primary prose-a:no-underline hover:prose-a:underline",
+    // Links — neon green untuk membedakan link ke artikel lain
+    "prose-a:text-[#39FF14] prose-a:no-underline hover:prose-a:underline prose-a:font-semibold",
     // Bold
     "prose-strong:text-foreground prose-strong:font-semibold",
     // Images
