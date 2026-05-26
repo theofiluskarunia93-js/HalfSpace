@@ -51,7 +51,7 @@ export function PublicWebsite({ currentPage, onPageChange, onGoToAdmin }: Public
         <>
           <HeroSection />
           {showFootballWidgets && <LiveScores />}
-          <TrendingArticles />
+          <TrendingArticles widgetVisible={showFootballWidgets} />
           {/* Editor Choice — tepat di bawah Trending */}
           <EditorChoice />
           {showFootballWidgets && <StandingsSection />}
