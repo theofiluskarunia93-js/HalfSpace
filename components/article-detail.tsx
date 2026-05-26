@@ -98,6 +98,13 @@ function formatDate(dateStr: string): string {
   })
 }
 
+function formatDateTime(dateStr: string): string {
+  const d = new Date(dateStr)
+  const date = d.toLocaleDateString("id-ID", { day: "numeric", month: "long", year: "numeric" })
+  const time = d.toLocaleTimeString("id-ID", { hour: "2-digit", minute: "2-digit" })
+  return `${date}, ${time}`
+}
+
 // ─── Schema Markup ─────────────────────────────────────────────────────────
 function ArticleSchema({ article }: { article: Article }) {
   const schema = {
@@ -591,14 +598,14 @@ export function ArticleDetail({ articleId }: ArticleDetailProps) {
 
   // Prose classes (always dark theme)
   const proseClass = [
-    "max-w-none prose prose-base prose-invert",
-    // Heading
-    "prose-headings:font-bold prose-headings:scroll-mt-24",
+    "max-w-none prose prose-lg prose-invert",
+    // Heading — Oswald font for headings inside article body
+    "prose-headings:font-black prose-headings:scroll-mt-24",
     "prose-headings:text-foreground prose-p:text-foreground/90",
-    "prose-h1:text-2xl prose-h1:mt-8 prose-h1:mb-4",
-    "prose-h2:text-xl prose-h2:mt-8 prose-h2:mb-4 prose-h2:border-b prose-h2:pb-2 prose-h2:border-border",
-    "prose-h3:text-lg prose-h3:mt-6 prose-h3:mb-3",
-    "prose-p:leading-relaxed prose-p:mb-4",
+    "prose-h1:text-3xl prose-h1:mt-8 prose-h1:mb-4",
+    "prose-h2:text-2xl prose-h2:mt-8 prose-h2:mb-4 prose-h2:border-b prose-h2:pb-2 prose-h2:border-border",
+    "prose-h3:text-xl prose-h3:mt-6 prose-h3:mb-3",
+    "prose-p:leading-relaxed prose-p:mb-5 prose-p:text-[17px] sm:prose-p:text-lg",
     // Links
     "prose-a:text-primary prose-a:no-underline hover:prose-a:underline",
     // Bold
@@ -714,15 +721,15 @@ export function ArticleDetail({ articleId }: ArticleDetailProps) {
                   )}
 
                   <h1
-                    className="text-2xl font-bold leading-snug sm:text-3xl lg:text-4xl text-foreground"
-                    style={{ fontFamily: "var(--font-oswald)" }}
+                    className="text-3xl font-black leading-tight sm:text-4xl lg:text-5xl xl:text-6xl text-foreground"
+                    style={{ fontFamily: "var(--font-oswald)", letterSpacing: "-0.02em" }}
                     itemProp="headline"
                   >
                     {article.title}
                   </h1>
 
                   {article.excerpt && (
-                    <p className="mt-3 text-base leading-relaxed text-muted-foreground" itemProp="description">
+                    <p className="mt-4 text-lg leading-relaxed text-muted-foreground sm:text-xl" itemProp="description">
                       {article.excerpt}
                     </p>
                   )}
@@ -741,7 +748,7 @@ export function ArticleDetail({ articleId }: ArticleDetailProps) {
                         dateTime={article.published_at || article.created_at}
                         itemProp="datePublished"
                       >
-                        {formatDate(article.published_at || article.created_at)}
+                        {formatDateTime(article.published_at || article.created_at)}
                       </time>
                     </span>
                     <span className="flex items-center gap-1.5">

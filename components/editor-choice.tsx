@@ -60,7 +60,7 @@ export function EditorChoice() {
             <li key={article.id}>
               <button
                 onClick={() => router.push(`/article/${article.id}`)}
-                className="group flex w-full items-center gap-4 py-3.5 text-left transition-colors hover:text-primary"
+                className="group flex w-full items-start gap-4 py-4 text-left transition-colors hover:text-primary"
               >
                 {/* Number badge */}
                 <span
@@ -75,7 +75,10 @@ export function EditorChoice() {
                 </span>
 
                 {/* Title */}
-                <span className="flex-1 text-sm font-semibold text-foreground transition-colors group-hover:text-primary line-clamp-1">
+                <span
+                  className="flex-1 text-base font-bold leading-snug text-foreground transition-colors group-hover:text-primary line-clamp-2 sm:text-lg"
+                  style={{ fontFamily: "var(--font-oswald)", letterSpacing: "-0.01em" }}
+                >
                   {article.title}
                 </span>
 

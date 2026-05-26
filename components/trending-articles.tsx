@@ -12,6 +12,17 @@ export function TrendingArticles() {
   const supabase = createClient()
   const router = useRouter()
 
+  const timeAgo = (dateStr: string) => {
+    const diff = Date.now() - new Date(dateStr).getTime()
+    const minutes = Math.floor(diff / 60000)
+    const hours = Math.floor(diff / 3600000)
+    const days = Math.floor(diff / 86400000)
+    if (minutes < 1) return "Baru saja"
+    if (minutes < 60) return `${minutes} menit yang lalu`
+    if (hours < 24) return `${hours} jam yang lalu`
+    return `${days} hari yang lalu`
+  }
+
   useEffect(() => {
     async function fetchTrending() {
       const { data } = await supabase
@@ -77,9 +88,9 @@ export function TrendingArticles() {
             <article
               key={article.id}
               onClick={() => router.push(`/article/${article.id}`)}
-              className="group min-w-[350px] flex-shrink-0 cursor-pointer overflow-hidden rounded-xl border border-border bg-card transition-all hover:border-primary/50 md:min-w-[400px]"
+              className="group min-w-[300px] flex-shrink-0 cursor-pointer overflow-hidden rounded-xl border border-border bg-card transition-all hover:border-primary/50 sm:min-w-[380px] md:min-w-[420px]"
             >
-              <div className="relative h-48 overflow-hidden bg-muted">
+              <div className="relative h-52 overflow-hidden bg-muted sm:h-56">
                 {article.featured_image_url ? (
                   <img
                     src={article.featured_image_url}
@@ -100,12 +111,27 @@ export function TrendingArticles() {
                 </div>
               </div>
               <div className="p-5">
-                <h3 className="mb-2 line-clamp-2 text-lg font-bold text-foreground transition-colors group-hover:text-primary">
+                <p className="mb-1.5 text-xs font-medium text-muted-foreground">
+                  {timeAgo(article.published_at || article.created_at)}
+                </p>
+                <h3
+                  className="mb-3 line-clamp-2 text-xl font-bold leading-snug text-foreground transition-colors group-hover:text-primary sm:text-2xl"
+                  style={{ fontFamily: "var(--font-oswald)", letterSpacing: "-0.01em" }}
+                >
                   {article.title}
                 </h3>
-                <p className="line-clamp-2 text-sm text-muted-foreground">
+                <p className="line-clamp-3 text-sm leading-relaxed text-muted-foreground sm:text-base">
                   {article.excerpt}
                 </p>
+                <div className="mt-3 flex items-center justify-between">
+                  <span className="flex items-center gap-1 text-xs text-muted-foreground">
+                    <svg className="h-3.5 w-3.5" fill="none" stroke="currentColor" strokeWidth={2} viewBox="0 0 24 24"><circle cx="12" cy="12" r="10"/><polyline points="12 6 12 12 16 14"/></svg>
+                    {timeAgo(article.published_at || article.created_at)}
+                  </span>
+                  <span className="text-xs font-semibold text-primary group-hover:underline">
+                    Selengkapnya →
+                  </span>
+                </div>
               </div>
             </article>
           ))}

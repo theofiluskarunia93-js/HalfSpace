@@ -104,33 +104,20 @@ export function Navbar({ currentPage, onPageChange, onScrollToSection }: NavbarP
         <div className="flex h-16 items-center">
 
           {/* Logo */}
-          <div className="w-[120px] md:w-[200px]">
+          <div className="flex-1 md:flex-none md:w-auto">
             <button onClick={() => handlePageClick("home")} className="flex items-center">
               {logoUrl ? (
-                <img src={logoUrl} alt="Logo" className="h-8 object-contain" />
+                <img src={logoUrl} alt="Logo" className="h-12 md:h-14 w-auto object-contain max-w-[180px] md:max-w-[240px]" />
               ) : (
-                <span className="text-2xl font-bold tracking-tight text-primary neon-glow-subtle" style={{ fontFamily: "var(--font-oswald)" }}>
+                <span className="text-3xl md:text-4xl font-bold tracking-tight text-primary neon-glow-subtle" style={{ fontFamily: "var(--font-oswald)" }}>
                   HalfSpace
                 </span>
               )}
             </button>
           </div>
 
-          {/* Center links */}
-          <div className="flex flex-1 items-center justify-center gap-4 md:gap-6">
-            <button
-              onClick={() => handleScrollToSection("trending-section")}
-              className="neon-nav-btn text-sm font-medium text-foreground transition-colors hover:text-primary active:text-primary"
-            >
-              Trending
-            </button>
-            <button
-              onClick={() => handleScrollToSection("standings-section")}
-              className="neon-nav-btn text-sm font-medium text-foreground transition-colors hover:text-primary active:text-primary"
-            >
-              League Standings
-            </button>
-          </div>
+          {/* Center spacer (trending & standings removed) */}
+          <div className="flex flex-1 items-center justify-center" />
 
           {/* Desktop hamburger */}
           <div className="hidden w-[200px] items-center justify-end gap-6 md:flex">

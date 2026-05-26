@@ -98,7 +98,14 @@ export default async function TagPage({ params }: Props) {
               </div>
             ) : (
               <div className="grid gap-6 sm:grid-cols-2 xl:grid-cols-3">
-                {articles.map((article: any) => (
+                {articles.map((article: any) => {
+                  const diff = Date.now() - new Date(article.published_at || article.created_at).getTime()
+                  const minutes = Math.floor(diff / 60000)
+                  const hours = Math.floor(diff / 3600000)
+                  const days = Math.floor(diff / 86400000)
+                  const timeAgo = minutes < 1 ? "Baru saja" : minutes < 60 ? `${minutes} menit yang lalu` : hours < 24 ? `${hours} jam yang lalu` : `${days} hari yang lalu`
+
+                  return (
                   <Link key={article.id} href={`/article/${article.id}`}>
                     <article className="group cursor-pointer overflow-hidden rounded-xl border border-border bg-card transition-all hover:border-primary/50 hover:shadow-lg hover:shadow-primary/5">
                       <div className="aspect-video overflow-hidden bg-muted">
@@ -117,34 +124,28 @@ export default async function TagPage({ params }: Props) {
                         )}
                       </div>
                       <div className="p-4">
-                        {article.categories && (
-                          <span className="mb-2 inline-block rounded bg-primary/20 px-2 py-0.5 text-xs font-semibold text-primary">
-                            {article.categories.name}
-                          </span>
-                        )}
-                        <h3 className="mb-2 line-clamp-2 font-semibold text-foreground transition-colors group-hover:text-primary">
+                        <p className="mb-1.5 text-xs font-medium text-muted-foreground">{timeAgo}</p>
+                        <h3
+                          className="mb-2 line-clamp-3 font-bold leading-snug text-foreground transition-colors group-hover:text-primary text-lg sm:text-xl"
+                          style={{ fontFamily: "var(--font-oswald)", letterSpacing: "-0.01em" }}
+                        >
                           {article.title}
                         </h3>
                         {article.excerpt && (
-                          <p className="line-clamp-2 text-sm text-muted-foreground">{article.excerpt}</p>
+                          <p className="line-clamp-2 text-sm leading-relaxed text-muted-foreground sm:text-[15px]">{article.excerpt}</p>
                         )}
-                        <div className="mt-3 flex flex-wrap items-center gap-2 text-xs text-muted-foreground">
-                          {article.author && <span>{article.author}</span>}
-                          {article.author && <span>•</span>}
-                          <span>{article.views || 0} views</span>
-                          <span>•</span>
-                          <span>
-                            {new Date(article.published_at || article.created_at).toLocaleDateString("id-ID", {
-                              day: "numeric",
-                              month: "short",
-                              year: "numeric",
-                            })}
+                        <div className="mt-3 flex items-center justify-between">
+                          <span className="flex items-center gap-1 text-xs text-muted-foreground">
+                            <svg className="h-3.5 w-3.5" fill="none" stroke="currentColor" strokeWidth={2} viewBox="0 0 24 24"><circle cx="12" cy="12" r="10"/><polyline points="12 6 12 12 16 14"/></svg>
+                            {timeAgo}
                           </span>
+                          <span className="text-xs font-semibold text-primary group-hover:underline">Selengkapnya →</span>
                         </div>
                       </div>
                     </article>
                   </Link>
-                ))}
+                  )
+                })}
               </div>
             )}
           </div>
