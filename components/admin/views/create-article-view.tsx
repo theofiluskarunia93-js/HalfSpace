@@ -1011,6 +1011,7 @@ export function CreateArticleView({ onBack, articleId }: CreateArticleViewProps)
 
   // ── Render ─────────────────────────────────────────────────────────────────
   return (
+    <>
     <div className="p-6">
 
       {/* Header */}
@@ -1538,5 +1539,6 @@ export function CreateArticleView({ onBack, articleId }: CreateArticleViewProps)
         </div>
       </div>
     )}
+    </>
   )
 }
