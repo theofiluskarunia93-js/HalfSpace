@@ -887,7 +887,9 @@ export function CreateArticleView({ onBack, articleId }: CreateArticleViewProps)
   useEffect(() => {
     if (editorTab !== "preview" || !editor) return
     const raw = editor.getHTML()
-    setPreviewHtml(resolveCards(raw))
+    // Preserve empty paragraphs as visible spacing in preview
+    const withSpacing = raw.replace(/<p><\/p>/g, "<p>&nbsp;</p>")
+    setPreviewHtml(resolveCards(withSpacing))
   }, [editorTab, editor])
 
   const handleFeaturedImageUpload = async (e: React.ChangeEvent<HTMLInputElement>) => {
@@ -1210,7 +1212,9 @@ export function CreateArticleView({ onBack, articleId }: CreateArticleViewProps)
                       "prose prose-invert prose-lg max-w-none",
                       "prose-p:text-foreground/90 prose-p:leading-[1.85]",
                       "prose-headings:text-foreground prose-headings:font-semibold",
-                      "prose-h2:border-b prose-h2:border-border prose-h2:pb-3",
+                      "prose-h1:text-3xl prose-h1:font-extrabold prose-h1:mt-8 prose-h1:mb-4",
+                      "prose-h2:text-2xl prose-h2:font-bold prose-h2:mt-7 prose-h2:mb-3 prose-h2:border-b prose-h2:pb-3",
+                      "prose-h3:text-xl prose-h3:font-bold prose-h3:mt-6 prose-h3:mb-2",
                       "prose-a:text-[#39FF14] prose-a:no-underline hover:prose-a:underline prose-a:font-semibold",
                       "prose-strong:text-foreground",
                       "prose-blockquote:border-l-2 prose-blockquote:border-l-primary",

@@ -9,7 +9,7 @@ import { FooterStandalone } from "@/components/footer-standalone"
 import {
   Clock, Eye, Calendar, ChevronRight, Home,
   Share2, Twitter, Facebook, Link2, Check,
-  BookOpen, ArrowUp, User,
+  BookOpen, ArrowUp, User, MessageSquare, Send,
 } from "lucide-react"
 // ─── Types ─────────────────────────────────────────────────────────────────
 interface Article {
@@ -55,7 +55,9 @@ interface TocItem {
 
 // Konten sekarang selalu HTML dari Tiptap — langsung pakai, tidak perlu parse
 function contentToHtml(content: string): string {
-  return content || ""
+  if (!content) return ""
+  // Preserve empty paragraphs so user-inserted blank lines appear as spacing
+  return content.replace(/<p><\/p>/g, "<p>&nbsp;</p>")
 }
 
 function calcReadingTime(content: string): number {
@@ -67,7 +69,7 @@ function calcReadingTime(content: string): number {
 }
 
 function extractToc(html: string): TocItem[] {
-  const withId = [...html.matchAll(/<h([2-3])[^>]*id="([^"]*)"[^>]*>(.*?)<\/h[2-3]>/gi)]
+  const withId = [...html.matchAll(/<h([1-3])[^>]*id="([^"]*)"[^>]*>(.*?)<\/h[1-3]>/gi)]
   if (withId.length > 0) {
     return withId.map((m) => ({
       level: parseInt(m[1]),
@@ -75,7 +77,7 @@ function extractToc(html: string): TocItem[] {
       text: m[3].replace(/<[^>]+>/g, ""),
     }))
   }
-  const raw = [...html.matchAll(/<h([2-3])[^>]*>(.*?)<\/h[2-3]>/gi)]
+  const raw = [...html.matchAll(/<h([1-3])[^>]*>(.*?)<\/h[1-3]>/gi)]
   return raw.map((m, i) => ({
     level: parseInt(m[1]),
     id: `heading-${i}`,
@@ -85,7 +87,7 @@ function extractToc(html: string): TocItem[] {
 
 function injectHeadingIds(html: string): string {
   let i = 0
-  return html.replace(/<h([2-3])([^>]*)>/gi, (match, level, attrs) => {
+  return html.replace(/<h([1-3])([^>]*)>/gi, (match, level, attrs) => {
     if (/id=/i.test(attrs)) return match
     const id = `heading-${i++}`
     return `<h${level}${attrs} id="${id}">`
@@ -558,6 +560,131 @@ function ArticleSkeleton() {
   )
 }
 
+// ─── Comment Section ───────────────────────────────────────────────────────
+interface Comment {
+  id: string
+  name: string
+  text: string
+  timestamp: string
+}
+
+function CommentSection({ articleId }: { articleId: string }) {
+  const [comments, setComments] = useState<Comment[]>([])
+  const [name, setName] = useState("")
+  const [text, setText] = useState("")
+  const [isSubmitting, setIsSubmitting] = useState(false)
+  const [submitted, setSubmitted] = useState(false)
+
+  // Load comments from localStorage (client-side only)
+  useEffect(() => {
+    try {
+      const stored = localStorage.getItem(`comments_${articleId}`)
+      if (stored) setComments(JSON.parse(stored))
+    } catch {}
+  }, [articleId])
+
+  const handleSubmit = () => {
+    if (!name.trim() || !text.trim()) return
+    setIsSubmitting(true)
+    setTimeout(() => {
+      const newComment: Comment = {
+        id: Date.now().toString(),
+        name: name.trim(),
+        text: text.trim(),
+        timestamp: new Date().toLocaleDateString("id-ID", {
+          day: "numeric", month: "long", year: "numeric",
+          hour: "2-digit", minute: "2-digit",
+        }),
+      }
+      const updated = [newComment, ...comments]
+      setComments(updated)
+      try { localStorage.setItem(`comments_${articleId}`, JSON.stringify(updated)) } catch {}
+      setName("")
+      setText("")
+      setIsSubmitting(false)
+      setSubmitted(true)
+      setTimeout(() => setSubmitted(false), 3000)
+    }, 600)
+  }
+
+  return (
+    <section className="mt-10 border-t border-border pt-8" aria-label="Komentar">
+      <h2
+        className="mb-6 flex items-center gap-2 text-xl font-bold uppercase tracking-tight text-foreground"
+        style={{ fontFamily: "var(--font-oswald)" }}
+      >
+        <MessageSquare className="h-5 w-5 text-primary" aria-hidden="true" />
+        Komentar
+        {comments.length > 0 && (
+          <span className="ml-1 rounded-full bg-primary/15 px-2 py-0.5 text-xs font-semibold text-primary normal-case tracking-normal">
+            {comments.length}
+          </span>
+        )}
+      </h2>
+
+      {/* Form komentar */}
+      <div className="rounded-xl border border-border bg-card p-5 mb-6">
+        <p className="mb-4 text-sm font-semibold text-foreground">Tulis Komentar</p>
+        <div className="flex flex-col gap-3">
+          <input
+            type="text"
+            value={name}
+            onChange={(e) => setName(e.target.value)}
+            placeholder="Nama Anda"
+            maxLength={60}
+            className="w-full rounded-lg border border-border bg-background px-3 py-2 text-sm text-foreground placeholder:text-muted-foreground focus:outline-none focus:ring-1 focus:ring-primary"
+          />
+          <textarea
+            value={text}
+            onChange={(e) => setText(e.target.value)}
+            placeholder="Tulis komentar Anda di sini..."
+            rows={4}
+            maxLength={1000}
+            className="w-full resize-none rounded-lg border border-border bg-background px-3 py-2 text-sm text-foreground placeholder:text-muted-foreground focus:outline-none focus:ring-1 focus:ring-primary"
+          />
+          <div className="flex items-center justify-between flex-wrap gap-2">
+            <p className="text-xs text-muted-foreground">
+              Harap jaga sopan santun dalam berkomentar.
+            </p>
+            <button
+              onClick={handleSubmit}
+              disabled={isSubmitting || !name.trim() || !text.trim()}
+              className="flex items-center gap-2 rounded-lg bg-primary px-4 py-2 text-xs font-semibold text-black transition-opacity hover:opacity-90 disabled:opacity-40 disabled:cursor-not-allowed"
+            >
+              {submitted ? (
+                <><Check className="h-3.5 w-3.5" />Terkirim!</>
+              ) : isSubmitting ? (
+                <>Mengirim...</>
+              ) : (
+                <><Send className="h-3.5 w-3.5" />Kirim Komentar</>
+              )}
+            </button>
+          </div>
+        </div>
+      </div>
+
+      {/* Daftar komentar */}
+      {comments.length === 0 ? (
+        <p className="text-sm text-muted-foreground text-center py-6">
+          Belum ada komentar. Jadilah yang pertama berkomentar!
+        </p>
+      ) : (
+        <div className="flex flex-col gap-4">
+          {comments.map((c) => (
+            <div key={c.id} className="rounded-xl border border-border bg-card px-5 py-4">
+              <div className="flex items-center justify-between gap-2 mb-2">
+                <span className="text-sm font-semibold text-foreground">{c.name}</span>
+                <span className="text-xs text-muted-foreground">{c.timestamp}</span>
+              </div>
+              <p className="text-sm text-foreground/85 leading-relaxed whitespace-pre-wrap">{c.text}</p>
+            </div>
+          ))}
+        </div>
+      )}
+    </section>
+  )
+}
+
 // ─── Main Component ────────────────────────────────────────────────────────
 interface ArticleDetailProps {
   articleId: string
@@ -768,7 +895,7 @@ export function ArticleDetail({ articleId }: ArticleDetailProps) {
                   </div>
                 </header>
 
-                {/* TOC — mobile */}
+                {/* TOC — tampil di artikel (semua layar, kecuali desktop karena ada sidebar) */}
                 {toc.length > 0 && (
                   <div className="mb-6 lg:hidden">
                     <TableOfContents items={toc} />
@@ -834,21 +961,8 @@ export function ArticleDetail({ articleId }: ArticleDetailProps) {
                   <AuthorCard />
                 </div>
 
-                {/* Related articles */}
-                {article.categories && (
-                  <section className="mt-10" aria-label="Artikel terkait">
-                    <h2
-                      className="mb-5 text-xl font-bold uppercase tracking-tight text-foreground"
-                      style={{ fontFamily: "var(--font-oswald)" }}
-                    >
-                      Artikel Terkait
-                    </h2>
-                    <RelatedArticles
-                      currentId={article.id}
-                      categorySlug={article.categories.slug}
-                    />
-                  </section>
-                )}
+                {/* Comment section */}
+                <CommentSection articleId={article.id} />
               </article>
 
               {/* ── Sidebar — Desktop ToC ── */}

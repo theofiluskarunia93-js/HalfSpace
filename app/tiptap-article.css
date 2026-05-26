@@ -27,7 +27,45 @@
 
 .ProseMirror {
   word-break: break-word;
-  white-space: pre-wrap;
+  white-space: normal;
+}
+
+/* Preserve user-inserted blank paragraphs (spasi/enter) */
+.ProseMirror p:empty::after,
+.ProseMirror p.is-empty:not(.is-editor-empty)::after {
+  content: "\00a0";
+  display: inline;
+}
+
+/* ── ProseMirror: heading styles (H1/H2/H3) ─────────────── */
+
+.ProseMirror h1 {
+  font-size: 1.875rem;   /* 30px */
+  font-weight: 800;
+  line-height: 1.25;
+  margin-top: 2rem;
+  margin-bottom: 0.75rem;
+  color: oklch(0.98 0 0);
+}
+
+.ProseMirror h2 {
+  font-size: 1.5rem;     /* 24px */
+  font-weight: 700;
+  line-height: 1.3;
+  margin-top: 1.75rem;
+  margin-bottom: 0.625rem;
+  color: oklch(0.98 0 0);
+  border-bottom: 1px solid oklch(0.25 0 0);
+  padding-bottom: 0.375rem;
+}
+
+.ProseMirror h3 {
+  font-size: 1.25rem;    /* 20px */
+  font-weight: 700;
+  line-height: 1.35;
+  margin-top: 1.5rem;
+  margin-bottom: 0.5rem;
+  color: oklch(0.95 0 0);
 }
 
 /* ── ProseMirror: tabel ──────────────────────────────────── */
@@ -801,3 +839,40 @@ table.modern-table tbody tr:nth-child(even) {
 .article-light-mode .gs-legend-item    { color: #9ca3af; }
 .article-light-mode .gs-legend-qualify    { color: #166534; }
 .article-light-mode .gs-legend-candidate  { color: #854d0e; }
+
+/* ── Prose: heading & whitespace override untuk Preview ──── */
+
+/* Pastikan H1/H2/H3 tampil di preview area (.prose) */
+.prose h1 {
+  font-size: 1.875rem;
+  font-weight: 800;
+  line-height: 1.25;
+  margin-top: 2rem;
+  margin-bottom: 0.75rem;
+  color: oklch(0.98 0 0);
+}
+
+.prose h2 {
+  font-size: 1.5rem;
+  font-weight: 700;
+  line-height: 1.3;
+  margin-top: 1.75rem;
+  margin-bottom: 0.625rem;
+  color: oklch(0.98 0 0);
+  border-bottom: 1px solid oklch(0.25 0 0);
+  padding-bottom: 0.375rem;
+}
+
+.prose h3 {
+  font-size: 1.25rem;
+  font-weight: 700;
+  line-height: 1.35;
+  margin-top: 1.5rem;
+  margin-bottom: 0.5rem;
+  color: oklch(0.95 0 0);
+}
+
+/* Preserve spasi kosong (enter/blank line) di preview */
+.prose p:empty {
+  min-height: 1.5em;
+}
