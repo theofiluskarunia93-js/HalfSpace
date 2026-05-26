@@ -240,9 +240,9 @@ function StandingsTable({
   const fetchData = useCallback(async () => {
     setIsLoading(true)
 
-    // Cek cache lokal dulu
+    // Cek cache lokal dulu — validasi tidak kosong
     const cached = readStandingsCache(league, "standings")
-    if (cached) {
+    if (cached && (cached.data.standings ?? []).length > 0) {
       setRows(cached.data.standings ?? [])
       setIsDummy(cached.data.isDummy ?? false)
       setCachedAt(new Date(cached.cachedAt).toISOString())
@@ -269,7 +269,10 @@ function StandingsTable({
       setRows(json.standings ?? [])
       setIsDummy(false)
       setCachedAt(json.cachedAt ?? null)
-      writeStandingsCache(league, "standings", json)
+      // Hanya cache jika data tidak kosong — mencegah poisoned cache
+      if ((json.standings ?? []).length > 0) {
+        writeStandingsCache(league, "standings", json)
+      }
     } catch {
       // Fallback dummy jika kosong
       if (rows.length === 0) {
@@ -388,9 +391,9 @@ function TopScorers({
   const fetchData = useCallback(async () => {
     setIsLoading(true)
 
-    // Cek cache lokal dulu
+    // Cek cache lokal dulu — validasi tidak kosong
     const cached = readStandingsCache(league, "topscorers")
-    if (cached) {
+    if (cached && (cached.data.scorers ?? []).length > 0) {
       setScorers(cached.data.scorers ?? [])
       setIsDummy(cached.data.isDummy ?? false)
       setCachedAt(new Date(cached.cachedAt).toISOString())
@@ -417,7 +420,10 @@ function TopScorers({
       setScorers(json.scorers ?? [])
       setIsDummy(false)
       setCachedAt(json.cachedAt ?? null)
-      writeStandingsCache(league, "topscorers", json)
+      // Hanya cache jika data tidak kosong — mencegah poisoned cache
+      if ((json.scorers ?? []).length > 0) {
+        writeStandingsCache(league, "topscorers", json)
+      }
     } catch {
       if (scorers.length === 0) {
         setScorers(DUMMY_SCORERS)

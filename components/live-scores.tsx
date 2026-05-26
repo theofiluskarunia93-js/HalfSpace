@@ -43,8 +43,11 @@ const LEAGUES = [
 
 // ─── Storage key untuk cache lokal ────────────────────────────────────────
 const CACHE_KEY = (leagueSlug: string) => `livescores_cache_${leagueSlug}`
-const CACHE_TTL_EMPTY_MS  = 6 * 60 * 60 * 1000  // 6 jam jika tidak ada pertandingan
-const CACHE_TTL_ACTIVE_MS = 15 * 60 * 1000        // 15 menit jika ada pertandingan
+// Sync dengan server-side cache TTL:
+// - Tidak ada pertandingan → 24 jam (server hanya fetch 1x sehari ke API-Football)
+// - Ada pertandingan live/akan datang → 15 menit
+const CACHE_TTL_EMPTY_MS  = 24 * 60 * 60 * 1000   // 24 jam jika tidak ada pertandingan
+const CACHE_TTL_ACTIVE_MS = 15 * 60 * 1000          // 15 menit jika ada pertandingan
 
 // ─── Dummy data fallback (saat API limit tercapai) ────────────────────────
 const DUMMY_FIXTURES: Fixture[] = [
@@ -120,9 +123,11 @@ interface CachedData {
 // ─── Cache lokal (localStorage-based) ────────────────────────────────────
 function readCache(leagueSlug: string): CachedData | null {
   try {
+    if (typeof window === "undefined") return null
     const raw = localStorage.getItem(CACHE_KEY(leagueSlug))
     if (!raw) return null
     const parsed: CachedData = JSON.parse(raw)
+    if (!parsed?.cachedAt || !parsed?.data) return null
     const age = Date.now() - parsed.cachedAt
     const ttl = parsed.hasMatches ? CACHE_TTL_ACTIVE_MS : CACHE_TTL_EMPTY_MS
     if (age > ttl) return null // expired
@@ -134,6 +139,7 @@ function readCache(leagueSlug: string): CachedData | null {
 
 function writeCache(leagueSlug: string, data: ApiResponse, hasMatches: boolean) {
   try {
+    if (typeof window === "undefined") return
     const payload: CachedData = { data, cachedAt: Date.now(), hasMatches }
     localStorage.setItem(CACHE_KEY(leagueSlug), JSON.stringify(payload))
   } catch {

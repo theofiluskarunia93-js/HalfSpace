@@ -102,7 +102,14 @@ export async function GET(request: Request) {
 
       if (cached) {
         const ageHours = (Date.now() - new Date(cached.fetched_at).getTime()) / 3600000
-        if (ageHours < CACHE_TTL_HOURS) {
+
+        // Validasi cache tidak kosong sebelum dikembalikan
+        const cachedHasData =
+          type === "standings"
+            ? cached.payload?.standings?.length > 0
+            : cached.payload?.scorers?.length > 0
+
+        if (ageHours < CACHE_TTL_HOURS && cachedHasData) {
           return NextResponse.json({
             ...cached.payload,
             fromCache: true,
@@ -123,8 +130,15 @@ export async function GET(request: Request) {
         ? { standings: transformStandings(raw), leagues: LEAGUES }
         : { scorers: transformScorers(raw), leagues: LEAGUES }
 
-    // ── 3. Simpan ke cache ─────────────────────────────────────────────
-    if (supabase) {
+    // ── 3. Simpan ke cache — HANYA jika data tidak kosong ─────────────
+    // Mencegah "poisoned cache": data kosong [] tersimpan dan dikembalikan
+    // terus-menerus selama 6 jam tanpa pernah coba fetch ulang ke API.
+    const hasData =
+      type === "standings"
+        ? (data as any).standings?.length > 0
+        : (data as any).scorers?.length > 0
+
+    if (supabase && hasData) {
       await supabase.from("match_cache").upsert(
         { cache_key: cacheKey, payload: data, fetched_at: new Date().toISOString() },
         { onConflict: "cache_key" }

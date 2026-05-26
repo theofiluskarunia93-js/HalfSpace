@@ -19,9 +19,11 @@ const WATCHED_LEAGUES = [
 
 const LEAGUE_IDS = WATCHED_LEAGUES.map((l) => l.id)
 
-// Cache TTL
-const CACHE_TTL_LIVE_MS     = 2 * 60 * 1000   // 2 menit saat ada live
-const CACHE_TTL_SCHEDULE_MS = 2 * 60 * 60 * 1000 // 2 jam saat tidak ada live
+// ─── Cache TTL ─────────────────────────────────────────────────────────────
+// Jika ada pertandingan live → fetch setiap 15 menit
+// Jika tidak ada pertandingan sama sekali → fetch 1x sehari (24 jam)
+const CACHE_TTL_LIVE_MS     = 15 * 60 * 1000        // 15 menit saat ada live
+const CACHE_TTL_SCHEDULE_MS = 24 * 60 * 60 * 1000   // 24 jam (1x sehari) saat tidak ada live
 
 const CACHE_KEY_LIVE     = "livescores_live"
 const CACHE_KEY_SCHEDULE = "livescores_schedule"
@@ -53,27 +55,17 @@ async function apiFetch(path: string) {
 
 // ─── Fetch live matches ────────────────────────────────────────────────────
 async function fetchLive() {
-  // Fetch semua pertandingan live sekaligus
   const response = await apiFetch("/fixtures?live=all")
-  // Filter hanya liga yang dipantau
   return response.filter((f: any) => LEAGUE_IDS.includes(f.league.id))
 }
 
-// ─── Fetch jadwal hari ini + 24 jam ke depan ──────────────────────────────
+// ─── Fetch jadwal hari ini saja (bukan +24jam) ────────────────────────────
+// Karena sudah 24jam cache, cukup ambil hari ini saja
 async function fetchSchedule() {
   const now = new Date()
-  const tomorrow = new Date(now.getTime() + 24 * 60 * 60 * 1000)
-
   const toDate = (d: Date) => d.toISOString().split("T")[0]
-
-  // Fetch hari ini dan besok sekaligus untuk semua liga sekaligus
-  const [todayRes, tomorrowRes] = await Promise.all([
-    apiFetch(`/fixtures?date=${toDate(now)}`),
-    apiFetch(`/fixtures?date=${toDate(tomorrow)}`),
-  ])
-
-  const combined = [...todayRes, ...tomorrowRes]
-  return combined.filter((f: any) => LEAGUE_IDS.includes(f.league.id))
+  const todayRes = await apiFetch(`/fixtures?date=${toDate(now)}`)
+  return todayRes.filter((f: any) => LEAGUE_IDS.includes(f.league.id))
 }
 
 // ─── Group fixtures by league ──────────────────────────────────────────────
@@ -93,7 +85,6 @@ function groupByLeague(fixtures: any[]) {
     map.get(lid).fixtures.push(f)
   }
 
-  // Urutkan sesuai urutan WATCHED_LEAGUES
   const ordered: any[] = []
   for (const wl of WATCHED_LEAGUES) {
     if (map.has(wl.id)) ordered.push(map.get(wl.id))
@@ -122,7 +113,7 @@ async function setCache(supabase: any, key: string, payload: any) {
       { onConflict: "cache_key" }
     )
   } catch {
-    // Cache write gagal — tidak masalah, tetap lanjut
+    // Cache write gagal — tidak masalah
   }
 }
 
@@ -130,7 +121,7 @@ async function setCache(supabase: any, key: string, payload: any) {
 export async function GET() {
   const supabase = getSupabase()
 
-  // ── 1. Cek cache live dulu ─────────────────────────────────────────────
+  // ── 1. Cek cache live di Supabase (TTL: 15 menit) ─────────────────────
   if (supabase) {
     const cached = await getCache(supabase, CACHE_KEY_LIVE)
     if (cached) {
@@ -141,12 +132,12 @@ export async function GET() {
     }
   }
 
-  // ── 2. Fetch live dari API ─────────────────────────────────────────────
+  // ── 2. Fetch live dari API-Football ───────────────────────────────────
   try {
     const liveFixtures = await fetchLive()
 
     if (liveFixtures.length > 0) {
-      // Ada live — group dan cache
+      // Ada live → simpan ke Supabase, cache 15 menit
       const groups = groupByLeague(liveFixtures)
       const payload = { mode: "live", groups }
 
@@ -155,27 +146,42 @@ export async function GET() {
       return NextResponse.json({ ...payload, fromCache: false, fetchedAt: new Date().toISOString() })
     }
 
-    // ── 3. Tidak ada live — cek cache schedule ─────────────────────────
+    // ── 3. Tidak ada live → hapus cache live yang expired ─────────────
+    // Cek cache jadwal (TTL: 24 jam — hanya fetch 1x sehari)
     if (supabase) {
       const cached = await getCache(supabase, CACHE_KEY_SCHEDULE)
       if (cached) {
         const ageMs = Date.now() - new Date(cached.fetched_at).getTime()
         if (ageMs < CACHE_TTL_SCHEDULE_MS) {
+          // Masih dalam 24 jam → kembalikan dari Supabase, TIDAK fetch API
           return NextResponse.json({ ...cached.payload, fromCache: true, fetchedAt: cached.fetched_at })
         }
       }
     }
 
-    // ── 4. Fetch jadwal ────────────────────────────────────────────────
+    // ── 4. Cache expired atau tidak ada → fetch jadwal hari ini ───────
     const scheduleFixtures = await fetchSchedule()
     const groups = groupByLeague(scheduleFixtures)
     const payload = { mode: "schedule", groups }
 
+    // Simpan ke Supabase — berlaku 24 jam
     if (supabase) await setCache(supabase, CACHE_KEY_SCHEDULE, payload)
 
     return NextResponse.json({ ...payload, fromCache: false, fetchedAt: new Date().toISOString() })
 
   } catch (err: any) {
+    // ── 5. API gagal → coba kembalikan cache lama meskipun expired ────
+    if (supabase) {
+      const staleLive = await getCache(supabase, CACHE_KEY_LIVE)
+      if (staleLive) {
+        return NextResponse.json({ ...staleLive.payload, fromCache: true, stale: true, fetchedAt: staleLive.fetched_at })
+      }
+      const staleSchedule = await getCache(supabase, CACHE_KEY_SCHEDULE)
+      if (staleSchedule) {
+        return NextResponse.json({ ...staleSchedule.payload, fromCache: true, stale: true, fetchedAt: staleSchedule.fetched_at })
+      }
+    }
+
     return NextResponse.json(
       { error: err.message ?? "Gagal fetch data" },
       { status: 500 }
