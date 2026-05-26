@@ -16,6 +16,7 @@ export function SettingsView() {
   const [logoPreview, setLogoPreview] = useState<string | null>(null)
   const [logoFileName, setLogoFileName] = useState<string | null>(null)
   const [settingsId, setSettingsId] = useState<string | null>(null)
+  const [showFootballWidgets, setShowFootballWidgets] = useState(true)
   const [isLoading, setIsLoading] = useState(true)
   const [isSaving, setIsSaving] = useState(false)
   const [message, setMessage] = useState<{ type: "success" | "error"; text: string } | null>(null)
@@ -34,6 +35,7 @@ export function SettingsView() {
         setTiktokHandle(data.tiktok_handle || "")
         setLogoUrl(data.logo_url || null)
         setLogoPreview(data.logo_url || null)
+        setShowFootballWidgets(data.show_football_widgets !== false)
       }
       setIsLoading(false)
     }
@@ -75,6 +77,7 @@ export function SettingsView() {
       instagram_handle: instagramHandle,
       tiktok_handle: tiktokHandle,
       logo_url: logoUrl,
+      show_football_widgets: showFootballWidgets,
       updated_at: new Date().toISOString(),
     }
 
@@ -163,6 +166,34 @@ export function SettingsView() {
               </div>
             ))}
           </div>
+        </div>
+
+        {/* Widget Display */}
+        <div className="rounded-xl border border-border bg-card p-6">
+          <h2 className="mb-1 text-lg font-semibold text-foreground">Widget Sepakbola</h2>
+          <p className="mb-4 text-sm text-muted-foreground">
+            Tampilkan atau sembunyikan widget Live Score, Standings, dan Top Scorer di halaman utama.
+            Jika disembunyikan, bagian Trending dan Editor Choice akan langsung diikuti Footer.
+          </p>
+          <label className="flex cursor-pointer items-center gap-4">
+            <div className="relative">
+              <input
+                type="checkbox"
+                className="sr-only"
+                checked={showFootballWidgets}
+                onChange={(e) => setShowFootballWidgets(e.target.checked)}
+              />
+              <div
+                className={`h-6 w-11 rounded-full transition-colors ${showFootballWidgets ? "bg-primary" : "bg-secondary"}`}
+              />
+              <div
+                className={`absolute top-0.5 left-0.5 h-5 w-5 rounded-full bg-white shadow transition-transform ${showFootballWidgets ? "translate-x-5" : "translate-x-0"}`}
+              />
+            </div>
+            <span className="text-sm font-medium text-foreground">
+              {showFootballWidgets ? "Widget ditampilkan" : "Widget disembunyikan"}
+            </span>
+          </label>
         </div>
 
         {/* Save */}

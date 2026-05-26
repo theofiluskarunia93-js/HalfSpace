@@ -669,11 +669,15 @@ function ToolbarButton({
       disabled={disabled}
       onClick={onClick}
       className={[
-        "flex h-7 min-w-[1.75rem] items-center justify-center rounded px-1.5 text-sm transition-colors",
+        "flex h-7 min-w-[1.75rem] items-center justify-center rounded px-1.5 text-sm transition-all duration-100",
         "disabled:pointer-events-none disabled:opacity-30",
         active
-          ? "bg-primary/20 text-primary"
-          : "text-muted-foreground hover:bg-secondary hover:text-foreground",
+          ? [
+              "text-[#39FF14] shadow-[inset_0_2px_4px_rgba(0,0,0,0.5)]",
+              "bg-[#39FF14]/15 ring-1 ring-[#39FF14]/50",
+              "translate-y-px",
+            ].join(" ")
+          : "text-muted-foreground hover:bg-secondary hover:text-foreground active:translate-y-px active:shadow-[inset_0_2px_4px_rgba(0,0,0,0.4)]",
       ].join(" ")}
     >
       {children}
@@ -703,6 +707,11 @@ export function CreateArticleView({ onBack, articleId }: CreateArticleViewProps)
 
   const [isEditorChoice, setIsEditorChoice] = useState(false)
 
+  // ── Link Dialog ─────────────────────────────────────────────────────────────
+  const [linkDialogOpen,  setLinkDialogOpen]  = useState(false)
+  const [linkText,        setLinkText]        = useState("")
+  const [linkUrl,         setLinkUrl]         = useState("https://")
+
   const [featuredImagePreview, setFeaturedImagePreview] = useState<string | null>(null)
   const [featuredImageUrl,     setFeaturedImageUrl]     = useState<string | null>(null)
   const featuredImageRef = useRef<HTMLInputElement>(null)
@@ -723,7 +732,7 @@ export function CreateArticleView({ onBack, articleId }: CreateArticleViewProps)
     extensions: [
       StarterKit.configure({ codeBlock: false }),
       TiptapImage,
-      TiptapLink.configure({ openOnClick: false }),
+      TiptapLink.configure({ openOnClick: false, HTMLAttributes: { target: "_blank", rel: "noopener noreferrer" } }),
       Table.configure({ resizable: true }),
       TableRow,
       TableHeader,
@@ -904,9 +913,34 @@ export function CreateArticleView({ onBack, articleId }: CreateArticleViewProps)
 
   const handleInsertLink = useCallback(() => {
     if (!editor) return
-    const url = window.prompt("URL:", "https://"); if (!url || url === "https://") return
-    editor.chain().focus().setLink({ href: url }).run()
+    const selectedText = editor.state.doc.cut(
+      editor.state.selection.from,
+      editor.state.selection.to,
+    ).textContent
+    setLinkText(selectedText || "")
+    setLinkUrl("https://")
+    setLinkDialogOpen(true)
   }, [editor])
+
+  const handleConfirmLink = useCallback(() => {
+    if (!editor) return
+    const url   = linkUrl.trim()
+    const label = linkText.trim()
+    if (!url || url === "https://") { setLinkDialogOpen(false); return }
+
+    if (label) {
+      editor
+        .chain()
+        .focus()
+        .insertContent(`<a href="${url}" target="_blank" rel="noopener noreferrer">${label}</a>`)
+        .run()
+    } else {
+      editor.chain().focus().setLink({ href: url, target: "_blank" }).run()
+    }
+    setLinkDialogOpen(false)
+    setLinkText("")
+    setLinkUrl("https://")
+  }, [editor, linkUrl, linkText])
 
   const handleInsertTable = useCallback(() => {
     if (!editor) return
@@ -1137,7 +1171,7 @@ export function CreateArticleView({ onBack, articleId }: CreateArticleViewProps)
 
                   <ToolbarSeparator />
 
-                  <ToolbarButton onClick={handleInsertLink}  title="Sisipkan Link">
+                  <ToolbarButton onClick={handleInsertLink} active={editor?.isActive("link")} title="Sisipkan Link">
                     <Link2 className="h-4 w-4" />
                   </ToolbarButton>
                   <ToolbarButton onClick={handleInsertImage} title="Sisipkan Gambar">
@@ -1454,5 +1488,55 @@ export function CreateArticleView({ onBack, articleId }: CreateArticleViewProps)
         </div>
       </div>
     </div>
+
+    {/* ── Link Dialog ── */}
+    {linkDialogOpen && (
+      <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/60">
+        <div className="w-full max-w-md rounded-xl border border-border bg-card p-6 shadow-2xl">
+          <h3 className="mb-4 text-lg font-semibold text-foreground">Sisipkan Link</h3>
+          <div className="space-y-4">
+            <div>
+              <label className="mb-1.5 block text-sm font-medium text-foreground">
+                Nama Artikel / Teks Link <span className="text-muted-foreground">(wajib)</span>
+              </label>
+              <input
+                type="text"
+                value={linkText}
+                onChange={(e) => setLinkText(e.target.value)}
+                placeholder="Contoh: Artikel tentang Messi"
+                className="w-full rounded-lg border border-border bg-secondary/50 px-3 py-2 text-sm text-foreground placeholder-muted-foreground focus:outline-none focus:ring-1 focus:ring-primary"
+                autoFocus
+              />
+            </div>
+            <div>
+              <label className="mb-1.5 block text-sm font-medium text-foreground">URL Artikel</label>
+              <input
+                type="url"
+                value={linkUrl}
+                onChange={(e) => setLinkUrl(e.target.value)}
+                placeholder="https://"
+                className="w-full rounded-lg border border-border bg-secondary/50 px-3 py-2 text-sm text-foreground placeholder-muted-foreground focus:outline-none focus:ring-1 focus:ring-primary"
+                onKeyDown={(e) => { if (e.key === "Enter") handleConfirmLink() }}
+              />
+            </div>
+          </div>
+          <div className="mt-6 flex justify-end gap-3">
+            <button
+              onClick={() => { setLinkDialogOpen(false); setLinkText(""); setLinkUrl("https://") }}
+              className="rounded-lg border border-border px-4 py-2 text-sm text-foreground hover:bg-secondary"
+            >
+              Batal
+            </button>
+            <button
+              onClick={handleConfirmLink}
+              disabled={!linkText.trim() || !linkUrl.trim() || linkUrl === "https://"}
+              className="rounded-lg bg-primary px-4 py-2 text-sm font-semibold text-black hover:bg-primary/90 disabled:opacity-40"
+            >
+              Sisipkan
+            </button>
+          </div>
+        </div>
+      </div>
+    )}
   )
 }
