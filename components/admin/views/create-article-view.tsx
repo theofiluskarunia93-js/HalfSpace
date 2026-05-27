@@ -13,7 +13,7 @@ import {
   ArrowLeft, Save, Image as ImageIcon, X, Plus, Eye,
   Bold, Italic, List, ListOrdered, Link2, Quote,
   Code2, Minus, Heading1, Heading2, Heading3,
-  Undo2, Redo2, Table as TableIcon, Star, Trophy,
+  Undo2, Redo2, Table as TableIcon, Star, Trophy, Pencil,
 } from "lucide-react"
 import { Button } from "@/components/ui/button"
 import { Input } from "@/components/ui/input"
@@ -38,7 +38,7 @@ interface MatchEntry {
   id: string
   homeTeam: string
   awayTeam: string
-  homeScore: string   // kosong = belum main, isi angka = sudah/sedang main
+  homeScore: string
   awayScore: string
   date: string
   time: string
@@ -91,16 +91,185 @@ function buildMatchTabbedHtml(tabs: MatchTab[], blockId: string): string {
     .map((t, i) => `<div class="tbp${i === 0 ? " tbp-active" : ""}" data-panel="${i}">${renderMatchTabHtml(t)}</div>`)
     .join("")
   return (
-    `<div class="tabbed-block" data-block-id="${blockId}">` +
+    `<div class="tabbed-block match-tabbed-block" data-block-id="${blockId}" data-block-type="match">` +
     `<div class="tb-nav">${buttons}</div>` +
     `<div class="tb-content">${panels}</div>` +
     `</div>`
   )
 }
 
-function MatchCardWidget({ onInsert }: { onInsert: (html: string, blockId: string) => void }) {
+// ─── Parse match HTML back to state ──────────────────────────────────────────
+
+function parseMatchBlockHtml(html: string): MatchTab[] | null {
+  try {
+    const parser = new DOMParser()
+    const doc = parser.parseFromString(html, "text/html")
+
+    // tabbed (multi-tab) case
+    const tabbedBlock = doc.querySelector(".match-tabbed-block, .tabbed-block.match-block, .tabbed-block")
+    if (tabbedBlock) {
+      const navBtns = Array.from(tabbedBlock.querySelectorAll(".tb-nav .tbb"))
+      const panels = Array.from(tabbedBlock.querySelectorAll(".tb-content .tbp"))
+      if (!navBtns.length || !panels.length) return null
+
+      return navBtns.map((btn, i) => {
+        const panel = panels[i]
+        const label = btn.textContent?.trim() || `Grup ${String.fromCharCode(65 + i)}`
+        const cards = panel ? Array.from(panel.querySelectorAll(".match-card")) : []
+        const matches: MatchEntry[] = cards.map((card) => {
+          const teams = Array.from(card.querySelectorAll(".match-card-team"))
+          const scoreEl = card.querySelector(".match-card-score")
+          let homeScore = ""
+          let awayScore = ""
+          if (scoreEl) {
+            const sep = scoreEl.querySelector(".match-card-score-sep")
+            const scoreText = sep ? scoreEl.textContent?.replace(sep.textContent || "", "–") : scoreEl.textContent
+            const parts = (scoreText || "").split("–").map((s) => s.trim())
+            homeScore = parts[0] || ""
+            awayScore = parts[1] || ""
+          }
+          return {
+            id: generateId(),
+            homeTeam: teams[0]?.textContent?.trim() || "",
+            awayTeam: teams[1]?.textContent?.trim() || "",
+            homeScore,
+            awayScore,
+            date: card.querySelector(".match-card-date")?.textContent?.trim() || "",
+            time: (card.querySelector(".match-card-time")?.textContent || "").replace("⏰", "").trim(),
+            stadium: card.querySelector(".match-card-stadium")?.textContent?.trim() || "",
+          }
+        })
+        return { id: generateId(), label, matches: matches.length > 0 ? matches : [makeMatch()] }
+      })
+    }
+
+    // single (no tabs) case
+    const singleCards = Array.from(doc.querySelectorAll(".match-card"))
+    if (singleCards.length > 0) {
+      const label = doc.querySelector(".match-card-badge")?.textContent?.trim() || "Grup A"
+      const matches: MatchEntry[] = singleCards.map((card) => {
+        const teams = Array.from(card.querySelectorAll(".match-card-team"))
+        const scoreEl = card.querySelector(".match-card-score")
+        let homeScore = ""
+        let awayScore = ""
+        if (scoreEl) {
+          const sep = scoreEl.querySelector(".match-card-score-sep")
+          const scoreText = sep ? scoreEl.textContent?.replace(sep.textContent || "", "–") : scoreEl.textContent
+          const parts = (scoreText || "").split("–").map((s) => s.trim())
+          homeScore = parts[0] || ""
+          awayScore = parts[1] || ""
+        }
+        return {
+          id: generateId(),
+          homeTeam: teams[0]?.textContent?.trim() || "",
+          awayTeam: teams[1]?.textContent?.trim() || "",
+          homeScore,
+          awayScore,
+          date: card.querySelector(".match-card-date")?.textContent?.trim() || "",
+          time: (card.querySelector(".match-card-time")?.textContent || "").replace("⏰", "").trim(),
+          stadium: card.querySelector(".match-card-stadium")?.textContent?.trim() || "",
+        }
+      })
+      return [{ id: generateId(), label, matches }]
+    }
+    return null
+  } catch {
+    return null
+  }
+}
+
+// ─── Parse standings HTML back to state ──────────────────────────────────────
+
+interface StandingsTeamEntry {
+  id: string
+  code: string
+  name: string
+  played: number
+  won: number
+  drawn: number
+  lost: number
+  gf: number
+  ga: number
+  pts: number
+  form: string[]
+}
+
+interface StandingsGroup {
+  id: string
+  label: string
+  teams: StandingsTeamEntry[]
+}
+
+function parseStandingsBlockHtml(html: string): { title: string; groups: StandingsGroup[] } | null {
+  try {
+    const parser = new DOMParser()
+    const doc = parser.parseFromString(html, "text/html")
+
+    const block = doc.querySelector(".group-standings-block")
+    if (!block) return null
+
+    const title = block.querySelector(".gs-header-title")?.textContent?.trim() || "Klasemen Fase Grup"
+    const navBtns = Array.from(block.querySelectorAll(".tb-nav .tbb"))
+    const panels = Array.from(block.querySelectorAll(".tb-content .tbp"))
+
+    if (!navBtns.length || !panels.length) return null
+
+    const groups: StandingsGroup[] = navBtns.map((btn, i) => {
+      const label = btn.textContent?.trim() || `Grup ${String.fromCharCode(65 + i)}`
+      const panel = panels[i]
+      const rows = panel ? Array.from(panel.querySelectorAll("tbody tr.gs-row")) : []
+
+      const teams: StandingsTeamEntry[] = rows.map((row) => {
+        const tds = Array.from(row.querySelectorAll("td"))
+        const numAt = (idx: number) => parseInt(tds[idx]?.textContent?.trim() || "0") || 0
+        const formBadges = Array.from(row.querySelectorAll(".gs-form-badge")).map((b) => b.textContent?.trim() || "")
+        return {
+          id: generateId(),
+          code: row.querySelector(".gs-flag")?.textContent?.trim() || "",
+          name: row.querySelector(".gs-team-name")?.textContent?.trim() || "",
+          played: numAt(2),
+          won: numAt(3),
+          drawn: numAt(4),
+          lost: numAt(5),
+          gf: numAt(6),
+          ga: numAt(7),
+          pts: numAt(9),
+          form: formBadges,
+        }
+      })
+
+      return {
+        id: generateId(),
+        label,
+        teams: teams.length > 0 ? teams : [makeTeam(), makeTeam(), makeTeam(), makeTeam()],
+      }
+    })
+
+    return { title, groups }
+  } catch {
+    return null
+  }
+}
+
+// ─── MatchCardWidget ─────────────────────────────────────────────────────────
+
+interface MatchCardWidgetProps {
+  onInsert: (html: string, blockId: string) => void
+  editData?: { blockId: string; tabs: MatchTab[] } | null
+  onReset?: () => void
+}
+
+function MatchCardWidget({ onInsert, editData, onReset }: MatchCardWidgetProps) {
   const [tabs, setTabs] = useState<MatchTab[]>([makeMatchTab(0)])
-  const [activeTab, setActiveTab] = useState<string>(() => "")
+  const [activeTab, setActiveTab] = useState<string>("")
+
+  // Sync editData into state when it changes
+  useEffect(() => {
+    if (editData) {
+      setTabs(editData.tabs)
+      setActiveTab(editData.tabs[0]?.id || "")
+    }
+  }, [editData])
 
   useEffect(() => {
     if (!activeTab && tabs.length > 0) setActiveTab(tabs[0].id)
@@ -141,25 +310,51 @@ function MatchCardWidget({ onInsert }: { onInsert: (html: string, blockId: strin
     }))
 
   const handleInsert = () => {
-    const blockId = generateId()
+    const blockId = editData?.blockId || generateId()
     const validTabs = tabs.filter((t) => t.matches.some((m) => m.homeTeam || m.awayTeam))
     if (!validTabs.length) return
     const html = validTabs.length === 1
-      ? `<div class="match-block" data-block-id="${blockId}">${renderMatchTabHtml(validTabs[0])}</div>`
+      ? `<div class="match-block" data-block-id="${blockId}" data-block-type="match">${renderMatchTabHtml(validTabs[0])}</div>`
       : buildMatchTabbedHtml(validTabs, blockId)
     onInsert(html, blockId)
+    // Reset after insert
+    if (editData && onReset) {
+      onReset()
+      setTabs([makeMatchTab(0)])
+      setActiveTab("")
+    }
   }
 
   if (!currentTab) return null
 
+  const isEditing = !!editData
+
   return (
-    <div className="rounded-xl border border-border bg-card overflow-hidden">
+    <div className={[
+      "rounded-xl border bg-card overflow-hidden transition-colors",
+      isEditing ? "border-primary/60 ring-1 ring-primary/30" : "border-border",
+    ].join(" ")}>
       <div className="flex items-center justify-between border-b border-border bg-secondary/30 px-4 py-3">
         <div className="flex items-center gap-2">
           <TableIcon className="h-4 w-4 text-primary" />
           <span className="text-sm font-semibold text-foreground">Jadwal Pertandingan</span>
+          {isEditing && (
+            <span className="flex items-center gap-1 rounded-full bg-primary/10 px-2 py-0.5 text-[10px] font-bold text-primary">
+              <Pencil className="h-2.5 w-2.5" /> Mode Edit
+            </span>
+          )}
         </div>
-        <span className="text-[10px] text-muted-foreground/60">Tab = Grup / Ronde</span>
+        <div className="flex items-center gap-2">
+          {isEditing && onReset && (
+            <button
+              onClick={() => { onReset(); setTabs([makeMatchTab(0)]); setActiveTab("") }}
+              className="text-[10px] text-muted-foreground hover:text-destructive transition-colors"
+            >
+              Batal
+            </button>
+          )}
+          <span className="text-[10px] text-muted-foreground/60">Tab = Grup / Ronde</span>
+        </div>
       </div>
 
       <div className="flex items-center gap-1 overflow-x-auto border-b border-border bg-secondary/20 px-3 py-2">
@@ -274,9 +469,14 @@ function MatchCardWidget({ onInsert }: { onInsert: (html: string, blockId: strin
         </span>
         <button
           onClick={handleInsert}
-          className="flex items-center gap-1.5 rounded-md bg-primary/10 px-3 py-1.5 text-xs font-semibold text-primary hover:bg-primary/20 transition-colors">
+          className={[
+            "flex items-center gap-1.5 rounded-md px-3 py-1.5 text-xs font-semibold transition-colors",
+            isEditing
+              ? "bg-primary text-black hover:bg-primary/90"
+              : "bg-primary/10 text-primary hover:bg-primary/20",
+          ].join(" ")}>
           <TableIcon className="h-3.5 w-3.5" />
-          Insert ke Artikel
+          {isEditing ? "Update Card" : "Insert ke Artikel"}
         </button>
       </div>
     </div>
@@ -284,26 +484,6 @@ function MatchCardWidget({ onInsert }: { onInsert: (html: string, blockId: strin
 }
 
 // ─── Group Standings Widget ───────────────────────────────────────────────────
-
-interface StandingsTeamEntry {
-  id: string
-  code: string      // kode negara 2 huruf, e.g. "MX"
-  name: string      // nama tim
-  played: number
-  won: number
-  drawn: number
-  lost: number
-  gf: number        // gol masuk
-  ga: number        // gol kebobolan
-  pts: number
-  form: string[]    // array "W"/"D"/"L" max 3
-}
-
-interface StandingsGroup {
-  id: string
-  label: string     // e.g. "Grup A"
-  teams: StandingsTeamEntry[]
-}
 
 function makeTeam(): StandingsTeamEntry {
   return {
@@ -321,12 +501,10 @@ function makeStandingsGroup(index: number): StandingsGroup {
   }
 }
 
-/** Hitung SG (selisih gol) */
 function calcSG(team: StandingsTeamEntry): number {
   return team.gf - team.ga
 }
 
-/** Sort tim dalam grup: pts desc → SG desc → GF desc */
 function sortedTeams(teams: StandingsTeamEntry[]): StandingsTeamEntry[] {
   return [...teams].sort((a, b) => {
     if (b.pts !== a.pts) return b.pts - a.pts
@@ -335,7 +513,6 @@ function sortedTeams(teams: StandingsTeamEntry[]): StandingsTeamEntry[] {
   })
 }
 
-/** Render satu grup sebagai tabel HTML */
 function renderGroupTableHtml(group: StandingsGroup): string {
   const sorted = sortedTeams(group.teams)
   const rows = sorted.map((t, i) => {
@@ -390,7 +567,6 @@ function renderGroupTableHtml(group: StandingsGroup): string {
 </div>`
 }
 
-/** Bungkus semua grup dalam tabbed block HTML */
 function buildGroupStandingsHtml(groups: StandingsGroup[], blockId: string, title: string): string {
   const buttons = groups
     .map((g, i) => `<button class="tbb${i === 0 ? " tbb-active" : ""}" data-tab="${i}">${g.label}</button>`)
@@ -399,7 +575,7 @@ function buildGroupStandingsHtml(groups: StandingsGroup[], blockId: string, titl
     .map((g, i) => `<div class="tbp${i === 0 ? " tbp-active" : ""}" data-panel="${i}">${renderGroupTableHtml(g)}</div>`)
     .join("")
   return (
-    `<div class="group-standings-block tabbed-block" data-block-id="${blockId}">` +
+    `<div class="group-standings-block tabbed-block" data-block-id="${blockId}" data-block-type="standings">` +
     `<div class="gs-header"><span class="gs-header-icon">🏆</span><span class="gs-header-title">${title}</span><span class="gs-header-sub">Klasemen Sementara</span></div>` +
     `<div class="tb-nav">${buttons}</div>` +
     `<div class="tb-content">${panels}</div>` +
@@ -407,11 +583,27 @@ function buildGroupStandingsHtml(groups: StandingsGroup[], blockId: string, titl
   )
 }
 
-function GroupStandingsWidget({ onInsert }: { onInsert: (html: string, blockId: string) => void }) {
+interface GroupStandingsWidgetProps {
+  onInsert: (html: string, blockId: string) => void
+  editData?: { blockId: string; title: string; groups: StandingsGroup[] } | null
+  onReset?: () => void
+}
+
+function GroupStandingsWidget({ onInsert, editData, onReset }: GroupStandingsWidgetProps) {
   const [title, setTitle] = useState("Klasemen Fase Grup")
   const [groups, setGroups] = useState<StandingsGroup[]>([makeStandingsGroup(0)])
-  const [activeGroup, setActiveGroup] = useState<string>(() => "")
+  const [activeGroup, setActiveGroup] = useState<string>("")
   const [activeTeamIdx, setActiveTeamIdx] = useState<number>(0)
+
+  // Sync editData into state when it changes
+  useEffect(() => {
+    if (editData) {
+      setTitle(editData.title)
+      setGroups(editData.groups)
+      setActiveGroup(editData.groups[0]?.id || "")
+      setActiveTeamIdx(0)
+    }
+  }, [editData])
 
   useEffect(() => {
     if (!activeGroup && groups.length > 0) setActiveGroup(groups[0].id)
@@ -457,14 +649,23 @@ function GroupStandingsWidget({ onInsert }: { onInsert: (html: string, blockId: 
   }
 
   const handleInsert = () => {
-    const blockId = generateId()
+    const blockId = editData?.blockId || generateId()
     const validGroups = groups.filter((g) => g.teams.some((t) => t.name))
     if (!validGroups.length) return
     const html = buildGroupStandingsHtml(validGroups, blockId, title)
     onInsert(html, blockId)
+    // Reset after insert
+    if (editData && onReset) {
+      onReset()
+      setTitle("Klasemen Fase Grup")
+      setGroups([makeStandingsGroup(0)])
+      setActiveGroup("")
+    }
   }
 
   if (!currentGroup) return null
+
+  const isEditing = !!editData
 
   const numField = (val: number, onChange: (n: number) => void, label: string) => (
     <div className="flex flex-col items-center gap-0.5">
@@ -480,14 +681,32 @@ function GroupStandingsWidget({ onInsert }: { onInsert: (html: string, blockId: 
   )
 
   return (
-    <div className="rounded-xl border border-border bg-card overflow-hidden">
+    <div className={[
+      "rounded-xl border bg-card overflow-hidden transition-colors",
+      isEditing ? "border-primary/60 ring-1 ring-primary/30" : "border-border",
+    ].join(" ")}>
       {/* Header */}
       <div className="flex items-center justify-between border-b border-border bg-secondary/30 px-4 py-3">
         <div className="flex items-center gap-2">
           <Trophy className="h-4 w-4 text-primary" />
           <span className="text-sm font-semibold text-foreground">Klasemen Fase Grup</span>
+          {isEditing && (
+            <span className="flex items-center gap-1 rounded-full bg-primary/10 px-2 py-0.5 text-[10px] font-bold text-primary">
+              <Pencil className="h-2.5 w-2.5" /> Mode Edit
+            </span>
+          )}
         </div>
-        <span className="text-[10px] text-muted-foreground/60">Tab = Grup</span>
+        <div className="flex items-center gap-2">
+          {isEditing && onReset && (
+            <button
+              onClick={() => { onReset(); setTitle("Klasemen Fase Grup"); setGroups([makeStandingsGroup(0)]); setActiveGroup("") }}
+              className="text-[10px] text-muted-foreground hover:text-destructive transition-colors"
+            >
+              Batal
+            </button>
+          )}
+          <span className="text-[10px] text-muted-foreground/60">Tab = Grup</span>
+        </div>
       </div>
 
       {/* Title input */}
@@ -544,7 +763,6 @@ function GroupStandingsWidget({ onInsert }: { onInsert: (html: string, blockId: 
             ].join(" ")}
             onClick={() => setActiveTeamIdx(idx)}
           >
-            {/* Team header */}
             <div className="flex items-center justify-between">
               <div className="flex items-center gap-2">
                 <span className={[
@@ -561,7 +779,6 @@ function GroupStandingsWidget({ onInsert }: { onInsert: (html: string, blockId: 
               )}
             </div>
 
-            {/* Name & code */}
             <div className="flex items-center gap-1.5">
               <input
                 value={team.code}
@@ -577,7 +794,6 @@ function GroupStandingsWidget({ onInsert }: { onInsert: (html: string, blockId: 
               />
             </div>
 
-            {/* Stats row */}
             <div className="flex items-end gap-2 flex-wrap">
               {numField(team.played, (n) => updateTeam(currentGroup.id, team.id, { played: n }), "M")}
               {numField(team.won, (n) => updateTeam(currentGroup.id, team.id, { won: n }), "W")}
@@ -586,7 +802,6 @@ function GroupStandingsWidget({ onInsert }: { onInsert: (html: string, blockId: 
               {numField(team.gf, (n) => updateTeam(currentGroup.id, team.id, { gf: n }), "GM")}
               {numField(team.ga, (n) => updateTeam(currentGroup.id, team.id, { ga: n }), "GK")}
               {numField(team.pts, (n) => updateTeam(currentGroup.id, team.id, { pts: n }), "PTS")}
-              {/* Form badges */}
               <div className="flex flex-col items-start gap-0.5 ml-1">
                 <span className="text-[9px] uppercase tracking-wide text-muted-foreground/60">FORM</span>
                 <div className="flex gap-0.5">
@@ -642,9 +857,14 @@ function GroupStandingsWidget({ onInsert }: { onInsert: (html: string, blockId: 
         </span>
         <button
           onClick={handleInsert}
-          className="flex items-center gap-1.5 rounded-md bg-primary/10 px-3 py-1.5 text-xs font-semibold text-primary hover:bg-primary/20 transition-colors">
+          className={[
+            "flex items-center gap-1.5 rounded-md px-3 py-1.5 text-xs font-semibold transition-colors",
+            isEditing
+              ? "bg-primary text-black hover:bg-primary/90"
+              : "bg-primary/10 text-primary hover:bg-primary/20",
+          ].join(" ")}>
           <Trophy className="h-3.5 w-3.5" />
-          Insert ke Artikel
+          {isEditing ? "Update Card" : "Insert ke Artikel"}
         </button>
       </div>
     </div>
@@ -689,6 +909,13 @@ function ToolbarSeparator() {
   return <div className="mx-1 h-4 w-px bg-border" aria-hidden />
 }
 
+// ─── Edit block state types ───────────────────────────────────────────────────
+
+type EditingBlock =
+  | { type: "match"; blockId: string; tabs: MatchTab[] }
+  | { type: "standings"; blockId: string; title: string; groups: StandingsGroup[] }
+  | null
+
 // ─── Main Component ───────────────────────────────────────────────────────────
 
 export function CreateArticleView({ onBack, articleId }: CreateArticleViewProps) {
@@ -706,6 +933,9 @@ export function CreateArticleView({ onBack, articleId }: CreateArticleViewProps)
   const [message,         setMessage]         = useState<{ type: "success" | "error"; text: string } | null>(null)
 
   const [isEditorChoice, setIsEditorChoice] = useState(false)
+
+  // ── Editing block state (Opsi A) ────────────────────────────────────────────
+  const [editingBlock, setEditingBlock] = useState<EditingBlock>(null)
 
   // ── Link Dialog ─────────────────────────────────────────────────────────────
   const [linkDialogOpen,  setLinkDialogOpen]  = useState(false)
@@ -753,7 +983,7 @@ export function CreateArticleView({ onBack, articleId }: CreateArticleViewProps)
           "prose-ul:text-foreground/90 prose-ol:text-foreground/90",
           "prose-hr:border-border",
           "prose-img:rounded-lg",
-          // ── match-card styles (agar widget jadwal terlihat visual di editor) ──
+          // ── match-card styles ──
           "[&_.match-block]:my-4 [&_.match-block]:pointer-events-none",
           "[&_.match-card-grid]:grid [&_.match-card-grid]:gap-3 [&_.match-card-grid]:my-3 [&_.match-card-grid]:grid-cols-1",
           "[&_.match-card]:rounded-xl [&_.match-card]:border [&_.match-card]:border-border [&_.match-card]:bg-secondary/30 [&_.match-card]:p-3 [&_.match-card]:flex [&_.match-card]:flex-col [&_.match-card]:gap-2",
@@ -769,7 +999,9 @@ export function CreateArticleView({ onBack, articleId }: CreateArticleViewProps)
           "[&_.match-card-time]:rounded [&_.match-card-time]:border [&_.match-card-time]:border-border [&_.match-card-time]:bg-black/30 [&_.match-card-time]:px-1.5 [&_.match-card-time]:py-0.5 [&_.match-card-time]:text-xs [&_.match-card-time]:font-bold [&_.match-card-time]:text-foreground",
           "[&_.match-card-stadium]:text-xs [&_.match-card-stadium]:text-muted-foreground",
           // ── tabbed-block styles ──
+          // Card yang sedang di-edit diberi highlight
           "[&_.tabbed-block]:rounded-xl [&_.tabbed-block]:border [&_.tabbed-block]:border-primary/40 [&_.tabbed-block]:overflow-hidden [&_.tabbed-block]:my-4 [&_.tabbed-block]:pointer-events-none",
+          "[&_.tabbed-block]:cursor-pointer",
           "[&_.tb-nav]:flex [&_.tb-nav]:flex-wrap [&_.tb-nav]:gap-1 [&_.tb-nav]:p-2 [&_.tb-nav]:bg-secondary/40 [&_.tb-nav]:border-b [&_.tb-nav]:border-border",
           "[&_.tbb]:rounded-md [&_.tbb]:px-2.5 [&_.tbb]:py-1 [&_.tbb]:text-xs [&_.tbb]:font-semibold [&_.tbb]:border [&_.tbb]:border-border [&_.tbb]:bg-secondary [&_.tbb]:text-muted-foreground",
           "[&_.tbb-active]:bg-primary [&_.tbb-active]:border-primary [&_.tbb-active]:text-black",
@@ -815,9 +1047,85 @@ export function CreateArticleView({ onBack, articleId }: CreateArticleViewProps)
           "[&_.gs-legend-candidate]:text-yellow-400",
         ].join(" "),
       },
+      // ── Opsi A: klik card di editor → isi sidebar untuk edit ────────────────
+      handleClick(view, _pos, event) {
+        const target = event.target as HTMLElement
+        const block = target.closest<HTMLElement>("[data-block-id]")
+        if (!block) return false
+
+        const blockId = block.dataset.blockId
+        const blockType = block.dataset.blockType
+        if (!blockId) return false
+
+        if (blockType === "match" || block.classList.contains("match-tabbed-block") || block.classList.contains("match-block")) {
+          const outerHtml = block.outerHTML
+          const parsed = parseMatchBlockHtml(outerHtml)
+          if (parsed) {
+            setEditingBlock({ type: "match", blockId, tabs: parsed })
+            // Scroll sidebar widget into view
+            setTimeout(() => {
+              document.getElementById("match-widget-anchor")?.scrollIntoView({ behavior: "smooth", block: "start" })
+            }, 50)
+          }
+          return true
+        }
+
+        if (blockType === "standings" || block.classList.contains("group-standings-block")) {
+          const outerHtml = block.outerHTML
+          const parsed = parseStandingsBlockHtml(outerHtml)
+          if (parsed) {
+            setEditingBlock({ type: "standings", blockId, ...parsed })
+            setTimeout(() => {
+              document.getElementById("standings-widget-anchor")?.scrollIntoView({ behavior: "smooth", block: "start" })
+            }, 50)
+          }
+          return true
+        }
+
+        return false
+      },
     },
     content: "",
   })
+
+  // ── Replace card in editor (for update) ─────────────────────────────────────
+  const replaceCardInEditor = useCallback((newHtml: string, blockId: string) => {
+    if (!editor) return
+    const { state, view } = editor
+    let replaced = false
+
+    state.doc.descendants((node, pos) => {
+      if (replaced) return false
+      // Look for the HTML node that contains data-block-id
+      const nodeHtml = node.isText ? "" : (node.attrs?.innerHTML as string | undefined) || ""
+      // Walk DOM of the editor view to find and replace
+      if (node.type.name === "paragraph" || node.type.name === "html") {
+        // Try via DOM
+      }
+    })
+
+    // Strategy: get full HTML, replace the block, set content back
+    const currentHtml = editor.getHTML()
+    const parser = new DOMParser()
+    const doc = parser.parseFromString(currentHtml, "text/html")
+    const existing = doc.querySelector(`[data-block-id="${blockId}"]`)
+
+    if (existing) {
+      const newDoc = parser.parseFromString(newHtml, "text/html")
+      const newNode = newDoc.body.firstChild
+      if (newNode) {
+        existing.replaceWith(newNode)
+        const updatedHtml = doc.body.innerHTML
+        editor.commands.setContent(updatedHtml, false)
+        replaced = true
+      }
+    }
+
+    if (!replaced) {
+      // Fallback: insert at cursor if not found
+      editor.chain().focus().insertContent(newHtml).run()
+    }
+  }, [editor])
 
   useEffect(() => {
     const handler = (e: Event) => {
@@ -836,7 +1144,6 @@ export function CreateArticleView({ onBack, articleId }: CreateArticleViewProps)
       if (!editor || !cardId) return
       const html = cardMapRef.current.get(cardId)
       if (!html) return
-      // Insert HTML card langsung ke editor agar tampil visual
       editor.chain().focus().insertContent(html).run()
     }
     window.addEventListener("insert-card-placeholder", handler)
@@ -870,9 +1177,6 @@ export function CreateArticleView({ onBack, articleId }: CreateArticleViewProps)
         setMetaDescription(data.meta_description || "")
         setIsEditorChoice(data.is_editor_choice || false)
         const raw = data.content || ""
-
-        // Langsung set konten HTML ke editor — card widget akan tampil visual
-        // karena editorProps sudah punya CSS yang sesuai
         editor.commands.setContent(raw || "")
       }
       const { data: articleTags } = await supabase
@@ -908,8 +1212,6 @@ export function CreateArticleView({ onBack, articleId }: CreateArticleViewProps)
   }
 
   const resolveCards = (html: string): string => {
-    // Tidak ada lagi [[CARD:xxx]] placeholder — editor menyimpan HTML card langsung
-    // Fungsi ini tetap ada untuk kompatibilitas jika ada konten lama dengan placeholder
     return html.replace(/\[\[CARD:([a-z0-9]+)\]\]/g, (_, id) => {
       return cardMapRef.current.get(id) ?? ""
     })
@@ -918,8 +1220,6 @@ export function CreateArticleView({ onBack, articleId }: CreateArticleViewProps)
   useEffect(() => {
     if (editorTab !== "preview" || !editor) return
     const raw = editor.getHTML()
-    // Preserve empty paragraphs as visible spacing in preview
-    // resolveCards juga tetap dijalankan untuk kompatibilitas konten lama dengan [[CARD:xxx]]
     const withSpacing = raw.replace(/<p><\/p>/g, "<p>&nbsp;</p>")
     setPreviewHtml(resolveCards(withSpacing))
   }, [editorTab, editor])
@@ -1156,7 +1456,15 @@ export function CreateArticleView({ onBack, articleId }: CreateArticleViewProps)
                   Preview
                 </button>
               </div>
-              <span className="font-mono text-xs text-muted-foreground/50 tracking-tight">Markdown + HTML</span>
+              <div className="flex items-center gap-2">
+                {editingBlock && (
+                  <span className="flex items-center gap-1.5 rounded-full bg-primary/10 px-2.5 py-1 text-xs font-semibold text-primary animate-pulse">
+                    <Pencil className="h-3 w-3" />
+                    Klik card lain atau edit di sidebar
+                  </span>
+                )}
+                <span className="font-mono text-xs text-muted-foreground/50 tracking-tight">Markdown + HTML</span>
+              </div>
             </div>
 
             {editorTab === "write" ? (
@@ -1351,24 +1659,42 @@ export function CreateArticleView({ onBack, articleId }: CreateArticleViewProps)
         <div className="space-y-5">
 
           {/* ── Jadwal Pertandingan Widget ── */}
-          <MatchCardWidget
-            onInsert={(html, blockId) => {
-              if (!editor) return
-              cardMapRef.current.set(blockId, html)
-              // Insert HTML card langsung ke editor agar tampil visual
-              editor.chain().focus().insertContent(html).run()
-            }}
-          />
+          <div id="match-widget-anchor">
+            <MatchCardWidget
+              editData={editingBlock?.type === "match" ? editingBlock : null}
+              onReset={() => setEditingBlock(null)}
+              onInsert={(html, blockId) => {
+                if (!editor) return
+                cardMapRef.current.set(blockId, html)
+                if (editingBlock?.type === "match" && editingBlock.blockId === blockId) {
+                  // Replace existing card
+                  replaceCardInEditor(html, blockId)
+                } else {
+                  editor.chain().focus().insertContent(html).run()
+                }
+                setEditingBlock(null)
+              }}
+            />
+          </div>
 
           {/* ── Klasemen Fase Grup Widget ── */}
-          <GroupStandingsWidget
-            onInsert={(html, blockId) => {
-              if (!editor) return
-              cardMapRef.current.set(blockId, html)
-              // Insert HTML card langsung ke editor agar tampil visual
-              editor.chain().focus().insertContent(html).run()
-            }}
-          />
+          <div id="standings-widget-anchor">
+            <GroupStandingsWidget
+              editData={editingBlock?.type === "standings" ? editingBlock : null}
+              onReset={() => setEditingBlock(null)}
+              onInsert={(html, blockId) => {
+                if (!editor) return
+                cardMapRef.current.set(blockId, html)
+                if (editingBlock?.type === "standings" && editingBlock.blockId === blockId) {
+                  // Replace existing card
+                  replaceCardInEditor(html, blockId)
+                } else {
+                  editor.chain().focus().insertContent(html).run()
+                }
+                setEditingBlock(null)
+              }}
+            />
+          </div>
 
           {/* ── Editor Choice Toggle ── */}
           <div className="rounded-xl border border-border bg-card p-5">
