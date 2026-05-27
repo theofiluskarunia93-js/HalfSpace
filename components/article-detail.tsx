@@ -56,8 +56,25 @@ interface TocItem {
 // Konten sekarang selalu HTML dari Tiptap — langsung pakai, tidak perlu parse
 function contentToHtml(content: string): string {
   if (!content) return ""
+  // Bersihkan card-editor-placeholder yang mungkin lolos ke database
+  let html = content
+  if (html.includes("card-editor-placeholder")) {
+    try {
+      const parser = new DOMParser()
+      const doc = parser.parseFromString(html, "text/html")
+      doc.querySelectorAll<HTMLElement>(".card-editor-placeholder").forEach((el) => {
+        const parentP = el.closest("p")
+        if (parentP) parentP.remove()
+        else el.remove()
+      })
+      html = doc.body.innerHTML
+    } catch {
+      // fallback: regex remove
+      html = html.replace(/<[^>]*class="[^"]*card-editor-placeholder[^"]*"[^>]*>.*?<\/[^>]+>/gs, "")
+    }
+  }
   // Preserve empty paragraphs so user-inserted blank lines appear as spacing
-  return content.replace(/<p><\/p>/g, "<p>&nbsp;</p>")
+  return html.replace(/<p><\/p>/g, "<p>&nbsp;</p>")
 }
 
 function calcReadingTime(content: string): number {

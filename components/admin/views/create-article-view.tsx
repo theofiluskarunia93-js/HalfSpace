@@ -1079,7 +1079,9 @@ export function CreateArticleView({ onBack, articleId }: CreateArticleViewProps)
       // ── Opsi A: klik card di editor → isi sidebar untuk edit ────────────────
       handleClick(view, _pos, event) {
         const target = event.target as HTMLElement
-        const block = target.closest<HTMLElement>("[data-block-id]")
+        // Cari placeholder (span atau div) dengan data-block-id
+        const block = target.closest<HTMLElement>(".card-editor-placeholder[data-block-id]")
+          ?? target.closest<HTMLElement>("[data-block-id]")
         if (!block) return false
 
         const blockId = block.dataset.blockId
@@ -1092,15 +1094,16 @@ export function CreateArticleView({ onBack, articleId }: CreateArticleViewProps)
 
         // Handle simple placeholder clicks (new system)
         if (block.classList.contains("card-editor-placeholder")) {
+          const cardMap: Map<string, string> = (window as any).__cardMapRef ?? new Map()
           if (blockType === "match") {
-            const cardHtml = (window as any).__cardMapRef?.get(blockId) ?? ""
+            const cardHtml = cardMap.get(blockId) ?? ""
             const parsed = cardHtml ? parseMatchBlockHtml(cardHtml) : null
             _setEditingBlock({ type: "match", blockId, tabs: parsed ?? [makeMatchTab(0)] })
             setTimeout(() => {
               document.getElementById("match-widget-anchor")?.scrollIntoView({ behavior: "smooth", block: "start" })
             }, 50)
           } else if (blockType === "standings") {
-            const cardHtml = (window as any).__cardMapRef?.get(blockId) ?? ""
+            const cardHtml = cardMap.get(blockId) ?? ""
             const parsed = cardHtml ? parseStandingsBlockHtml(cardHtml) : null
             _setEditingBlock({ type: "standings", blockId, title: parsed?.title ?? "", groups: parsed?.groups ?? [makeStandingsGroup(0)] })
             setTimeout(() => {
@@ -1179,6 +1182,8 @@ export function CreateArticleView({ onBack, articleId }: CreateArticleViewProps)
     if (!articleId || !editor) return
     async function fetchArticle() {
       setIsFetching(true)
+      // Reset cardMapRef sebelum load artikel baru agar tidak ada sisa data artikel lain
+      cardMapRef.current.clear()
       const { data } = await supabase.from("articles").select("*").eq("id", articleId).single()
       if (data) {
         setTitle(data.title || "")
@@ -1214,9 +1219,9 @@ export function CreateArticleView({ onBack, articleId }: CreateArticleViewProps)
             const shortId = id.slice(0, 6)
             const badge = doc.createElement("p")
             badge.innerHTML =
-              `<div class="card-editor-placeholder" data-block-id="${id}" data-block-type="${type}" contenteditable="false">` +
+              `<span class="card-editor-placeholder" data-block-id="${id}" data-block-type="${type}" contenteditable="false">` +
               `${label}&nbsp;<span style="opacity:0.45;font-size:10px;font-weight:400;">[${shortId}]</span>` +
-              `<span style="opacity:0.4;font-size:9px;margin-left:6px;">✎ klik untuk edit</span></div>`
+              `<span style="opacity:0.4;font-size:9px;margin-left:6px;">✎ klik untuk edit</span></span>`
             el.replaceWith(badge)
           })
 
@@ -1259,13 +1264,14 @@ export function CreateArticleView({ onBack, articleId }: CreateArticleViewProps)
   }
 
   // Build a simple editor placeholder badge for a card block
+  // NOTE: menggunakan <p> dengan <span> agar valid HTML (div dalam p tidak valid dan TipTap akan strip)
   const buildCardPlaceholderHtml = (blockId: string, type: "match" | "standings"): string => {
     const label = type === "match" ? "📅 Jadwal Pertandingan" : "🏆 Klasemen Grup"
     const shortId = blockId.slice(0, 6)
     return (
-      `<p><div class="card-editor-placeholder" data-block-id="${blockId}" data-block-type="${type}" ` +
+      `<p><span class="card-editor-placeholder" data-block-id="${blockId}" data-block-type="${type}" ` +
       `contenteditable="false">${label}&nbsp;<span style="opacity:0.45;font-size:10px;font-weight:400;">[${shortId}]</span>` +
-      `<span style="opacity:0.4;font-size:9px;margin-left:6px;">✎ klik untuk edit</span></div></p>`
+      `<span style="opacity:0.4;font-size:9px;margin-left:6px;">✎ klik untuk edit</span></span></p>`
     )
   }
 
@@ -1276,7 +1282,7 @@ export function CreateArticleView({ onBack, articleId }: CreateArticleViewProps)
     const parser = new DOMParser()
     const doc = parser.parseFromString(currentHtml, "text/html")
 
-    // Cari element dengan data-block-id — bisa placeholder atau full card HTML
+    // Cari element dengan data-block-id — bisa placeholder span/div atau full card HTML
     const existing = doc.querySelector(`[data-block-id="${blockId}"]`)
     if (!existing) return
 
@@ -1297,11 +1303,11 @@ export function CreateArticleView({ onBack, articleId }: CreateArticleViewProps)
   }
 
   const resolveCards = useCallback((html: string): string => {
-    // Resolve both [[CARD:id]] legacy format and new .card-editor-placeholder divs
+    // Resolve both [[CARD:id]] legacy format and new .card-editor-placeholder elements
     let resolved = html.replace(/\[\[CARD:([a-z0-9]+)\]\]/g, (_, id) => {
       return cardMapRef.current.get(id) ?? ""
     })
-    // Replace editor placeholder divs with full card HTML
+    // Replace editor placeholder elements (span atau div) dengan full card HTML
     const parser = new DOMParser()
     const doc = parser.parseFromString(resolved, "text/html")
     doc.querySelectorAll<HTMLElement>(".card-editor-placeholder[data-block-id]").forEach((el) => {
@@ -1311,21 +1317,37 @@ export function CreateArticleView({ onBack, articleId }: CreateArticleViewProps)
       if (cardHtml) {
         const tmp = parser.parseFromString(cardHtml, "text/html")
         const newNode = tmp.body.firstChild
-        if (newNode) el.replaceWith(newNode)
-        else el.remove()
+        // Cari parent <p> untuk diganti dengan block-level element
+        const parentP = el.closest("p")
+        if (parentP && newNode) {
+          parentP.replaceWith(newNode)
+        } else if (newNode) {
+          el.replaceWith(newNode)
+        } else {
+          el.remove()
+        }
       } else {
         // cardMapRef kosong untuk id ini — hapus placeholder agar tidak muncul di artikel
-        el.closest("p")?.remove() ?? el.remove()
+        const parentP = el.closest("p")
+        if (parentP) parentP.remove()
+        else el.remove()
       }
     })
     return doc.body.innerHTML
   }, [])
 
+  // Update preview setiap kali tab preview aktif, dan juga setiap kali content editor berubah saat di preview
   useEffect(() => {
     if (editorTab !== "preview" || !editor) return
-    const raw = editor.getHTML()
-    const withSpacing = raw.replace(/<p><\/p>/g, "<p>&nbsp;</p>")
-    setPreviewHtml(resolveCards(withSpacing))
+    const updatePreview = () => {
+      const raw = editor.getHTML()
+      const withSpacing = raw.replace(/<p><\/p>/g, "<p>&nbsp;</p>")
+      setPreviewHtml(resolveCards(withSpacing))
+    }
+    updatePreview()
+    // Subscribe ke perubahan content saat di tab preview
+    editor.on("update", updatePreview)
+    return () => { editor.off("update", updatePreview) }
   }, [editorTab, editor, resolveCards])
 
   const handleFeaturedImageUpload = async (e: React.ChangeEvent<HTMLInputElement>) => {
