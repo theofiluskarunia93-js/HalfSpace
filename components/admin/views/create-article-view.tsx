@@ -1094,18 +1094,27 @@ export function CreateArticleView({ onBack, articleId }: CreateArticleViewProps)
 
         // Handle simple placeholder clicks (new system)
         if (block.classList.contains("card-editor-placeholder")) {
+          // Baca blockId & type dari class (data-* mungkin sudah di-strip TipTap)
+          let resolvedBlockId = block.dataset.blockId
+          let resolvedType = block.dataset.blockType
+          block.classList.forEach((cls) => {
+            if (cls.startsWith("card-ref-")) resolvedBlockId = cls.replace("card-ref-", "")
+            if (cls.startsWith("card-type-")) resolvedType = cls.replace("card-type-", "")
+          })
+          if (!resolvedBlockId) return false
+
           const cardMap: Map<string, string> = (window as any).__cardMapRef ?? new Map()
-          if (blockType === "match") {
-            const cardHtml = cardMap.get(blockId) ?? ""
+          if (resolvedType === "match") {
+            const cardHtml = cardMap.get(resolvedBlockId) ?? ""
             const parsed = cardHtml ? parseMatchBlockHtml(cardHtml) : null
-            _setEditingBlock({ type: "match", blockId, tabs: parsed ?? [makeMatchTab(0)] })
+            _setEditingBlock({ type: "match", blockId: resolvedBlockId, tabs: parsed ?? [makeMatchTab(0)] })
             setTimeout(() => {
               document.getElementById("match-widget-anchor")?.scrollIntoView({ behavior: "smooth", block: "start" })
             }, 50)
-          } else if (blockType === "standings") {
-            const cardHtml = cardMap.get(blockId) ?? ""
+          } else if (resolvedType === "standings") {
+            const cardHtml = cardMap.get(resolvedBlockId) ?? ""
             const parsed = cardHtml ? parseStandingsBlockHtml(cardHtml) : null
-            _setEditingBlock({ type: "standings", blockId, title: parsed?.title ?? "", groups: parsed?.groups ?? [makeStandingsGroup(0)] })
+            _setEditingBlock({ type: "standings", blockId: resolvedBlockId, title: parsed?.title ?? "", groups: parsed?.groups ?? [makeStandingsGroup(0)] })
             setTimeout(() => {
               document.getElementById("standings-widget-anchor")?.scrollIntoView({ behavior: "smooth", block: "start" })
             }, 50)
@@ -1219,7 +1228,7 @@ export function CreateArticleView({ onBack, articleId }: CreateArticleViewProps)
             const shortId = id.slice(0, 6)
             const badge = doc.createElement("p")
             badge.innerHTML =
-              `<span class="card-editor-placeholder" data-block-id="${id}" data-block-type="${type}" contenteditable="false">` +
+              `<span class="card-editor-placeholder card-ref-${id} card-type-${type}" data-block-id="${id}" data-block-type="${type}" contenteditable="false">` +
               `${label}&nbsp;<span style="opacity:0.45;font-size:10px;font-weight:400;">[${shortId}]</span>` +
               `<span style="opacity:0.4;font-size:9px;margin-left:6px;">✎ klik untuk edit</span></span>`
             el.replaceWith(badge)
@@ -1264,13 +1273,16 @@ export function CreateArticleView({ onBack, articleId }: CreateArticleViewProps)
   }
 
   // Build a simple editor placeholder badge for a card block
-  // NOTE: menggunakan <p> dengan <span> agar valid HTML (div dalam p tidak valid dan TipTap akan strip)
+  // PENTING: TipTap strip data-* attributes dari schema yang tidak dikenal.
+  // Solusi: encode blockId & type langsung di class name (card-ref-{id} & card-type-{type})
+  // sehingga tetap ada setelah editor.getHTML() dan bisa di-resolve saat save.
   const buildCardPlaceholderHtml = (blockId: string, type: "match" | "standings"): string => {
     const label = type === "match" ? "📅 Jadwal Pertandingan" : "🏆 Klasemen Grup"
     const shortId = blockId.slice(0, 6)
     return (
-      `<p><span class="card-editor-placeholder" data-block-id="${blockId}" data-block-type="${type}" ` +
-      `contenteditable="false">${label}&nbsp;<span style="opacity:0.45;font-size:10px;font-weight:400;">[${shortId}]</span>` +
+      `<p><span class="card-editor-placeholder card-ref-${blockId} card-type-${type}" ` +
+      `data-block-id="${blockId}" data-block-type="${type}" contenteditable="false">` +
+      `${label}&nbsp;<span style="opacity:0.45;font-size:10px;font-weight:400;">[${shortId}]</span>` +
       `<span style="opacity:0.4;font-size:9px;margin-left:6px;">✎ klik untuk edit</span></span></p>`
     )
   }
@@ -1282,8 +1294,9 @@ export function CreateArticleView({ onBack, articleId }: CreateArticleViewProps)
     const parser = new DOMParser()
     const doc = parser.parseFromString(currentHtml, "text/html")
 
-    // Cari element dengan data-block-id — bisa placeholder span/div atau full card HTML
-    const existing = doc.querySelector(`[data-block-id="${blockId}"]`)
+    // Cari via class card-ref-{blockId} (data-* di-strip TipTap) atau data-block-id sebagai fallback
+    const existing = doc.querySelector(`.card-ref-${blockId}`)
+      ?? doc.querySelector(`[data-block-id="${blockId}"]`)
     if (!existing) return
 
     const newPlaceholder = buildCardPlaceholderHtml(blockId, type)
@@ -1303,36 +1316,46 @@ export function CreateArticleView({ onBack, articleId }: CreateArticleViewProps)
   }
 
   const resolveCards = useCallback((html: string): string => {
-    // Resolve both [[CARD:id]] legacy format and new .card-editor-placeholder elements
+    // Resolve [[CARD:id]] legacy format
     let resolved = html.replace(/\[\[CARD:([a-z0-9]+)\]\]/g, (_, id) => {
       return cardMapRef.current.get(id) ?? ""
     })
-    // Replace editor placeholder elements (span atau div) dengan full card HTML
+
     const parser = new DOMParser()
     const doc = parser.parseFromString(resolved, "text/html")
-    doc.querySelectorAll<HTMLElement>(".card-editor-placeholder[data-block-id]").forEach((el) => {
-      const id = el.dataset.blockId
-      if (!id) return
-      const cardHtml = cardMapRef.current.get(id)
+
+    // Resolve via class "card-ref-{blockId}" — ini tetap ada setelah TipTap strip data-attributes
+    doc.querySelectorAll<HTMLElement>(".card-editor-placeholder").forEach((el) => {
+      // Cari blockId dari class name (card-ref-xxxxx) karena data-* di-strip TipTap
+      let blockId: string | undefined
+      let type: "match" | "standings" | undefined
+
+      el.classList.forEach((cls) => {
+        if (cls.startsWith("card-ref-")) blockId = cls.replace("card-ref-", "")
+        if (cls.startsWith("card-type-")) type = cls.replace("card-type-", "") as "match" | "standings"
+      })
+
+      // Fallback ke data-attribute jika masih ada (misal dari load edit mode)
+      if (!blockId) blockId = el.dataset.blockId
+      if (!type) type = el.dataset.blockType as "match" | "standings"
+
+      if (!blockId) { el.closest("p")?.remove() ?? el.remove(); return }
+
+      const cardHtml = cardMapRef.current.get(blockId)
       if (cardHtml) {
         const tmp = parser.parseFromString(cardHtml, "text/html")
         const newNode = tmp.body.firstChild
-        // Cari parent <p> untuk diganti dengan block-level element
         const parentP = el.closest("p")
-        if (parentP && newNode) {
-          parentP.replaceWith(newNode)
-        } else if (newNode) {
-          el.replaceWith(newNode)
-        } else {
-          el.remove()
-        }
+        if (parentP && newNode) parentP.replaceWith(newNode)
+        else if (newNode) el.replaceWith(newNode)
+        else el.remove()
       } else {
-        // cardMapRef kosong untuk id ini — hapus placeholder agar tidak muncul di artikel
         const parentP = el.closest("p")
         if (parentP) parentP.remove()
         else el.remove()
       }
     })
+
     return doc.body.innerHTML
   }, [])
 
@@ -1435,11 +1458,15 @@ export function CreateArticleView({ onBack, articleId }: CreateArticleViewProps)
     // (bukan via placeholder) juga masuk ke cardMapRef agar tidak hilang
     const preParser = new DOMParser()
     const preDoc = preParser.parseFromString(rawHtml, "text/html")
-    preDoc.querySelectorAll<HTMLElement>("[data-block-id]").forEach((el) => {
-      const id = el.dataset.blockId
+    preDoc.querySelectorAll<HTMLElement>("[data-block-id], [class*='card-ref-']").forEach((el) => {
+      if (el.classList.contains("card-editor-placeholder")) return
+      // Baca id dari data-attribute atau class
+      let id = el.dataset.blockId
+      if (!id) {
+        el.classList.forEach((cls) => { if (cls.startsWith("card-ref-")) id = cls.replace("card-ref-", "") })
+      }
       const type = el.dataset.blockType
-      if (!id || !type || el.classList.contains("card-editor-placeholder")) return
-      // Ini adalah full card HTML yang tidak via placeholder — simpan ke cardMapRef
+      if (!id || !type) return
       if (!cardMapRef.current.has(id)) {
         cardMapRef.current.set(id, el.outerHTML)
       }
