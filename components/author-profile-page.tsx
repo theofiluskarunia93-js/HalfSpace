@@ -84,21 +84,20 @@ function ArticleCard({ article, onView }: { article: Article; onView: (id: strin
     >
       <div className="aspect-video overflow-hidden bg-muted">
         {article.featured_image_url ? (
-          <picture>
-            <source
-              srcSet={article.featured_image_url.replace(/\.(jpg|jpeg|png)$/i, ".webp")}
-              type="image/webp"
-            />
-            <img
-              src={article.featured_image_url}
-              alt={article.featured_image_alt || article.title}
-              loading="lazy"
-              decoding="async"
-              className="h-full w-full object-cover transition-transform duration-300 group-hover:scale-105"
-              width={400}
-              height={225}
-            />
-          </picture>
+          <img
+            src={article.featured_image_url}
+            alt={article.featured_image_alt || article.title}
+            loading="lazy"
+            decoding="async"
+            className="h-full w-full object-cover transition-transform duration-300 group-hover:scale-105"
+            width={400}
+            height={225}
+            onError={(e) => {
+              const target = e.currentTarget
+              target.style.display = "none"
+              target.parentElement?.classList.add("flex", "items-center", "justify-center")
+            }}
+          />
         ) : (
           <div className="flex h-full items-center justify-center text-muted-foreground/30">
             <svg className="h-10 w-10" fill="currentColor" viewBox="0 0 24 24" aria-hidden="true">

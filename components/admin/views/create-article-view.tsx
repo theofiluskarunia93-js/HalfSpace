@@ -957,6 +957,11 @@ export function CreateArticleView({ onBack, articleId }: CreateArticleViewProps)
   const [previewHtml, setPreviewHtml] = useState("")
   const cardMapRef = useRef<Map<string, string>>(new Map())
 
+  // Expose cardMapRef to TipTap handleClick (which runs outside React scope)
+  useEffect(() => {
+    ;(window as any).__cardMapRef = cardMapRef.current
+  })
+
   // ── Tiptap editor ──────────────────────────────────────────────────────────
   const editor = useEditor({
     extensions: [
@@ -984,7 +989,7 @@ export function CreateArticleView({ onBack, articleId }: CreateArticleViewProps)
           "prose-hr:border-border",
           "prose-img:rounded-lg",
           // ── match-card styles ──
-          "[&_.match-block]:my-4 [&_.match-block]:pointer-events-none",
+          "[&_.match-block]:my-4 [&_.match-block]:cursor-pointer [&_.match-block]:select-none",
           "[&_.match-card-grid]:grid [&_.match-card-grid]:gap-3 [&_.match-card-grid]:my-3 [&_.match-card-grid]:grid-cols-1",
           "[&_.match-card]:rounded-xl [&_.match-card]:border [&_.match-card]:border-border [&_.match-card]:bg-secondary/30 [&_.match-card]:p-3 [&_.match-card]:flex [&_.match-card]:flex-col [&_.match-card]:gap-2",
           "[&_.match-card-top]:flex [&_.match-card-top]:items-center [&_.match-card-top]:justify-between",
@@ -1000,7 +1005,7 @@ export function CreateArticleView({ onBack, articleId }: CreateArticleViewProps)
           "[&_.match-card-stadium]:text-xs [&_.match-card-stadium]:text-muted-foreground",
           // ── tabbed-block styles ──
           // Card yang sedang di-edit diberi highlight
-          "[&_.tabbed-block]:rounded-xl [&_.tabbed-block]:border [&_.tabbed-block]:border-primary/40 [&_.tabbed-block]:overflow-hidden [&_.tabbed-block]:my-4 [&_.tabbed-block]:pointer-events-none",
+          "[&_.tabbed-block]:rounded-xl [&_.tabbed-block]:border [&_.tabbed-block]:border-primary/40 [&_.tabbed-block]:overflow-hidden [&_.tabbed-block]:my-4 [&_.tabbed-block]:cursor-pointer [&_.tabbed-block]:select-none",
           "[&_.tabbed-block]:cursor-pointer",
           "[&_.tb-nav]:flex [&_.tb-nav]:flex-wrap [&_.tb-nav]:gap-1 [&_.tb-nav]:p-2 [&_.tb-nav]:bg-secondary/40 [&_.tb-nav]:border-b [&_.tb-nav]:border-border",
           "[&_.tbb]:rounded-md [&_.tbb]:px-2.5 [&_.tbb]:py-1 [&_.tbb]:text-xs [&_.tbb]:font-semibold [&_.tbb]:border [&_.tbb]:border-border [&_.tbb]:bg-secondary [&_.tbb]:text-muted-foreground",
@@ -1009,7 +1014,14 @@ export function CreateArticleView({ onBack, articleId }: CreateArticleViewProps)
           "[&_.tbp]:hidden",
           "[&_.tbp-active]:block",
           // ── group standings styles ──
-          "[&_.group-standings-block]:my-4 [&_.group-standings-block]:pointer-events-none",
+          "[&_.group-standings-block]:my-4 [&_.group-standings-block]:cursor-pointer [&_.group-standings-block]:select-none",
+          // ── card-editor-placeholder badge styles ──
+          "[&_.card-editor-placeholder]:inline-flex [&_.card-editor-placeholder]:items-center [&_.card-editor-placeholder]:gap-1.5",
+          "[&_.card-editor-placeholder]:my-2 [&_.card-editor-placeholder]:cursor-pointer [&_.card-editor-placeholder]:select-none",
+          "[&_.card-editor-placeholder]:rounded-md [&_.card-editor-placeholder]:border [&_.card-editor-placeholder]:border-primary/50",
+          "[&_.card-editor-placeholder]:bg-primary/10 [&_.card-editor-placeholder]:px-3 [&_.card-editor-placeholder]:py-1.5",
+          "[&_.card-editor-placeholder]:text-xs [&_.card-editor-placeholder]:font-bold [&_.card-editor-placeholder]:text-primary",
+          "hover:[&_.card-editor-placeholder]:bg-primary/20 hover:[&_.card-editor-placeholder]:border-primary",
           "[&_.gs-header]:flex [&_.gs-header]:items-center [&_.gs-header]:gap-2 [&_.gs-header]:px-3 [&_.gs-header]:py-2.5 [&_.gs-header]:border-b [&_.gs-header]:border-border [&_.gs-header]:bg-secondary/20",
           "[&_.gs-header-icon]:text-base",
           "[&_.gs-header-title]:font-bold [&_.gs-header-title]:text-foreground [&_.gs-header-title]:text-xs [&_.gs-header-title]:flex-1",
@@ -1056,6 +1068,27 @@ export function CreateArticleView({ onBack, articleId }: CreateArticleViewProps)
         const blockId = block.dataset.blockId
         const blockType = block.dataset.blockType
         if (!blockId) return false
+
+        // Handle simple placeholder clicks (new system)
+        if (block.classList.contains("card-editor-placeholder")) {
+          if (blockType === "match") {
+            const cardHtml = (window as any).__cardMapRef?.get(blockId) ?? ""
+            const parsed = cardHtml ? parseMatchBlockHtml(cardHtml) : null
+            // parsed bisa null jika cardMapRef kosong (edge case) → buka widget kosong dgn blockId yg sama
+            setEditingBlock({ type: "match", blockId, tabs: parsed ?? [makeMatchTab(0)] })
+            setTimeout(() => {
+              document.getElementById("match-widget-anchor")?.scrollIntoView({ behavior: "smooth", block: "start" })
+            }, 50)
+          } else if (blockType === "standings") {
+            const cardHtml = (window as any).__cardMapRef?.get(blockId) ?? ""
+            const parsed = cardHtml ? parseStandingsBlockHtml(cardHtml) : null
+            setEditingBlock({ type: "standings", blockId, title: parsed?.title ?? "", groups: parsed?.groups ?? [makeStandingsGroup(0)] })
+            setTimeout(() => {
+              document.getElementById("standings-widget-anchor")?.scrollIntoView({ behavior: "smooth", block: "start" })
+            }, 50)
+          }
+          return true
+        }
 
         if (blockType === "match" || block.classList.contains("match-tabbed-block") || block.classList.contains("match-block")) {
           const outerHtml = block.outerHTML
@@ -1177,7 +1210,39 @@ export function CreateArticleView({ onBack, articleId }: CreateArticleViewProps)
         setMetaDescription(data.meta_description || "")
         setIsEditorChoice(data.is_editor_choice || false)
         const raw = data.content || ""
-        editor.commands.setContent(raw || "")
+
+        // Convert all existing full HTML card blocks to badge placeholders for editor display
+        // Full HTML tetap disimpan di cardMapRef, akan di-resolve kembali saat save
+        let editorContent = raw
+        if (raw) {
+          const parser = new DOMParser()
+          const doc = parser.parseFromString(raw, "text/html")
+
+          // Collect semua block dengan data-block-id (match & standings)
+          const blocks = Array.from(doc.querySelectorAll<HTMLElement>("[data-block-id]"))
+            .filter(el => el.dataset.blockType === "match" || el.dataset.blockType === "standings")
+
+          blocks.forEach((el) => {
+            const id = el.dataset.blockId
+            const type = el.dataset.blockType as "match" | "standings"
+            if (!id) return
+            // Simpan full HTML ke cardMapRef
+            cardMapRef.current.set(id, el.outerHTML)
+            // Ganti dengan badge placeholder di editor
+            const label = type === "match" ? "📅 Jadwal Pertandingan" : "🏆 Klasemen Grup"
+            const shortId = id.slice(0, 6)
+            const badge = doc.createElement("p")
+            badge.innerHTML =
+              `<div class="card-editor-placeholder" data-block-id="${id}" data-block-type="${type}" contenteditable="false">` +
+              `${label}&nbsp;<span style="opacity:0.45;font-size:10px;font-weight:400;">[${shortId}]</span>` +
+              `<span style="opacity:0.4;font-size:9px;margin-left:6px;">✎ klik untuk edit</span></div>`
+            el.replaceWith(badge)
+          })
+
+          editorContent = doc.body.innerHTML
+        }
+
+        editor.commands.setContent(editorContent || "")
       }
       const { data: articleTags } = await supabase
         .from("article_tags").select("tags(name)").eq("article_id", articleId)
@@ -1211,10 +1276,56 @@ export function CreateArticleView({ onBack, articleId }: CreateArticleViewProps)
     else if (e.key === "Backspace" && tagInput === "" && tags.length > 0) removeTag(tags[tags.length - 1])
   }
 
+  // Build a simple editor placeholder badge for a card block
+  const buildCardPlaceholderHtml = (blockId: string, type: "match" | "standings"): string => {
+    const label = type === "match" ? "📅 Jadwal Pertandingan" : "🏆 Klasemen Grup"
+    const shortId = blockId.slice(0, 6)
+    return (
+      `<p><div class="card-editor-placeholder" data-block-id="${blockId}" data-block-type="${type}" ` +
+      `contenteditable="false">${label}&nbsp;<span style="opacity:0.45;font-size:10px;font-weight:400;">[${shortId}]</span>` +
+      `<span style="opacity:0.4;font-size:9px;margin-left:6px;">✎ klik untuk edit</span></div></p>`
+    )
+  }
+
+  // Replace any existing card block in the editor (placeholder OR full HTML)
+  // Called after user finishes editing and clicks Insert
+  const replaceCardPlaceholderInEditor = (blockId: string, type: "match" | "standings") => {
+    if (!editor) return
+    const currentHtml = editor.getHTML()
+    const parser = new DOMParser()
+    const doc = parser.parseFromString(currentHtml, "text/html")
+    const existing = doc.querySelector(`[data-block-id="${blockId}"]`)
+    if (!existing) return
+    // Always replace with fresh placeholder (full HTML will be resolved on save)
+    const newHtml = buildCardPlaceholderHtml(blockId, type)
+    const newDoc = parser.parseFromString(newHtml, "text/html")
+    const newNode = newDoc.body.firstChild
+    if (newNode) {
+      existing.replaceWith(newNode)
+      editor.commands.setContent(doc.body.innerHTML, false)
+    }
+  }
+
   const resolveCards = (html: string): string => {
-    return html.replace(/\[\[CARD:([a-z0-9]+)\]\]/g, (_, id) => {
+    // Resolve both [[CARD:id]] legacy format and new .card-editor-placeholder divs
+    let resolved = html.replace(/\[\[CARD:([a-z0-9]+)\]\]/g, (_, id) => {
       return cardMapRef.current.get(id) ?? ""
     })
+    // Replace editor placeholder divs with full card HTML
+    const parser = new DOMParser()
+    const doc = parser.parseFromString(resolved, "text/html")
+    doc.querySelectorAll<HTMLElement>(".card-editor-placeholder[data-block-id]").forEach((el) => {
+      const id = el.dataset.blockId
+      if (!id) return
+      const cardHtml = cardMapRef.current.get(id)
+      if (cardHtml) {
+        const tmp = parser.parseFromString(cardHtml, "text/html")
+        const newNode = tmp.body.firstChild
+        if (newNode) el.replaceWith(newNode)
+        else el.remove()
+      }
+    })
+    return doc.body.innerHTML
   }
 
   useEffect(() => {
@@ -1666,11 +1777,13 @@ export function CreateArticleView({ onBack, articleId }: CreateArticleViewProps)
               onInsert={(html, blockId) => {
                 if (!editor) return
                 cardMapRef.current.set(blockId, html)
-                if (editingBlock?.type === "match" && editingBlock.blockId === blockId) {
-                  // Replace existing card
-                  replaceCardInEditor(html, blockId)
+                if (editingBlock?.blockId === blockId) {
+                  // Edit mode: replace existing block (placeholder OR full HTML) with fresh placeholder
+                  replaceCardPlaceholderInEditor(blockId, "match")
                 } else {
-                  editor.chain().focus().insertContent(html).run()
+                  // New insert: add simple clickable placeholder
+                  const placeholder = buildCardPlaceholderHtml(blockId, "match")
+                  editor.chain().focus().insertContent(placeholder).run()
                 }
                 setEditingBlock(null)
               }}
@@ -1685,11 +1798,13 @@ export function CreateArticleView({ onBack, articleId }: CreateArticleViewProps)
               onInsert={(html, blockId) => {
                 if (!editor) return
                 cardMapRef.current.set(blockId, html)
-                if (editingBlock?.type === "standings" && editingBlock.blockId === blockId) {
-                  // Replace existing card
-                  replaceCardInEditor(html, blockId)
+                if (editingBlock?.blockId === blockId) {
+                  // Edit mode: replace existing block (placeholder OR full HTML) with fresh placeholder
+                  replaceCardPlaceholderInEditor(blockId, "standings")
                 } else {
-                  editor.chain().focus().insertContent(html).run()
+                  // New insert: add simple clickable placeholder
+                  const placeholder = buildCardPlaceholderHtml(blockId, "standings")
+                  editor.chain().focus().insertContent(placeholder).run()
                 }
                 setEditingBlock(null)
               }}

@@ -120,9 +120,15 @@
   font-style: italic;
 }
 
-/* Link transition */
+/* Link transition — neon green to distinguish links from plain text */
 .prose a {
+  color: oklch(0.87 0.29 142);   /* --primary neon green */
+  font-weight: 600;
+  text-decoration: none;
   transition: color 0.15s ease, text-decoration-color 0.15s ease;
+}
+.prose a:hover {
+  text-decoration: underline;
 }
 
 /* Blockquote: hapus kutip otomatis browser */
