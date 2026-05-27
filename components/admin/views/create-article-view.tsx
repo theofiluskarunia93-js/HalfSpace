@@ -1234,8 +1234,9 @@ export function CreateArticleView({ onBack, articleId }: CreateArticleViewProps)
             const id = el.dataset.blockId
             const type = el.dataset.blockType as "match" | "standings"
             if (!id) return
-            // Simpan full HTML ke cardMapRef
+            // Simpan full HTML ke cardMapRef dan sessionStorage
             cardMapRef.current.set(id, el.outerHTML)
+            sessionStorage.setItem(`card-html-${id}`, el.outerHTML)
             // Ganti dengan badge placeholder di editor
             const label = type === "match" ? "📅 Jadwal Pertandingan" : "🏆 Klasemen Grup"
             const shortId = id.slice(0, 6)
@@ -1505,25 +1506,42 @@ export function CreateArticleView({ onBack, articleId }: CreateArticleViewProps)
     setIsLoading(true); setMessage(null)
 
     const rawHtml = editor.getHTML()
-    // Sebelum resolve, pastikan semua full card HTML block yang ada langsung di editor
-    // (bukan via placeholder) juga masuk ke cardMapRef agar tidak hilang
+
+    // ── Restore cardMapRef dari sessionStorage untuk placeholder yang cardMapRef-nya kosong
+    // Ini terjadi jika user me-refresh halaman setelah insert widget
     const preParser = new DOMParser()
     const preDoc = preParser.parseFromString(rawHtml, "text/html")
-    preDoc.querySelectorAll<HTMLElement>("[data-block-id], [class*='card-ref-']").forEach((el) => {
-      if (el.classList.contains("card-editor-placeholder")) return
-      // Baca id dari data-attribute atau class
-      let id = el.dataset.blockId
-      if (!id) {
-        el.classList.forEach((cls) => { if (cls.startsWith("card-ref-")) id = cls.replace("card-ref-", "") })
+    preDoc.querySelectorAll<HTMLElement>(".card-editor-placeholder").forEach((el) => {
+      let id: string | undefined
+      el.classList.forEach((cls) => { if (cls.startsWith("card-ref-")) id = cls.replace("card-ref-", "") })
+      if (!id) id = el.dataset.blockId
+      if (!id) return
+      // Jika cardMapRef kosong untuk id ini, coba restore dari sessionStorage
+      if (!cardMapRef.current.has(id)) {
+        const stored = sessionStorage.getItem(`card-html-${id}`)
+        if (stored) cardMapRef.current.set(id, stored)
       }
-      const type = el.dataset.blockType
-      if (!id || !type) return
+    })
+    // Juga scan full card HTML yang mungkin masih ada di editor (bukan placeholder)
+    preDoc.querySelectorAll<HTMLElement>("[data-block-id]").forEach((el) => {
+      if (el.classList.contains("card-editor-placeholder")) return
+      const id = el.dataset.blockId
+      if (!id) return
       if (!cardMapRef.current.has(id)) {
         cardMapRef.current.set(id, el.outerHTML)
+        sessionStorage.setItem(`card-html-${id}`, el.outerHTML)
       }
     })
 
     const htmlContent = resolveCards(rawHtml)
+
+    // Jika masih ada placeholder yang tidak ter-resolve, berarti cardMapRef kosong
+    // (terjadi saat user refresh halaman) — tampilkan error
+    if (htmlContent.includes("card-editor-placeholder")) {
+      setIsLoading(false)
+      setMessage({ type: "error", text: "Widget kartu tidak dapat disimpan karena data hilang akibat refresh halaman. Klik widget di editor → Insert ulang → simpan kembali." })
+      return
+    }
     const payload = {
       title, slug: generateSlug(title), excerpt, content: htmlContent,
       category_id: category || null, featured_image_url: featuredImageUrl,
@@ -1885,6 +1903,8 @@ export function CreateArticleView({ onBack, articleId }: CreateArticleViewProps)
               onInsert={(html, blockId) => {
                 if (!editor) return
                 cardMapRef.current.set(blockId, html)
+                // Persist ke sessionStorage agar tidak hilang jika user refresh halaman
+                sessionStorage.setItem(`card-html-${blockId}`, html)
                 if (editingBlock?.blockId === blockId) {
                   // Edit mode: replace existing block (placeholder OR full HTML) with fresh placeholder
                   replaceCardPlaceholderInEditor(blockId, "match")
@@ -1906,6 +1926,8 @@ export function CreateArticleView({ onBack, articleId }: CreateArticleViewProps)
               onInsert={(html, blockId) => {
                 if (!editor) return
                 cardMapRef.current.set(blockId, html)
+                // Persist ke sessionStorage agar tidak hilang jika user refresh halaman
+                sessionStorage.setItem(`card-html-${blockId}`, html)
                 if (editingBlock?.blockId === blockId) {
                   // Edit mode: replace existing block (placeholder OR full HTML) with fresh placeholder
                   replaceCardPlaceholderInEditor(blockId, "standings")
