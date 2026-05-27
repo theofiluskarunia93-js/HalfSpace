@@ -17,6 +17,8 @@ export function SettingsView() {
   const [logoFileName, setLogoFileName] = useState<string | null>(null)
   const [settingsId, setSettingsId] = useState<string | null>(null)
   const [showFootballWidgets, setShowFootballWidgets] = useState(true)
+  const [showLiveScore, setShowLiveScore] = useState(true)
+  const [showStandings, setShowStandings] = useState(true)
   const [isLoading, setIsLoading] = useState(true)
   const [isSaving, setIsSaving] = useState(false)
   const [message, setMessage] = useState<{ type: "success" | "error"; text: string } | null>(null)
@@ -36,6 +38,8 @@ export function SettingsView() {
         setLogoUrl(data.logo_url || null)
         setLogoPreview(data.logo_url || null)
         setShowFootballWidgets(data.show_football_widgets !== false)
+        setShowLiveScore(data.show_live_score !== false)
+        setShowStandings(data.show_standings !== false)
       }
       setIsLoading(false)
     }
@@ -78,6 +82,8 @@ export function SettingsView() {
       tiktok_handle: tiktokHandle,
       logo_url: logoUrl,
       show_football_widgets: showFootballWidgets,
+      show_live_score: showLiveScore,
+      show_standings: showStandings,
       updated_at: new Date().toISOString(),
     }
 
@@ -172,28 +178,82 @@ export function SettingsView() {
         <div className="rounded-xl border border-border bg-card p-6">
           <h2 className="mb-1 text-lg font-semibold text-foreground">Widget Sepakbola</h2>
           <p className="mb-4 text-sm text-muted-foreground">
-            Tampilkan atau sembunyikan widget Live Score, Standings, dan Top Scorer di halaman utama.
-            Jika disembunyikan, bagian Trending dan Editor Choice akan langsung diikuti Footer.
+            Atur tampilan widget sepakbola di halaman utama secara terpisah. Sembunyikan widget yang tidak ingin ditampilkan.
           </p>
-          <label className="flex cursor-pointer items-center gap-4">
-            <div className="relative">
-              <input
-                type="checkbox"
-                className="sr-only"
-                checked={showFootballWidgets}
-                onChange={(e) => setShowFootballWidgets(e.target.checked)}
-              />
-              <div
-                className={`h-6 w-11 rounded-full transition-colors ${showFootballWidgets ? "bg-primary" : "bg-secondary"}`}
-              />
-              <div
-                className={`absolute top-0.5 left-0.5 h-5 w-5 rounded-full bg-white shadow transition-transform ${showFootballWidgets ? "translate-x-5" : "translate-x-0"}`}
-              />
+          <div className="space-y-4">
+            {/* Toggle semua widget */}
+            <div className="flex items-center justify-between rounded-lg border border-border bg-secondary/20 px-4 py-3">
+              <div>
+                <p className="text-sm font-semibold text-foreground">Semua Widget Sepakbola</p>
+                <p className="text-xs text-muted-foreground">Aktifkan/nonaktifkan semua widget sekaligus</p>
+              </div>
+              <label className="flex cursor-pointer items-center gap-3">
+                <div className="relative">
+                  <input
+                    type="checkbox"
+                    className="sr-only"
+                    checked={showFootballWidgets}
+                    onChange={(e) => {
+                      setShowFootballWidgets(e.target.checked)
+                      setShowLiveScore(e.target.checked)
+                      setShowStandings(e.target.checked)
+                    }}
+                  />
+                  <div className={`h-6 w-11 rounded-full transition-colors ${showFootballWidgets ? "bg-primary" : "bg-secondary"}`} />
+                  <div className={`absolute top-0.5 left-0.5 h-5 w-5 rounded-full bg-white shadow transition-transform ${showFootballWidgets ? "translate-x-5" : "translate-x-0"}`} />
+                </div>
+                <span className="text-sm font-medium text-foreground">
+                  {showFootballWidgets ? "Aktif" : "Nonaktif"}
+                </span>
+              </label>
             </div>
-            <span className="text-sm font-medium text-foreground">
-              {showFootballWidgets ? "Widget ditampilkan" : "Widget disembunyikan"}
-            </span>
-          </label>
+
+            {/* Toggle Live Score */}
+            <div className="flex items-center justify-between rounded-lg border border-border px-4 py-3">
+              <div>
+                <p className="text-sm font-semibold text-foreground">Widget Live Score / Jadwal</p>
+                <p className="text-xs text-muted-foreground">Menampilkan skor live dan jadwal pertandingan di halaman utama</p>
+              </div>
+              <label className="flex cursor-pointer items-center gap-3">
+                <div className="relative">
+                  <input
+                    type="checkbox"
+                    className="sr-only"
+                    checked={showLiveScore}
+                    onChange={(e) => setShowLiveScore(e.target.checked)}
+                  />
+                  <div className={`h-6 w-11 rounded-full transition-colors ${showLiveScore ? "bg-primary" : "bg-secondary"}`} />
+                  <div className={`absolute top-0.5 left-0.5 h-5 w-5 rounded-full bg-white shadow transition-transform ${showLiveScore ? "translate-x-5" : "translate-x-0"}`} />
+                </div>
+                <span className="text-sm font-medium text-foreground">
+                  {showLiveScore ? "Ditampilkan" : "Disembunyikan"}
+                </span>
+              </label>
+            </div>
+
+            {/* Toggle Standings */}
+            <div className="flex items-center justify-between rounded-lg border border-border px-4 py-3">
+              <div>
+                <p className="text-sm font-semibold text-foreground">Widget Klasemen & Top Scorer</p>
+                <p className="text-xs text-muted-foreground">Menampilkan klasemen liga dan top scorer di halaman utama</p>
+              </div>
+              <label className="flex cursor-pointer items-center gap-3">
+                <div className="relative">
+                  <input
+                    type="checkbox"
+                    className="sr-only"
+                    checked={showStandings}
+                    onChange={(e) => setShowStandings(e.target.checked)}
+                  />
+                  <div className={`h-6 w-11 rounded-full transition-colors ${showStandings ? "bg-primary" : "bg-secondary"}`} />
+                  <div className={`absolute top-0.5 left-0.5 h-5 w-5 rounded-full bg-white shadow transition-transform ${showStandings ? "translate-x-5" : "translate-x-0"}`} />
+                </div>
+                <span className="text-sm font-medium text-foreground">
+                  {showStandings ? "Ditampilkan" : "Disembunyikan"}
+                </span>
+              </label>
+            </div>
+          </div>
         </div>
 
         {/* Save */}

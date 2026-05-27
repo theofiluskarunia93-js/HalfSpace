@@ -753,6 +753,66 @@ export function CreateArticleView({ onBack, articleId }: CreateArticleViewProps)
           "prose-ul:text-foreground/90 prose-ol:text-foreground/90",
           "prose-hr:border-border",
           "prose-img:rounded-lg",
+          // ── match-card styles (agar widget jadwal terlihat visual di editor) ──
+          "[&_.match-block]:my-4 [&_.match-block]:pointer-events-none",
+          "[&_.match-card-grid]:grid [&_.match-card-grid]:gap-3 [&_.match-card-grid]:my-3 [&_.match-card-grid]:grid-cols-1",
+          "[&_.match-card]:rounded-xl [&_.match-card]:border [&_.match-card]:border-border [&_.match-card]:bg-secondary/30 [&_.match-card]:p-3 [&_.match-card]:flex [&_.match-card]:flex-col [&_.match-card]:gap-2",
+          "[&_.match-card-top]:flex [&_.match-card-top]:items-center [&_.match-card-top]:justify-between",
+          "[&_.match-card-badge]:rounded-full [&_.match-card-badge]:bg-primary [&_.match-card-badge]:text-[10px] [&_.match-card-badge]:font-extrabold [&_.match-card-badge]:tracking-wide [&_.match-card-badge]:text-black [&_.match-card-badge]:px-2 [&_.match-card-badge]:py-0.5",
+          "[&_.match-card-date]:text-xs [&_.match-card-date]:text-muted-foreground",
+          "[&_.match-card-teams]:flex [&_.match-card-teams]:items-center [&_.match-card-teams]:gap-2",
+          "[&_.match-card-team]:text-sm [&_.match-card-team]:font-bold [&_.match-card-team]:text-foreground",
+          "[&_.match-card-vs]:text-xs [&_.match-card-vs]:font-bold [&_.match-card-vs]:text-primary",
+          "[&_.match-card-score]:flex [&_.match-card-score]:items-center [&_.match-card-score]:gap-1 [&_.match-card-score]:rounded-md [&_.match-card-score]:bg-primary/10 [&_.match-card-score]:px-2 [&_.match-card-score]:py-0.5 [&_.match-card-score]:text-sm [&_.match-card-score]:font-extrabold [&_.match-card-score]:text-primary",
+          "[&_.match-card-score-sep]:text-muted-foreground [&_.match-card-score-sep]:font-normal",
+          "[&_.match-card-bottom]:flex [&_.match-card-bottom]:items-center [&_.match-card-bottom]:justify-between [&_.match-card-bottom]:flex-wrap [&_.match-card-bottom]:gap-1",
+          "[&_.match-card-time]:rounded [&_.match-card-time]:border [&_.match-card-time]:border-border [&_.match-card-time]:bg-black/30 [&_.match-card-time]:px-1.5 [&_.match-card-time]:py-0.5 [&_.match-card-time]:text-xs [&_.match-card-time]:font-bold [&_.match-card-time]:text-foreground",
+          "[&_.match-card-stadium]:text-xs [&_.match-card-stadium]:text-muted-foreground",
+          // ── tabbed-block styles ──
+          "[&_.tabbed-block]:rounded-xl [&_.tabbed-block]:border [&_.tabbed-block]:border-primary/40 [&_.tabbed-block]:overflow-hidden [&_.tabbed-block]:my-4 [&_.tabbed-block]:pointer-events-none",
+          "[&_.tb-nav]:flex [&_.tb-nav]:flex-wrap [&_.tb-nav]:gap-1 [&_.tb-nav]:p-2 [&_.tb-nav]:bg-secondary/40 [&_.tb-nav]:border-b [&_.tb-nav]:border-border",
+          "[&_.tbb]:rounded-md [&_.tbb]:px-2.5 [&_.tbb]:py-1 [&_.tbb]:text-xs [&_.tbb]:font-semibold [&_.tbb]:border [&_.tbb]:border-border [&_.tbb]:bg-secondary [&_.tbb]:text-muted-foreground",
+          "[&_.tbb-active]:bg-primary [&_.tbb-active]:border-primary [&_.tbb-active]:text-black",
+          "[&_.tb-content]:p-3 [&_.tb-content]:bg-card",
+          "[&_.tbp]:hidden",
+          "[&_.tbp-active]:block",
+          // ── group standings styles ──
+          "[&_.group-standings-block]:my-4 [&_.group-standings-block]:pointer-events-none",
+          "[&_.gs-header]:flex [&_.gs-header]:items-center [&_.gs-header]:gap-2 [&_.gs-header]:px-3 [&_.gs-header]:py-2.5 [&_.gs-header]:border-b [&_.gs-header]:border-border [&_.gs-header]:bg-secondary/20",
+          "[&_.gs-header-icon]:text-base",
+          "[&_.gs-header-title]:font-bold [&_.gs-header-title]:text-foreground [&_.gs-header-title]:text-xs [&_.gs-header-title]:flex-1",
+          "[&_.gs-header-sub]:text-xs [&_.gs-header-sub]:text-muted-foreground",
+          "[&_.gs-table-wrap]:overflow-x-auto",
+          "[&_.gs-table]:w-full [&_.gs-table]:text-xs [&_.gs-table]:border-collapse",
+          "[&_.gs-thead-row]:border-b [&_.gs-thead-row]:border-border",
+          "[&_.gs-th]:px-1.5 [&_.gs-th]:py-2 [&_.gs-th]:text-[10px] [&_.gs-th]:font-bold [&_.gs-th]:uppercase [&_.gs-th]:tracking-wider [&_.gs-th]:text-muted-foreground",
+          "[&_.gs-th-rank]:text-left [&_.gs-th-rank]:pl-2",
+          "[&_.gs-th-team]:text-left",
+          "[&_.gs-th-num]:text-center",
+          "[&_.gs-th-pts]:text-center [&_.gs-th-pts]:text-primary",
+          "[&_.gs-th-form]:text-center",
+          "[&_.gs-row]:border-b [&_.gs-row]:border-border/40",
+          "[&_.gs-td]:px-1.5 [&_.gs-td]:py-1.5",
+          "[&_.gs-td-rank]:pl-2",
+          "[&_.gs-td-num]:text-center [&_.gs-td-num]:text-muted-foreground",
+          "[&_.gs-td-pts]:text-center [&_.gs-td-pts]:font-bold [&_.gs-td-pts]:text-foreground",
+          "[&_.gs-td-form]:text-center",
+          "[&_.gs-td-team]:min-w-[100px]",
+          "[&_.gs-rank]:flex [&_.gs-rank]:h-4 [&_.gs-rank]:w-4 [&_.gs-rank]:items-center [&_.gs-rank]:justify-center [&_.gs-rank]:rounded [&_.gs-rank]:text-[10px] [&_.gs-rank]:font-bold",
+          "[&_.gs-rank-qualify]:bg-primary/20 [&_.gs-rank-qualify]:text-primary",
+          "[&_.gs-rank-candidate]:bg-yellow-500/20 [&_.gs-rank-candidate]:text-yellow-400",
+          "[&_.gs-rank-out]:text-muted-foreground",
+          "[&_.gs-flag]:inline-flex [&_.gs-flag]:items-center [&_.gs-flag]:justify-center [&_.gs-flag]:rounded [&_.gs-flag]:bg-secondary [&_.gs-flag]:px-1 [&_.gs-flag]:text-[9px] [&_.gs-flag]:font-bold [&_.gs-flag]:text-muted-foreground [&_.gs-flag]:mr-1 [&_.gs-flag]:shrink-0",
+          "[&_.gs-team-name]:font-medium [&_.gs-team-name]:text-foreground",
+          "[&_.gs-form]:flex [&_.gs-form]:gap-0.5 [&_.gs-form]:justify-center",
+          "[&_.gs-form-badge]:flex [&_.gs-form-badge]:h-3.5 [&_.gs-form-badge]:w-3.5 [&_.gs-form-badge]:items-center [&_.gs-form-badge]:justify-center [&_.gs-form-badge]:rounded-full [&_.gs-form-badge]:text-[8px] [&_.gs-form-badge]:font-bold",
+          "[&_.gs-form-w]:bg-green-500/20 [&_.gs-form-w]:text-green-400",
+          "[&_.gs-form-d]:bg-yellow-500/20 [&_.gs-form-d]:text-yellow-400",
+          "[&_.gs-form-l]:bg-destructive/20 [&_.gs-form-l]:text-destructive",
+          "[&_.gs-legend]:flex [&_.gs-legend]:gap-3 [&_.gs-legend]:px-2 [&_.gs-legend]:py-1.5 [&_.gs-legend]:border-t [&_.gs-legend]:border-border/40",
+          "[&_.gs-legend-item]:text-[10px] [&_.gs-legend-item]:text-muted-foreground",
+          "[&_.gs-legend-qualify]:text-primary",
+          "[&_.gs-legend-candidate]:text-yellow-400",
         ].join(" "),
       },
     },
@@ -774,10 +834,10 @@ export function CreateArticleView({ onBack, articleId }: CreateArticleViewProps)
     const handler = (e: Event) => {
       const cardId = (e as CustomEvent<string>).detail
       if (!editor || !cardId) return
-      editor.chain().focus().insertContent({
-        type: "paragraph",
-        content: [{ type: "text", text: `[[CARD:${cardId}]]` }],
-      }).run()
+      const html = cardMapRef.current.get(cardId)
+      if (!html) return
+      // Insert HTML card langsung ke editor agar tampil visual
+      editor.chain().focus().insertContent(html).run()
     }
     window.addEventListener("insert-card-placeholder", handler)
     return () => window.removeEventListener("insert-card-placeholder", handler)
@@ -811,40 +871,9 @@ export function CreateArticleView({ onBack, articleId }: CreateArticleViewProps)
         setIsEditorChoice(data.is_editor_choice || false)
         const raw = data.content || ""
 
-        const parser = typeof DOMParser !== "undefined" ? new DOMParser() : null
-        let restored = raw
-
-        if (parser) {
-          const doc = parser.parseFromString(raw, "text/html")
-          doc.querySelectorAll("[data-block-id]").forEach((el) => {
-            const id = el.getAttribute("data-block-id")
-            if (!id) return
-            cardMapRef.current.set(id, el.outerHTML)
-            restored = restored.replace(el.outerHTML, `[[CARD:${id}]]`)
-          })
-
-          restored = restored.replace(/(<table class="modern-table">[\s\S]*?<\/table>)/g,
-            (match: string) => {
-              const id = generateId()
-              cardMapRef.current.set(id, match)
-              return `[[CARD:${id}]]`
-            })
-
-          restored = restored.replace(/(<div class="card-design">[\s\S]*?<\/div>)/g,
-            (match: string) => {
-              const id = generateId()
-              cardMapRef.current.set(id, match)
-              return `[[CARD:${id}]]`
-            })
-        } else {
-          restored = raw
-            .replace(/(<div[^>]+data-block-id="([^"]+)"[\s\S]*?<\/div>)/g,
-              (match: string, _full: string, id: string) => {
-                cardMapRef.current.set(id, match)
-                return `[[CARD:${id}]]`
-              })
-        }
-        editor.commands.setContent(restored || "")
+        // Langsung set konten HTML ke editor — card widget akan tampil visual
+        // karena editorProps sudah punya CSS yang sesuai
+        editor.commands.setContent(raw || "")
       }
       const { data: articleTags } = await supabase
         .from("article_tags").select("tags(name)").eq("article_id", articleId)
@@ -879,6 +908,8 @@ export function CreateArticleView({ onBack, articleId }: CreateArticleViewProps)
   }
 
   const resolveCards = (html: string): string => {
+    // Tidak ada lagi [[CARD:xxx]] placeholder — editor menyimpan HTML card langsung
+    // Fungsi ini tetap ada untuk kompatibilitas jika ada konten lama dengan placeholder
     return html.replace(/\[\[CARD:([a-z0-9]+)\]\]/g, (_, id) => {
       return cardMapRef.current.get(id) ?? ""
     })
@@ -888,6 +919,7 @@ export function CreateArticleView({ onBack, articleId }: CreateArticleViewProps)
     if (editorTab !== "preview" || !editor) return
     const raw = editor.getHTML()
     // Preserve empty paragraphs as visible spacing in preview
+    // resolveCards juga tetap dijalankan untuk kompatibilitas konten lama dengan [[CARD:xxx]]
     const withSpacing = raw.replace(/<p><\/p>/g, "<p>&nbsp;</p>")
     setPreviewHtml(resolveCards(withSpacing))
   }, [editorTab, editor])
@@ -1323,10 +1355,8 @@ export function CreateArticleView({ onBack, articleId }: CreateArticleViewProps)
             onInsert={(html, blockId) => {
               if (!editor) return
               cardMapRef.current.set(blockId, html)
-              editor.chain().focus().insertContent({
-                type: "paragraph",
-                content: [{ type: "text", text: `[[CARD:${blockId}]]` }],
-              }).run()
+              // Insert HTML card langsung ke editor agar tampil visual
+              editor.chain().focus().insertContent(html).run()
             }}
           />
 
@@ -1335,10 +1365,8 @@ export function CreateArticleView({ onBack, articleId }: CreateArticleViewProps)
             onInsert={(html, blockId) => {
               if (!editor) return
               cardMapRef.current.set(blockId, html)
-              editor.chain().focus().insertContent({
-                type: "paragraph",
-                content: [{ type: "text", text: `[[CARD:${blockId}]]` }],
-              }).run()
+              // Insert HTML card langsung ke editor agar tampil visual
+              editor.chain().focus().insertContent(html).run()
             }}
           />
 

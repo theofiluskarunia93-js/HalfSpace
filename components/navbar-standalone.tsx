@@ -75,21 +75,8 @@ export function NavbarStandalone() {
             </button>
           </div>
 
-          {/* Center links */}
-          <div className="flex flex-1 items-center justify-center gap-4 md:gap-6">
-            <button
-              onClick={() => navigate("/#trending-section")}
-              className="neon-nav-btn text-sm font-medium text-foreground transition-colors hover:text-primary"
-            >
-              Trending
-            </button>
-            <button
-              onClick={() => navigate("/#standings-section")}
-              className="neon-nav-btn text-sm font-medium text-foreground transition-colors hover:text-primary"
-            >
-              League Standings
-            </button>
-          </div>
+          {/* Center spacer */}
+          <div className="flex flex-1 items-center justify-center" />
 
           {/* Desktop hamburger */}
           <div className="hidden w-[200px] items-center justify-end gap-6 md:flex">
