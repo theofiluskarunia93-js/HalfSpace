@@ -268,8 +268,12 @@ function MatchCardWidget({ onInsert, editData, onReset }: MatchCardWidgetProps) 
     if (editData) {
       setTabs(editData.tabs)
       setActiveTab(editData.tabs[0]?.id || "")
+    } else {
+      // Reset saat editData di-clear
+      setTabs([makeMatchTab(0)])
+      setActiveTab("")
     }
-  }, [editData])
+  }, [editData?.blockId, editData])
 
   useEffect(() => {
     if (!activeTab && tabs.length > 0) setActiveTab(tabs[0].id)
@@ -602,8 +606,13 @@ function GroupStandingsWidget({ onInsert, editData, onReset }: GroupStandingsWid
       setGroups(editData.groups)
       setActiveGroup(editData.groups[0]?.id || "")
       setActiveTeamIdx(0)
+    } else {
+      // Reset saat editData di-clear
+      setTitle("Klasemen Fase Grup")
+      setGroups([makeStandingsGroup(0)])
+      setActiveGroup("")
     }
-  }, [editData])
+  }, [editData?.blockId, editData])
 
   useEffect(() => {
     if (!activeGroup && groups.length > 0) setActiveGroup(groups[0].id)
@@ -957,9 +966,17 @@ export function CreateArticleView({ onBack, articleId }: CreateArticleViewProps)
   const [previewHtml, setPreviewHtml] = useState("")
   const cardMapRef = useRef<Map<string, string>>(new Map())
 
-  // Expose cardMapRef to TipTap handleClick (which runs outside React scope)
+  // Expose cardMapRef & setEditingBlock ke TipTap handleClick (static closure)
+  // Gunakan wrapper stabil agar tidak pernah stale
+  const setEditingBlockRef = useRef<(block: EditingBlock) => void>(() => {})
+  useEffect(() => {
+    setEditingBlockRef.current = setEditingBlock
+  }, [setEditingBlock])
+
   useEffect(() => {
     ;(window as any).__cardMapRef = cardMapRef.current
+    // Selalu update tiap render — wrapper ini defer ke .current sehingga tidak pernah stale
+    ;(window as any).__setEditingBlock = (block: EditingBlock) => setEditingBlockRef.current(block)
   })
 
   // ── Tiptap editor ──────────────────────────────────────────────────────────
@@ -1069,20 +1086,23 @@ export function CreateArticleView({ onBack, articleId }: CreateArticleViewProps)
         const blockType = block.dataset.blockType
         if (!blockId) return false
 
+        // Gunakan ref agar tidak stale closure
+        const _setEditingBlock: (b: EditingBlock) => void =
+          (window as any).__setEditingBlock ?? (() => {})
+
         // Handle simple placeholder clicks (new system)
         if (block.classList.contains("card-editor-placeholder")) {
           if (blockType === "match") {
             const cardHtml = (window as any).__cardMapRef?.get(blockId) ?? ""
             const parsed = cardHtml ? parseMatchBlockHtml(cardHtml) : null
-            // parsed bisa null jika cardMapRef kosong (edge case) → buka widget kosong dgn blockId yg sama
-            setEditingBlock({ type: "match", blockId, tabs: parsed ?? [makeMatchTab(0)] })
+            _setEditingBlock({ type: "match", blockId, tabs: parsed ?? [makeMatchTab(0)] })
             setTimeout(() => {
               document.getElementById("match-widget-anchor")?.scrollIntoView({ behavior: "smooth", block: "start" })
             }, 50)
           } else if (blockType === "standings") {
             const cardHtml = (window as any).__cardMapRef?.get(blockId) ?? ""
             const parsed = cardHtml ? parseStandingsBlockHtml(cardHtml) : null
-            setEditingBlock({ type: "standings", blockId, title: parsed?.title ?? "", groups: parsed?.groups ?? [makeStandingsGroup(0)] })
+            _setEditingBlock({ type: "standings", blockId, title: parsed?.title ?? "", groups: parsed?.groups ?? [makeStandingsGroup(0)] })
             setTimeout(() => {
               document.getElementById("standings-widget-anchor")?.scrollIntoView({ behavior: "smooth", block: "start" })
             }, 50)
@@ -1094,8 +1114,7 @@ export function CreateArticleView({ onBack, articleId }: CreateArticleViewProps)
           const outerHtml = block.outerHTML
           const parsed = parseMatchBlockHtml(outerHtml)
           if (parsed) {
-            setEditingBlock({ type: "match", blockId, tabs: parsed })
-            // Scroll sidebar widget into view
+            _setEditingBlock({ type: "match", blockId, tabs: parsed })
             setTimeout(() => {
               document.getElementById("match-widget-anchor")?.scrollIntoView({ behavior: "smooth", block: "start" })
             }, 50)
@@ -1107,7 +1126,7 @@ export function CreateArticleView({ onBack, articleId }: CreateArticleViewProps)
           const outerHtml = block.outerHTML
           const parsed = parseStandingsBlockHtml(outerHtml)
           if (parsed) {
-            setEditingBlock({ type: "standings", blockId, ...parsed })
+            _setEditingBlock({ type: "standings", blockId, ...parsed })
             setTimeout(() => {
               document.getElementById("standings-widget-anchor")?.scrollIntoView({ behavior: "smooth", block: "start" })
             }, 50)
@@ -1120,45 +1139,6 @@ export function CreateArticleView({ onBack, articleId }: CreateArticleViewProps)
     },
     content: "",
   })
-
-  // ── Replace card in editor (for update) ─────────────────────────────────────
-  const replaceCardInEditor = useCallback((newHtml: string, blockId: string) => {
-    if (!editor) return
-    const { state, view } = editor
-    let replaced = false
-
-    state.doc.descendants((node, pos) => {
-      if (replaced) return false
-      // Look for the HTML node that contains data-block-id
-      const nodeHtml = node.isText ? "" : (node.attrs?.innerHTML as string | undefined) || ""
-      // Walk DOM of the editor view to find and replace
-      if (node.type.name === "paragraph" || node.type.name === "html") {
-        // Try via DOM
-      }
-    })
-
-    // Strategy: get full HTML, replace the block, set content back
-    const currentHtml = editor.getHTML()
-    const parser = new DOMParser()
-    const doc = parser.parseFromString(currentHtml, "text/html")
-    const existing = doc.querySelector(`[data-block-id="${blockId}"]`)
-
-    if (existing) {
-      const newDoc = parser.parseFromString(newHtml, "text/html")
-      const newNode = newDoc.body.firstChild
-      if (newNode) {
-        existing.replaceWith(newNode)
-        const updatedHtml = doc.body.innerHTML
-        editor.commands.setContent(updatedHtml, false)
-        replaced = true
-      }
-    }
-
-    if (!replaced) {
-      // Fallback: insert at cursor if not found
-      editor.chain().focus().insertContent(newHtml).run()
-    }
-  }, [editor])
 
   useEffect(() => {
     const handler = (e: Event) => {
@@ -1222,6 +1202,7 @@ export function CreateArticleView({ onBack, articleId }: CreateArticleViewProps)
           const blocks = Array.from(doc.querySelectorAll<HTMLElement>("[data-block-id]"))
             .filter(el => el.dataset.blockType === "match" || el.dataset.blockType === "standings")
 
+          // PENTING: populate cardMapRef SEBELUM set content ke editor
           blocks.forEach((el) => {
             const id = el.dataset.blockId
             const type = el.dataset.blockType as "match" | "standings"
@@ -1242,6 +1223,7 @@ export function CreateArticleView({ onBack, articleId }: CreateArticleViewProps)
           editorContent = doc.body.innerHTML
         }
 
+        // Set content setelah cardMapRef sudah ter-populate
         editor.commands.setContent(editorContent || "")
       }
       const { data: articleTags } = await supabase
@@ -1287,26 +1269,34 @@ export function CreateArticleView({ onBack, articleId }: CreateArticleViewProps)
     )
   }
 
-  // Replace any existing card block in the editor (placeholder OR full HTML)
-  // Called after user finishes editing and clicks Insert
+  // Replace card block di editor setelah user selesai edit dan klik Insert/Update
   const replaceCardPlaceholderInEditor = (blockId: string, type: "match" | "standings") => {
     if (!editor) return
     const currentHtml = editor.getHTML()
     const parser = new DOMParser()
     const doc = parser.parseFromString(currentHtml, "text/html")
+
+    // Cari element dengan data-block-id — bisa placeholder atau full card HTML
     const existing = doc.querySelector(`[data-block-id="${blockId}"]`)
     if (!existing) return
-    // Always replace with fresh placeholder (full HTML will be resolved on save)
-    const newHtml = buildCardPlaceholderHtml(blockId, type)
-    const newDoc = parser.parseFromString(newHtml, "text/html")
-    const newNode = newDoc.body.firstChild
+
+    const newPlaceholder = buildCardPlaceholderHtml(blockId, type)
+    const newDoc = parser.parseFromString(newPlaceholder, "text/html")
+    const newNode = newDoc.body.firstChild // ini adalah <p> pembungkus
+
     if (newNode) {
-      existing.replaceWith(newNode)
+      // Jika existing ada di dalam <p>, replace <p>-nya sekalian
+      const parentP = existing.closest("p")
+      if (parentP && parentP !== existing) {
+        parentP.replaceWith(newNode)
+      } else {
+        existing.replaceWith(newNode)
+      }
       editor.commands.setContent(doc.body.innerHTML, false)
     }
   }
 
-  const resolveCards = (html: string): string => {
+  const resolveCards = useCallback((html: string): string => {
     // Resolve both [[CARD:id]] legacy format and new .card-editor-placeholder divs
     let resolved = html.replace(/\[\[CARD:([a-z0-9]+)\]\]/g, (_, id) => {
       return cardMapRef.current.get(id) ?? ""
@@ -1323,17 +1313,20 @@ export function CreateArticleView({ onBack, articleId }: CreateArticleViewProps)
         const newNode = tmp.body.firstChild
         if (newNode) el.replaceWith(newNode)
         else el.remove()
+      } else {
+        // cardMapRef kosong untuk id ini — hapus placeholder agar tidak muncul di artikel
+        el.closest("p")?.remove() ?? el.remove()
       }
     })
     return doc.body.innerHTML
-  }
+  }, [])
 
   useEffect(() => {
     if (editorTab !== "preview" || !editor) return
     const raw = editor.getHTML()
     const withSpacing = raw.replace(/<p><\/p>/g, "<p>&nbsp;</p>")
     setPreviewHtml(resolveCards(withSpacing))
-  }, [editorTab, editor])
+  }, [editorTab, editor, resolveCards])
 
   const handleFeaturedImageUpload = async (e: React.ChangeEvent<HTMLInputElement>) => {
     const file = e.target.files?.[0]; if (!file) return
@@ -1415,7 +1408,22 @@ export function CreateArticleView({ onBack, articleId }: CreateArticleViewProps)
     if (!editor) return
     setIsLoading(true); setMessage(null)
 
-    const htmlContent = resolveCards(editor.getHTML())
+    const rawHtml = editor.getHTML()
+    // Sebelum resolve, pastikan semua full card HTML block yang ada langsung di editor
+    // (bukan via placeholder) juga masuk ke cardMapRef agar tidak hilang
+    const preParser = new DOMParser()
+    const preDoc = preParser.parseFromString(rawHtml, "text/html")
+    preDoc.querySelectorAll<HTMLElement>("[data-block-id]").forEach((el) => {
+      const id = el.dataset.blockId
+      const type = el.dataset.blockType
+      if (!id || !type || el.classList.contains("card-editor-placeholder")) return
+      // Ini adalah full card HTML yang tidak via placeholder — simpan ke cardMapRef
+      if (!cardMapRef.current.has(id)) {
+        cardMapRef.current.set(id, el.outerHTML)
+      }
+    })
+
+    const htmlContent = resolveCards(rawHtml)
     const payload = {
       title, slug: generateSlug(title), excerpt, content: htmlContent,
       category_id: category || null, featured_image_url: featuredImageUrl,
