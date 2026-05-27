@@ -1079,13 +1079,26 @@ export function CreateArticleView({ onBack, articleId }: CreateArticleViewProps)
       // ── Opsi A: klik card di editor → isi sidebar untuk edit ────────────────
       handleClick(view, _pos, event) {
         const target = event.target as HTMLElement
-        // Cari placeholder (span atau div) dengan data-block-id
-        const block = target.closest<HTMLElement>(".card-editor-placeholder[data-block-id]")
+        // Cari placeholder dengan data-block-id ATAU via class card-ref-* (TipTap strip data-*)
+        const block = target.closest<HTMLElement>(".card-editor-placeholder")
           ?? target.closest<HTMLElement>("[data-block-id]")
+          ?? target.closest<HTMLElement>("[class*='card-ref-']")
+          ?? target.closest<HTMLElement>(".tabbed-block")
+          ?? target.closest<HTMLElement>(".group-standings-block")
         if (!block) return false
 
-        const blockId = block.dataset.blockId
-        const blockType = block.dataset.blockType
+        // Baca blockId dari data-attribute ATAU dari class card-ref-* (lebih reliable karena TipTap strip data-*)
+        let blockId = block.dataset.blockId
+        let blockType = block.dataset.blockType
+        block.classList.forEach((cls) => {
+          if (cls.startsWith("card-ref-")) blockId = blockId ?? cls.replace("card-ref-", "")
+          if (cls.startsWith("card-type-")) blockType = blockType ?? cls.replace("card-type-", "")
+        })
+        // Untuk full block (tabbed-block / group-standings-block) ambil dari data-block-id child
+        if (!blockId) {
+          const inner = block.querySelector<HTMLElement>("[data-block-id]")
+          if (inner) { blockId = inner.dataset.blockId; blockType = inner.dataset.blockType }
+        }
         if (!blockId) return false
 
         // Gunakan ref agar tidak stale closure
@@ -1239,6 +1252,44 @@ export function CreateArticleView({ onBack, articleId }: CreateArticleViewProps)
 
         // Set content setelah cardMapRef sudah ter-populate
         editor.commands.setContent(editorContent || "")
+        // Jika sedang di tab preview saat artikel di-load, paksa refresh preview
+        // agar card HTML ter-resolve dari cardMapRef yang baru saja di-populate
+        setTimeout(() => {
+          const raw = editor.getHTML()
+          const withSpacing = raw.replace(/<p><\/p>/g, "<p>&nbsp;</p>")
+          // Trigger resolveCards — cardMapRef sudah terisi saat ini
+          const resolved = (() => {
+            let r = withSpacing.replace(/\[\[CARD:([a-z0-9]+)\]\]/g, (_, id) => {
+              return (window as any).__cardMapRef?.get(id) ?? ""
+            })
+            try {
+              const parser = new DOMParser()
+              const doc = parser.parseFromString(r, "text/html")
+              doc.querySelectorAll<HTMLElement>(".card-editor-placeholder").forEach((el) => {
+                let bId: string | undefined
+                el.classList.forEach((cls) => { if (cls.startsWith("card-ref-")) bId = cls.replace("card-ref-", "") })
+                if (!bId) bId = el.dataset.blockId
+                if (!bId) { el.closest("p")?.remove() ?? el.remove(); return }
+                const cardHtml = cardMapRef.current.get(bId)
+                if (cardHtml) {
+                  const tmp = parser.parseFromString(cardHtml, "text/html")
+                  const newNode = tmp.body.firstChild
+                  const parentP = el.closest("p")
+                  if (parentP && newNode) parentP.replaceWith(newNode)
+                  else if (newNode) el.replaceWith(newNode)
+                  else el.remove()
+                } else {
+                  const parentP = el.closest("p")
+                  if (parentP) parentP.remove()
+                  else el.remove()
+                }
+              })
+              r = doc.body.innerHTML
+            } catch { /* noop */ }
+            return r
+          })()
+          setPreviewHtml(resolved)
+        }, 150)
       }
       const { data: articleTags } = await supabase
         .from("article_tags").select("tags(name)").eq("article_id", articleId)
