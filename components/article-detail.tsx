@@ -6,11 +6,13 @@ import { createClient } from "@/lib/supabase/client"
 import { trackArticleView } from "@/lib/supabase/tracking"
 import { NavbarStandalone } from "@/components/navbar-standalone"
 import { FooterStandalone } from "@/components/footer-standalone"
+import { ArticleBody } from "@/components/article/ArticleBody"
 import {
   Clock, Eye, Calendar, ChevronRight, Home,
   Share2, Twitter, Facebook, Link2, Check,
   BookOpen, ArrowUp, User, MessageSquare, Send,
 } from "lucide-react"
+
 // ─── Types ─────────────────────────────────────────────────────────────────
 interface Article {
   id: string
@@ -27,7 +29,6 @@ interface Article {
   categories: { name: string; slug: string } | null
 }
 
-// Interface khusus untuk related articles (tanpa field content)
 interface RelatedArticle {
   id: string
   title: string
@@ -48,15 +49,10 @@ interface TocItem {
   level: number
 }
 
-// ─── Font size steps ───────────────────────────────────────────────────────
-
-
 // ─── Helpers ───────────────────────────────────────────────────────────────
 
-// Konten sekarang selalu HTML dari Tiptap — langsung pakai, tidak perlu parse
 function contentToHtml(content: string): string {
   if (!content) return ""
-  // Bersihkan card-editor-placeholder yang mungkin lolos ke database
   let html = content
   if (html.includes("card-editor-placeholder")) {
     try {
@@ -69,12 +65,15 @@ function contentToHtml(content: string): string {
       })
       html = doc.body.innerHTML
     } catch {
-      // fallback: regex remove
-      html = html.replace(/<[^>]*class="[^"]*card-editor-placeholder[^"]*"[^>]*>.*?<\/[^>]+>/gs, "")
+      html = html.replace(/<[^>]*class="[^"]*card-editor-placeholder[^"]*"[^>]*>[^]*?<\/[^>]+>/g, "")
     }
   }
-  // Preserve empty paragraphs so user-inserted blank lines appear as spacing
   return html.replace(/<p><\/p>/g, "<p>&nbsp;</p>")
+}
+
+// Deteksi apakah konten mengandung placeholder widget
+function hasWidgetPlaceholder(content: string): boolean {
+  return /(?:📅|🏆)(JadwalPertandingan|KlasemenGrup)WIDGET/.test(content)
 }
 
 function calcReadingTime(content: string): number {
@@ -384,8 +383,6 @@ function ShareButtons({ title }: { title: string }) {
   )
 }
 
-
-
 // ─── Author Card ───────────────────────────────────────────────────────────
 function AuthorCard() {
   const router = useRouter()
@@ -592,7 +589,6 @@ function CommentSection({ articleId }: { articleId: string }) {
   const [isSubmitting, setIsSubmitting] = useState(false)
   const [submitted, setSubmitted] = useState(false)
 
-  // Load comments from localStorage (client-side only)
   useEffect(() => {
     try {
       const stored = localStorage.getItem(`comments_${articleId}`)
@@ -639,7 +635,6 @@ function CommentSection({ articleId }: { articleId: string }) {
         )}
       </h2>
 
-      {/* Form komentar */}
       <div className="rounded-xl border border-border bg-card p-5 mb-6">
         <p className="mb-4 text-sm font-semibold text-foreground">Tulis Komentar</p>
         <div className="flex flex-col gap-3">
@@ -680,7 +675,6 @@ function CommentSection({ articleId }: { articleId: string }) {
         </div>
       </div>
 
-      {/* Daftar komentar */}
       {comments.length === 0 ? (
         <p className="text-sm text-muted-foreground text-center py-6">
           Belum ada komentar. Jadilah yang pertama berkomentar!
@@ -715,9 +709,12 @@ export function ArticleDetail({ articleId }: ArticleDetailProps) {
   const contentRef = useRef<HTMLDivElement>(null)
   const supabase = createClient()
 
-  // ── Inisialisasi tab interaktif setiap kali konten berubah ──────────────
+  // ── Inisialisasi tab interaktif (hanya untuk konten non-widget) ──────────
   useEffect(() => {
     if (!processedContent) return
+    // Jika konten mengandung widget placeholder, tab init dilewati
+    // karena ArticleBody menangani renderingnya sendiri
+    if (hasWidgetPlaceholder(processedContent)) return
     const el = contentRef.current
     if (!el) return
     const init = () => {
@@ -735,38 +732,29 @@ export function ArticleDetail({ articleId }: ArticleDetailProps) {
         })
       })
     }
-    // Tunggu sampai DOM selesai di-render oleh dangerouslySetInnerHTML
     const timer = setTimeout(init, 80)
     return () => clearTimeout(timer)
   }, [processedContent])
 
-  // Prose classes (always dark theme)
+  // Prose classes
   const proseClass = [
     "max-w-none prose prose-lg prose-invert",
-    // Heading — Oswald font for headings inside article body
     "prose-headings:font-black prose-headings:scroll-mt-24",
     "prose-headings:text-foreground prose-p:text-foreground/90",
     "prose-h1:text-3xl prose-h1:mt-8 prose-h1:mb-4",
     "prose-h2:text-2xl prose-h2:mt-8 prose-h2:mb-4 prose-h2:border-b prose-h2:pb-2 prose-h2:border-border",
     "prose-h3:text-xl prose-h3:mt-6 prose-h3:mb-3",
     "prose-p:leading-relaxed prose-p:mb-5 prose-p:text-[17px] sm:prose-p:text-lg",
-    // Links — neon green untuk membedakan link ke artikel lain
     "prose-a:text-[#39FF14] prose-a:no-underline hover:prose-a:underline prose-a:font-semibold",
-    // Bold
     "prose-strong:text-foreground prose-strong:font-semibold",
-    // Images
     "prose-img:rounded-xl prose-img:w-full prose-img:my-6",
-    // Blockquote
     "prose-blockquote:border-l-primary prose-blockquote:border-l-2",
     "prose-blockquote:bg-secondary/50 prose-blockquote:text-foreground/70",
     "prose-blockquote:rounded-r-lg prose-blockquote:py-1 prose-blockquote:not-italic",
-    // Code
     "prose-code:text-primary prose-code:rounded prose-code:px-1 prose-code:py-0.5 prose-code:text-sm prose-code:bg-secondary",
     "prose-code:before:content-none prose-code:after:content-none",
-    // Lists
     "prose-ul:text-foreground/90 prose-ol:text-foreground/90",
     "prose-li:my-1",
-    // Table
     "prose-table:w-full prose-table:border-collapse prose-table:my-6 prose-table:text-sm prose-table:overflow-hidden prose-table:rounded-lg",
     "prose-th:border prose-th:border-border prose-th:bg-secondary/80",
     "prose-th:text-foreground prose-th:font-semibold",
@@ -774,9 +762,7 @@ export function ArticleDetail({ articleId }: ArticleDetailProps) {
     "[&_tbody_tr:nth-child(even)]:bg-secondary/30",
     "prose-th:px-4 prose-th:py-2.5 prose-th:text-left prose-th:text-sm",
     "prose-td:px-4 prose-td:py-2.5 prose-td:align-top",
-    // HR
     "prose-hr:border-border prose-hr:my-8",
-    // ── Tabbed Block (MatchCard & KlasemenCard) ─────────────────────────
     "[&_.tabbed-block]:rounded-xl [&_.tabbed-block]:border [&_.tabbed-block]:border-border [&_.tabbed-block]:overflow-hidden [&_.tabbed-block]:my-6",
     "[&_.tb-nav]:flex [&_.tb-nav]:flex-wrap [&_.tb-nav]:gap-1.5 [&_.tb-nav]:p-2.5 [&_.tb-nav]:bg-secondary/40 [&_.tb-nav]:border-b [&_.tb-nav]:border-border",
     "[&_.tbb]:rounded-md [&_.tbb]:px-3 [&_.tbb]:py-1.5 [&_.tbb]:text-xs [&_.tbb]:font-semibold [&_.tbb]:cursor-pointer [&_.tbb]:border [&_.tbb]:border-border [&_.tbb]:bg-secondary [&_.tbb]:text-muted-foreground [&_.tbb]:transition-colors [&_.tbb]:select-none",
@@ -784,7 +770,6 @@ export function ArticleDetail({ articleId }: ArticleDetailProps) {
     "[&_.tb-content]:p-4 [&_.tb-content]:bg-card",
     "[&_.tbp]:hidden",
     "[&_.tbp-active]:block",
-    // ── Match Card ────────────────────────────────────────────────────────
     "[&_.match-block]:my-6",
     "[&_.match-card-grid]:grid [&_.match-card-grid]:gap-4 [&_.match-card-grid]:my-2 [&_.match-card-grid]:grid-cols-1 sm:[&_.match-card-grid]:grid-cols-2",
     "[&_.match-card]:rounded-xl [&_.match-card]:border [&_.match-card]:border-border [&_.match-card]:bg-secondary/30 [&_.match-card]:p-4 [&_.match-card]:flex [&_.match-card]:flex-col [&_.match-card]:gap-2.5",
@@ -799,7 +784,6 @@ export function ArticleDetail({ articleId }: ArticleDetailProps) {
     "[&_.match-card-bottom]:flex [&_.match-card-bottom]:items-center [&_.match-card-bottom]:justify-between [&_.match-card-bottom]:flex-wrap [&_.match-card-bottom]:gap-2",
     "[&_.match-card-time]:rounded [&_.match-card-time]:border [&_.match-card-time]:border-border [&_.match-card-time]:bg-black/30 [&_.match-card-time]:px-2 [&_.match-card-time]:py-1 [&_.match-card-time]:text-xs [&_.match-card-time]:font-bold [&_.match-card-time]:text-foreground",
     "[&_.match-card-stadium]:text-xs [&_.match-card-stadium]:text-muted-foreground",
-    // ── Group Standings Block ─────────────────────────────────────────────
     "[&_.group-standings-block]:my-6",
     "[&_.gs-header]:flex [&_.gs-header]:items-center [&_.gs-header]:gap-2 [&_.gs-header]:px-4 [&_.gs-header]:py-3 [&_.gs-header]:border-b [&_.gs-header]:border-border [&_.gs-header]:bg-secondary/20",
     "[&_.gs-header-icon]:text-lg",
@@ -838,7 +822,14 @@ export function ArticleDetail({ articleId }: ArticleDetailProps) {
     "[&_.gs-legend-candidate]:text-yellow-500",
   ].join(" ")
 
-
+  // Shared prose + card-table classes untuk kedua mode render
+  const contentClassName = [
+    proseClass,
+    "[&_.card-table-block]:grid [&_.card-table-block]:gap-4 [&_.card-table-block]:grid-cols-1 sm:[&_.card-table-block]:grid-cols-2",
+    "[&_.card-table-card]:border-border [&_.card-table-card]:bg-secondary/40 [&_.card-table-label]:text-primary [&_.card-table-value]:text-foreground/90",
+    "[&_.card-design]:grid [&_.card-design]:gap-4 [&_.card-design]:my-6 [&_.card-design]:grid-cols-1 sm:[&_.card-design]:grid-cols-2",
+    "[&_.card-design-card]:border-border [&_.card-design-card]:bg-secondary/40 [&_.card-design-label]:text-primary [&_.card-design-value]:text-foreground/90",
+  ].join(" ")
 
   useEffect(() => {
     async function fetchArticle() {
@@ -877,7 +868,6 @@ export function ArticleDetail({ articleId }: ArticleDetailProps) {
 
   const readingTime = article?.content ? calcReadingTime(article.content) : 0
 
-  // Article area background sesuai mode
   return (
     <>
       {article && (
@@ -938,7 +928,7 @@ export function ArticleDetail({ articleId }: ArticleDetailProps) {
                     </p>
                   )}
 
-                  {/* Meta row + Reading Controls */}
+                  {/* Meta row */}
                   <div className="mt-4 flex flex-wrap items-center gap-x-4 gap-y-2 text-xs border-y py-3 text-muted-foreground border-border">
                     <span className="flex items-center gap-1.5">
                       <User className="h-3.5 w-3.5 flex-shrink-0" aria-hidden="true" />
@@ -963,7 +953,6 @@ export function ArticleDetail({ articleId }: ArticleDetailProps) {
                       <Eye className="h-3.5 w-3.5 flex-shrink-0" aria-hidden="true" />
                       {(article.views || 0).toLocaleString("id-ID")} views
                     </span>
-
                   </div>
 
                   {/* Share — top */}
@@ -972,7 +961,7 @@ export function ArticleDetail({ articleId }: ArticleDetailProps) {
                   </div>
                 </header>
 
-                {/* TOC — tampil di artikel (semua layar, kecuali desktop karena ada sidebar) */}
+                {/* TOC mobile */}
                 {toc.length > 0 && (
                   <div className="mb-6 lg:hidden">
                     <TableOfContents items={toc} />
@@ -1012,21 +1001,23 @@ export function ArticleDetail({ articleId }: ArticleDetailProps) {
                   </figure>
                 )}
 
-                {/* Article content */}
-                <div
-                  className={[
-                    proseClass,
-                    // Card table grid (legacy class names)
-                    "[&_.card-table-block]:grid [&_.card-table-block]:gap-4 [&_.card-table-block]:grid-cols-1 sm:[&_.card-table-block]:grid-cols-2",
-                    "[&_.card-table-card]:border-border [&_.card-table-card]:bg-secondary/40 [&_.card-table-label]:text-primary [&_.card-table-value]:text-foreground/90",
-                    // card-design class
-                    "[&_.card-design]:grid [&_.card-design]:gap-4 [&_.card-design]:my-6 [&_.card-design]:grid-cols-1 sm:[&_.card-design]:grid-cols-2",
-                    "[&_.card-design-card]:border-border [&_.card-design-card]:bg-secondary/40 [&_.card-design-label]:text-primary [&_.card-design-value]:text-foreground/90",
-                  ].join(" ")}
-                  dangerouslySetInnerHTML={{ __html: processedContent || article.content || "" }}
-                  itemProp="articleBody"
-                  ref={contentRef}
-                />
+                {/* ── Article content ── */}
+                {hasWidgetPlaceholder(processedContent || article.content || "") ? (
+                  // Konten mengandung widget → ArticleBody parser + card interaktif
+                  <ArticleBody
+                    content={processedContent || article.content || ""}
+                    isAdmin={false}
+                    className={contentClassName}
+                  />
+                ) : (
+                  // Konten biasa → dangerouslySetInnerHTML seperti semula
+                  <div
+                    className={contentClassName}
+                    dangerouslySetInnerHTML={{ __html: processedContent || article.content || "" }}
+                    itemProp="articleBody"
+                    ref={contentRef}
+                  />
+                )}
 
                 {/* Share — bottom */}
                 <div className="mt-8 border-t pt-6 border-border">
@@ -1042,7 +1033,7 @@ export function ArticleDetail({ articleId }: ArticleDetailProps) {
                 <CommentSection articleId={article.id} />
               </article>
 
-              {/* ── Sidebar — Desktop ToC ── */}
+              {/* ── Sidebar ToC desktop ── */}
               {toc.length > 0 && (
                 <aside className="hidden lg:block w-72 flex-shrink-0 sticky top-24 self-start">
                   <TableOfContents items={toc} />
