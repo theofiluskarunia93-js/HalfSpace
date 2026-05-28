@@ -2,9 +2,8 @@
 
 import { useState } from "react"
 import { parseWidgetContent } from "@/lib/parseWidgetContent"
-import { WidgetEditModal } from "@/components/widgets/WidgetEditModal"
-import { useWidgetModal } from "@/components/widgets/useWidgetModal"
-import type { WidgetType } from "@/components/widgets/WidgetEditModal"
+import { WidgetEditModal, useWidgetModal } from "@/components/widgets/useWidgetModal"
+import type { WidgetType } from "@/components/widgets/useWidgetModal"
 
 interface ArticleBodyProps {
   content: string

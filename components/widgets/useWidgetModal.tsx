@@ -16,6 +16,25 @@ interface WidgetEditModalProps {
   onSaved?: () => void   // callback agar parent bisa refresh
 }
 
+// ── Hook ──────────────────────────────────────────────────────────────────────
+
+export function useWidgetModal() {
+  const [modalWidgetId, setModalWidgetId] = useState<string | null>(null)
+  const [modalWidgetType, setModalWidgetType] = useState<WidgetType | null>(null)
+
+  function openWidgetModal(widgetId: string, widgetType: WidgetType) {
+    setModalWidgetId(widgetId)
+    setModalWidgetType(widgetType)
+  }
+
+  function closeWidgetModal() {
+    setModalWidgetId(null)
+    setModalWidgetType(null)
+  }
+
+  return { modalWidgetId, modalWidgetType, openWidgetModal, closeWidgetModal }
+}
+
 // ── Helpers ───────────────────────────────────────────────────────────────────
 
 function Input({
