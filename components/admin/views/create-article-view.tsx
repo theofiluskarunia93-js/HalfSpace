@@ -943,8 +943,10 @@ export function CreateArticleView({ onBack, articleId }: CreateArticleViewProps)
 
   const [isEditorChoice, setIsEditorChoice] = useState(false)
 
-  // ── Editing block state (Opsi A) ────────────────────────────────────────────
+  // ── Editing block state ─────────────────────────────────────────────────────
   const [editingBlock, setEditingBlock] = useState<EditingBlock>(null)
+  // Modal inline edit: muncul langsung di atas editor saat badge diklik
+  const [modalOpen, setModalOpen] = useState(false)
 
   // ── Link Dialog ─────────────────────────────────────────────────────────────
   const [linkDialogOpen,  setLinkDialogOpen]  = useState(false)
@@ -973,10 +975,15 @@ export function CreateArticleView({ onBack, articleId }: CreateArticleViewProps)
     setEditingBlockRef.current = setEditingBlock
   }, [setEditingBlock])
 
+  const openCardModalRef = useRef<() => void>(() => {})
+  useEffect(() => {
+    openCardModalRef.current = () => setModalOpen(true)
+  })
+
   useEffect(() => {
     ;(window as any).__cardMapRef = cardMapRef.current
-    // Selalu update tiap render — wrapper ini defer ke .current sehingga tidak pernah stale
     ;(window as any).__setEditingBlock = (block: EditingBlock) => setEditingBlockRef.current(block)
+    ;(window as any).__openCardModal = () => openCardModalRef.current()
   })
 
   // ── Tiptap editor ──────────────────────────────────────────────────────────
@@ -1121,16 +1128,12 @@ export function CreateArticleView({ onBack, articleId }: CreateArticleViewProps)
             const cardHtml = cardMap.get(resolvedBlockId) ?? ""
             const parsed = cardHtml ? parseMatchBlockHtml(cardHtml) : null
             _setEditingBlock({ type: "match", blockId: resolvedBlockId, tabs: parsed ?? [makeMatchTab(0)] })
-            setTimeout(() => {
-              document.getElementById("match-widget-anchor")?.scrollIntoView({ behavior: "smooth", block: "start" })
-            }, 50)
+            ;(window as any).__openCardModal?.()
           } else if (resolvedType === "standings") {
             const cardHtml = cardMap.get(resolvedBlockId) ?? ""
             const parsed = cardHtml ? parseStandingsBlockHtml(cardHtml) : null
             _setEditingBlock({ type: "standings", blockId: resolvedBlockId, title: parsed?.title ?? "", groups: parsed?.groups ?? [makeStandingsGroup(0)] })
-            setTimeout(() => {
-              document.getElementById("standings-widget-anchor")?.scrollIntoView({ behavior: "smooth", block: "start" })
-            }, 50)
+            ;(window as any).__openCardModal?.()
           }
           return true
         }
@@ -1140,9 +1143,7 @@ export function CreateArticleView({ onBack, articleId }: CreateArticleViewProps)
           const parsed = parseMatchBlockHtml(outerHtml)
           if (parsed) {
             _setEditingBlock({ type: "match", blockId, tabs: parsed })
-            setTimeout(() => {
-              document.getElementById("match-widget-anchor")?.scrollIntoView({ behavior: "smooth", block: "start" })
-            }, 50)
+            ;(window as any).__openCardModal?.()
           }
           return true
         }
@@ -1152,9 +1153,7 @@ export function CreateArticleView({ onBack, articleId }: CreateArticleViewProps)
           const parsed = parseStandingsBlockHtml(outerHtml)
           if (parsed) {
             _setEditingBlock({ type: "standings", blockId, ...parsed })
-            setTimeout(() => {
-              document.getElementById("standings-widget-anchor")?.scrollIntoView({ behavior: "smooth", block: "start" })
-            }, 50)
+            ;(window as any).__openCardModal?.()
           }
           return true
         }
@@ -1328,35 +1327,39 @@ export function CreateArticleView({ onBack, articleId }: CreateArticleViewProps)
   // PENTING: TipTap strip data-* attributes dari schema yang tidak dikenal.
   // Solusi: encode blockId & type langsung di class name (card-ref-{id} & card-type-{type})
   // sehingga tetap ada setelah editor.getHTML() dan bisa di-resolve saat save.
-  const buildCardPlaceholderHtml = (blockId: string, type: "match" | "standings"): string => {
+  // Embed cardHtml di data-card-html agar tidak bergantung pada cardMapRef / sessionStorage.
+  // Ini solusi paling reliable: data selalu ada di dalam DOM itu sendiri.
+  const buildCardPlaceholderHtml = (blockId: string, type: "match" | "standings", cardHtml?: string): string => {
     const label = type === "match" ? "📅 Jadwal Pertandingan" : "🏆 Klasemen Grup"
     const shortId = blockId.slice(0, 6)
+    // Encode cardHtml sebagai base64 agar aman disimpan di attribute HTML
+    const encodedHtml = cardHtml ? btoa(unescape(encodeURIComponent(cardHtml))) : ""
     return (
       `<p><span class="card-editor-placeholder card-ref-${blockId} card-type-${type}" ` +
-      `data-block-id="${blockId}" data-block-type="${type}" contenteditable="false">` +
+      `data-block-id="${blockId}" data-block-type="${type}" data-card-html="${encodedHtml}" contenteditable="false">` +
       `${label}&nbsp;<span style="opacity:0.45;font-size:10px;font-weight:400;">[${shortId}]</span>` +
       `<span style="opacity:0.4;font-size:9px;margin-left:6px;">✎ klik untuk edit</span></span></p>`
     )
   }
 
   // Replace card block di editor setelah user selesai edit dan klik Insert/Update
-  const replaceCardPlaceholderInEditor = (blockId: string, type: "match" | "standings") => {
+  const replaceCardPlaceholderInEditor = (blockId: string, type: "match" | "standings", cardHtml?: string) => {
     if (!editor) return
     const currentHtml = editor.getHTML()
     const parser = new DOMParser()
     const doc = parser.parseFromString(currentHtml, "text/html")
 
-    // Cari via class card-ref-{blockId} (data-* di-strip TipTap) atau data-block-id sebagai fallback
     const existing = doc.querySelector(`.card-ref-${blockId}`)
       ?? doc.querySelector(`[data-block-id="${blockId}"]`)
     if (!existing) return
 
-    const newPlaceholder = buildCardPlaceholderHtml(blockId, type)
+    // Gunakan cardHtml yang diberikan, atau ambil dari cardMapRef sebagai fallback
+    const resolvedCardHtml = cardHtml ?? cardMapRef.current.get(blockId)
+    const newPlaceholder = buildCardPlaceholderHtml(blockId, type, resolvedCardHtml)
     const newDoc = parser.parseFromString(newPlaceholder, "text/html")
-    const newNode = newDoc.body.firstChild // ini adalah <p> pembungkus
+    const newNode = newDoc.body.firstChild
 
     if (newNode) {
-      // Jika existing ada di dalam <p>, replace <p>-nya sekalian
       const parentP = existing.closest("p")
       if (parentP && parentP !== existing) {
         parentP.replaceWith(newNode)
@@ -1376,9 +1379,7 @@ export function CreateArticleView({ onBack, articleId }: CreateArticleViewProps)
     const parser = new DOMParser()
     const doc = parser.parseFromString(resolved, "text/html")
 
-    // Resolve via class "card-ref-{blockId}" — ini tetap ada setelah TipTap strip data-attributes
     doc.querySelectorAll<HTMLElement>(".card-editor-placeholder").forEach((el) => {
-      // Cari blockId dari class name (card-ref-xxxxx) karena data-* di-strip TipTap
       let blockId: string | undefined
       let type: "match" | "standings" | undefined
 
@@ -1386,15 +1387,30 @@ export function CreateArticleView({ onBack, articleId }: CreateArticleViewProps)
         if (cls.startsWith("card-ref-")) blockId = cls.replace("card-ref-", "")
         if (cls.startsWith("card-type-")) type = cls.replace("card-type-", "") as "match" | "standings"
       })
-
-      // Fallback ke data-attribute jika masih ada (misal dari load edit mode)
       if (!blockId) blockId = el.dataset.blockId
       if (!type) type = el.dataset.blockType as "match" | "standings"
-
       if (!blockId) { el.closest("p")?.remove() ?? el.remove(); return }
 
-      const cardHtml = cardMapRef.current.get(blockId)
+      // Prioritas 1: ambil dari cardMapRef (in-memory, paling up-to-date)
+      let cardHtml = cardMapRef.current.get(blockId)
+
+      // Prioritas 2: decode dari data-card-html attribute (embedded di badge — paling reliable)
+      if (!cardHtml) {
+        const encoded = el.dataset.cardHtml || el.getAttribute("data-card-html")
+        if (encoded) {
+          try { cardHtml = decodeURIComponent(escape(atob(encoded))) } catch { cardHtml = undefined }
+        }
+      }
+
+      // Prioritas 3: sessionStorage sebagai last resort
+      if (!cardHtml) {
+        const stored = sessionStorage.getItem(`card-html-${blockId}`)
+        if (stored) cardHtml = stored
+      }
+
       if (cardHtml) {
+        // Sinkronkan ke cardMapRef agar konsisten
+        cardMapRef.current.set(blockId, cardHtml)
         const tmp = parser.parseFromString(cardHtml, "text/html")
         const newNode = tmp.body.firstChild
         const parentP = el.closest("p")
@@ -1402,6 +1418,7 @@ export function CreateArticleView({ onBack, articleId }: CreateArticleViewProps)
         else if (newNode) el.replaceWith(newNode)
         else el.remove()
       } else {
+        // Tidak ada data card — hapus placeholder daripada menampilkan badge rusak
         const parentP = el.closest("p")
         if (parentP) parentP.remove()
         else el.remove()
@@ -1516,8 +1533,16 @@ export function CreateArticleView({ onBack, articleId }: CreateArticleViewProps)
       el.classList.forEach((cls) => { if (cls.startsWith("card-ref-")) id = cls.replace("card-ref-", "") })
       if (!id) id = el.dataset.blockId
       if (!id) return
-      // Jika cardMapRef kosong untuk id ini, coba restore dari sessionStorage
       if (!cardMapRef.current.has(id)) {
+        // Prioritas 1: decode dari data-card-html (paling reliable, tidak bergantung session)
+        const encoded = el.dataset.cardHtml || el.getAttribute("data-card-html")
+        if (encoded) {
+          try {
+            const decoded = decodeURIComponent(escape(atob(encoded)))
+            if (decoded) { cardMapRef.current.set(id, decoded); return }
+          } catch { /* lanjut ke fallback */ }
+        }
+        // Prioritas 2: sessionStorage
         const stored = sessionStorage.getItem(`card-html-${id}`)
         if (stored) cardMapRef.current.set(id, stored)
       }
@@ -1539,7 +1564,7 @@ export function CreateArticleView({ onBack, articleId }: CreateArticleViewProps)
     // (terjadi saat user refresh halaman) — tampilkan error
     if (htmlContent.includes("card-editor-placeholder")) {
       setIsLoading(false)
-      setMessage({ type: "error", text: "Widget kartu tidak dapat disimpan karena data hilang akibat refresh halaman. Klik widget di editor → Insert ulang → simpan kembali." })
+      setMessage({ type: "error", text: "Widget kartu tidak dapat disimpan karena data tidak ditemukan. Klik badge widget di editor lalu klik 'Update Card' di sidebar, kemudian simpan kembali." })
       return
     }
     const payload = {
@@ -1903,17 +1928,17 @@ export function CreateArticleView({ onBack, articleId }: CreateArticleViewProps)
               onInsert={(html, blockId) => {
                 if (!editor) return
                 cardMapRef.current.set(blockId, html)
-                // Persist ke sessionStorage agar tidak hilang jika user refresh halaman
                 sessionStorage.setItem(`card-html-${blockId}`, html)
                 if (editingBlock?.blockId === blockId) {
-                  // Edit mode: replace existing block (placeholder OR full HTML) with fresh placeholder
-                  replaceCardPlaceholderInEditor(blockId, "match")
+                  // Edit mode: replace existing placeholder dengan yang baru (termasuk updated data-card-html)
+                  replaceCardPlaceholderInEditor(blockId, "match", html)
                 } else {
-                  // New insert: add simple clickable placeholder
-                  const placeholder = buildCardPlaceholderHtml(blockId, "match")
+                  // New insert: embed card HTML di dalam placeholder badge
+                  const placeholder = buildCardPlaceholderHtml(blockId, "match", html)
                   editor.chain().focus().insertContent(placeholder).run()
                 }
                 setEditingBlock(null)
+                setModalOpen(false)
               }}
             />
           </div>
@@ -1926,17 +1951,17 @@ export function CreateArticleView({ onBack, articleId }: CreateArticleViewProps)
               onInsert={(html, blockId) => {
                 if (!editor) return
                 cardMapRef.current.set(blockId, html)
-                // Persist ke sessionStorage agar tidak hilang jika user refresh halaman
                 sessionStorage.setItem(`card-html-${blockId}`, html)
                 if (editingBlock?.blockId === blockId) {
-                  // Edit mode: replace existing block (placeholder OR full HTML) with fresh placeholder
-                  replaceCardPlaceholderInEditor(blockId, "standings")
+                  // Edit mode: replace existing placeholder dengan yang baru (termasuk updated data-card-html)
+                  replaceCardPlaceholderInEditor(blockId, "standings", html)
                 } else {
-                  // New insert: add simple clickable placeholder
-                  const placeholder = buildCardPlaceholderHtml(blockId, "standings")
+                  // New insert: embed card HTML di dalam placeholder badge
+                  const placeholder = buildCardPlaceholderHtml(blockId, "standings", html)
                   editor.chain().focus().insertContent(placeholder).run()
                 }
                 setEditingBlock(null)
+                setModalOpen(false)
               }}
             />
           </div>
@@ -2092,6 +2117,94 @@ export function CreateArticleView({ onBack, articleId }: CreateArticleViewProps)
         </div>
       </div>
     </div>
+
+    {/* ── Card Inline Edit Modal ── */}
+    {modalOpen && editingBlock && (
+      <div
+        className="fixed inset-0 z-50 flex items-start justify-center overflow-y-auto bg-black/70 backdrop-blur-sm py-8 px-4"
+        onClick={(e) => {
+          if (e.target === e.currentTarget) {
+            setModalOpen(false)
+            setEditingBlock(null)
+          }
+        }}
+      >
+        <div className="w-full max-w-2xl rounded-2xl border border-border bg-card shadow-2xl overflow-hidden">
+
+          {/* Modal header */}
+          <div className="flex items-center justify-between border-b border-border bg-secondary/30 px-5 py-3.5">
+            <div className="flex items-center gap-2.5">
+              <span className="text-base">
+                {editingBlock.type === "match" ? "📅" : "🏆"}
+              </span>
+              <span className="font-semibold text-foreground text-sm">
+                Edit {editingBlock.type === "match" ? "Jadwal Pertandingan" : "Klasemen Grup"}
+              </span>
+              <span className="rounded-full bg-primary/10 px-2 py-0.5 text-[10px] font-bold text-primary tracking-wide">
+                INLINE EDIT
+              </span>
+            </div>
+            <button
+              type="button"
+              onClick={() => { setModalOpen(false); setEditingBlock(null) }}
+              className="flex h-7 w-7 items-center justify-center rounded-full text-muted-foreground hover:bg-secondary hover:text-foreground transition-colors"
+            >
+              <X className="h-4 w-4" />
+            </button>
+          </div>
+
+          {/* Modal body — widget */}
+          <div className="p-5">
+            {editingBlock.type === "match" ? (
+              <MatchCardWidget
+                editData={editingBlock}
+                onReset={() => { setEditingBlock(null); setModalOpen(false) }}
+                onInsert={(html, blockId) => {
+                  if (!editor) return
+                  cardMapRef.current.set(blockId, html)
+                  sessionStorage.setItem(`card-html-${blockId}`, html)
+                  if (editingBlock?.blockId === blockId) {
+                    replaceCardPlaceholderInEditor(blockId, "match", html)
+                  } else {
+                    const placeholder = buildCardPlaceholderHtml(blockId, "match", html)
+                    editor.chain().focus().insertContent(placeholder).run()
+                  }
+                  setEditingBlock(null)
+                  setModalOpen(false)
+                }}
+              />
+            ) : (
+              <GroupStandingsWidget
+                editData={editingBlock}
+                onReset={() => { setEditingBlock(null); setModalOpen(false) }}
+                onInsert={(html, blockId) => {
+                  if (!editor) return
+                  cardMapRef.current.set(blockId, html)
+                  sessionStorage.setItem(`card-html-${blockId}`, html)
+                  if (editingBlock?.blockId === blockId) {
+                    replaceCardPlaceholderInEditor(blockId, "standings", html)
+                  } else {
+                    const placeholder = buildCardPlaceholderHtml(blockId, "standings", html)
+                    editor.chain().focus().insertContent(placeholder).run()
+                  }
+                  setEditingBlock(null)
+                  setModalOpen(false)
+                }}
+              />
+            )}
+          </div>
+
+          {/* Modal footer */}
+          <div className="border-t border-border bg-secondary/10 px-5 py-3 flex items-center gap-2">
+            <span className="text-[11px] text-muted-foreground leading-relaxed">
+              💡 Edit data di atas lalu klik{" "}
+              <strong className="text-foreground">Update Card</strong>
+              {" "}— preview & halaman artikel akan terupdate saat dipublish ulang.
+            </span>
+          </div>
+        </div>
+      </div>
+    )}
 
     {/* ── Link Dialog ── */}
     {linkDialogOpen && (
