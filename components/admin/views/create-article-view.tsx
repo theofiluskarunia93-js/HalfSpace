@@ -1122,6 +1122,9 @@ export function CreateArticleView({ onBack, articleId }: CreateArticleViewProps)
   const [editorTab,   setEditorTab]   = useState<"write" | "preview">("write")
   const [previewHtml, setPreviewHtml] = useState("")
   const cardMapRef = useRef<Map<string, string>>(new Map())
+  // widgetMapRef: blockId → widgetId (UUID dari Supabase widget_jadwal/widget_klasemen)
+  // Terisi saat onInsert dipanggil (widget baru/edit), atau saat load artikel edit mode
+  const widgetMapRef = useRef<Map<string, string>>(new Map())
 
   // Expose cardMapRef & setEditingBlock ke TipTap handleClick (static closure)
   // Gunakan wrapper stabil agar tidak pernah stale
@@ -1372,6 +1375,18 @@ export function CreateArticleView({ onBack, articleId }: CreateArticleViewProps)
         const savedCardData: Record<string, any> = data.card_data || {}
         const hasJsonData = Object.keys(savedCardData).length > 0
 
+        // ── Populate widgetMapRef dari marker teks yang tersimpan di content ──
+        // Artikel yang sudah pakai sistem baru menyimpan marker seperti:
+        // "📅JadwalPertandinganWIDGET AKTIF\n🖇 klik untuk edit<widgetId>:<blockId>"
+        // Kita ekstrak pasangan blockId → widgetId agar resolveCards bisa tulis marker kembali.
+        widgetMapRef.current.clear()
+        const markerRe = /(?:📅|🏆)(?:JadwalPertandingan|KlasemenGrup)WIDGET\s+AKTIF[\s\S]*?🖇\s*klik untuk edit([a-zA-Z0-9-]+):([a-zA-Z0-9]+)/g
+        let mMatch: RegExpExecArray | null
+        while ((mMatch = markerRe.exec(raw)) !== null) {
+          const [, wId, bId] = mMatch
+          widgetMapRef.current.set(bId, wId)
+        }
+
         // Convert all existing full HTML card blocks to badge placeholders for editor display
         // Full HTML tetap disimpan di cardMapRef, akan di-resolve kembali saat save
         let editorContent = raw
@@ -1523,11 +1538,18 @@ export function CreateArticleView({ onBack, articleId }: CreateArticleViewProps)
       } else {
         existing.replaceWith(newNode)
       }
-      editor.commands.setContent(doc.body.innerHTML, false)
+      editor.commands.setContent(doc.body.innerHTML, { emitUpdate: false })
     }
   }
 
-  const resolveCards = useCallback((html: string): string => {
+  /**
+   * resolveCards — mengubah badge placeholder menjadi output final.
+   *
+   * mode "preview" : placeholder → full HTML card static (untuk dangerouslySetInnerHTML di tab preview)
+   * mode "save"    : placeholder → marker teks widget (untuk disimpan ke DB, lalu dirender
+   *                  oleh ArticleBody / parseWidgetContent sebagai komponen React dinamis)
+   */
+  const resolveCards = useCallback((html: string, mode: "preview" | "save" = "preview"): string => {
     // Resolve [[CARD:id]] legacy format
     let resolved = html.replace(/\[\[CARD:([a-z0-9]+)\]\]/g, (_, id) => {
       return cardMapRef.current.get(id) ?? ""
@@ -1566,14 +1588,42 @@ export function CreateArticleView({ onBack, articleId }: CreateArticleViewProps)
       }
 
       if (cardHtml) {
-        // Sinkronkan ke cardMapRef agar konsisten
         cardMapRef.current.set(blockId, cardHtml)
-        const tmp = parser.parseFromString(cardHtml, "text/html")
-        const newNode = tmp.body.firstChild
-        const parentP = el.closest("p")
-        if (parentP && newNode) parentP.replaceWith(newNode)
-        else if (newNode) el.replaceWith(newNode)
-        else el.remove()
+
+        if (mode === "preview") {
+          // ── Mode preview: render full HTML card static ──
+          // Placeholder diganti dengan HTML card lengkap agar tampil visual di tab preview.
+          const tmp = parser.parseFromString(cardHtml, "text/html")
+          const newNode = tmp.body.firstChild
+          const parentP = el.closest("p")
+          if (parentP && newNode) parentP.replaceWith(newNode)
+          else if (newNode) el.replaceWith(newNode)
+          else el.remove()
+        } else {
+          // ── Mode save: output marker teks jika sudah disync ke Supabase ──
+          // parseWidgetContent di ArticleBody akan membaca marker ini dan
+          // me-render komponen <JadwalCard> / <KlasemenCard> yang fetch data dari DB.
+          const widgetId = widgetMapRef.current.get(blockId)
+          if (widgetId) {
+            const isMatch = type === "match"
+            const markerText = isMatch
+              ? `📅JadwalPertandinganWIDGET AKTIF\n🖇 klik untuk edit${widgetId}:${blockId}`
+              : `🏆KlasemenGrupWIDGET AKTIF\n🖇 klik untuk edit${widgetId}:${blockId}`
+            const markerEl = doc.createElement("p")
+            markerEl.textContent = markerText
+            const parentP = el.closest("p")
+            if (parentP) parentP.replaceWith(markerEl)
+            else el.replaceWith(markerEl)
+          } else {
+            // Belum ada widgetId (belum disync ke Supabase) — fallback ke full HTML
+            const tmp = parser.parseFromString(cardHtml, "text/html")
+            const newNode = tmp.body.firstChild
+            const parentP = el.closest("p")
+            if (parentP && newNode) parentP.replaceWith(newNode)
+            else if (newNode) el.replaceWith(newNode)
+            else el.remove()
+          }
+        }
       } else {
         // Tidak ada data card — hapus placeholder daripada menampilkan badge rusak
         const parentP = el.closest("p")
@@ -1591,7 +1641,7 @@ export function CreateArticleView({ onBack, articleId }: CreateArticleViewProps)
     const updatePreview = () => {
       const raw = editor.getHTML()
       const withSpacing = raw.replace(/<p><\/p>/g, "<p>&nbsp;</p>")
-      setPreviewHtml(resolveCards(withSpacing))
+      setPreviewHtml(resolveCards(withSpacing, "preview"))
     }
     updatePreview()
     // Subscribe ke perubahan content saat di tab preview
@@ -1715,7 +1765,7 @@ export function CreateArticleView({ onBack, articleId }: CreateArticleViewProps)
       }
     })
 
-    const htmlContent = resolveCards(rawHtml)
+    const htmlContent = resolveCards(rawHtml, "save")
 
     // Jika masih ada placeholder yang tidak ter-resolve, berarti cardMapRef kosong
     // (terjadi saat user refresh halaman) — tampilkan error
@@ -2104,15 +2154,50 @@ export function CreateArticleView({ onBack, articleId }: CreateArticleViewProps)
             <MatchCardWidget
               editData={editingBlock?.type === "match" ? editingBlock : null}
               onReset={() => setEditingBlock(null)}
-              onInsert={(html, blockId) => {
+              onInsert={async (html, blockId) => {
                 if (!editor) return
                 cardMapRef.current.set(blockId, html)
                 sessionStorage.setItem(`card-html-${blockId}`, html)
+
+                // ── Sync data ke Supabase widget_jadwal ──
+                try {
+                  const parsed = parseMatchBlockHtml(html)
+                  if (parsed) {
+                    // Gunakan widgetId yang sudah ada (edit) atau buat baru (insert)
+                    const existingWidgetId = widgetMapRef.current.get(blockId)
+                    const widgetId = existingWidgetId || crypto.randomUUID()
+
+                    // Hapus baris lama untuk widget ini agar tidak duplikat
+                    await supabase.from("widget_jadwal").delete().eq("widget_id", widgetId)
+
+                    // Insert semua match dari semua tab
+                    const rows = parsed.flatMap((tab) =>
+                      tab.matches
+                        .filter((m) => m.homeTeam || m.awayTeam)
+                        .map((m) => ({
+                          widget_id: widgetId,
+                          group_label: tab.label,
+                          home_team: m.homeTeam,
+                          away_team: m.awayTeam,
+                          match_date: m.date || null,
+                          match_time: m.time || null,
+                          score_home: m.homeScore !== "" ? Number(m.homeScore) : null,
+                          score_away: m.awayScore !== "" ? Number(m.awayScore) : null,
+                          status: (m.homeScore !== "" && m.awayScore !== "") ? "finished" : "scheduled",
+                        }))
+                    )
+                    if (rows.length > 0) {
+                      await supabase.from("widget_jadwal").insert(rows)
+                    }
+                    widgetMapRef.current.set(blockId, widgetId)
+                  }
+                } catch (err) {
+                  console.error("Gagal sync widget_jadwal:", err)
+                }
+
                 if (editingBlock?.blockId === blockId) {
-                  // Edit mode: replace existing placeholder dengan yang baru (termasuk updated data-card-html)
                   replaceCardPlaceholderInEditor(blockId, "match", html)
                 } else {
-                  // New insert: embed card HTML di dalam placeholder badge
                   const placeholder = buildCardPlaceholderHtml(blockId, "match", html)
                   editor.chain().focus().insertContent(placeholder).run()
                 }
@@ -2127,15 +2212,49 @@ export function CreateArticleView({ onBack, articleId }: CreateArticleViewProps)
             <GroupStandingsWidget
               editData={editingBlock?.type === "standings" ? editingBlock : null}
               onReset={() => setEditingBlock(null)}
-              onInsert={(html, blockId) => {
+              onInsert={async (html, blockId) => {
                 if (!editor) return
                 cardMapRef.current.set(blockId, html)
                 sessionStorage.setItem(`card-html-${blockId}`, html)
+
+                // ── Sync data ke Supabase widget_klasemen ──
+                try {
+                  const parsed = parseStandingsBlockHtml(html)
+                  if (parsed) {
+                    const existingWidgetId = widgetMapRef.current.get(blockId)
+                    const widgetId = existingWidgetId || crypto.randomUUID()
+
+                    await supabase.from("widget_klasemen").delete().eq("widget_id", widgetId)
+
+                    const rows = parsed.groups.flatMap((group, _gi) =>
+                      group.teams
+                        .filter((t) => t.name)
+                        .map((t, idx) => ({
+                          widget_id: widgetId,
+                          group_label: group.label,
+                          rank: idx + 1,
+                          team_name: t.name,
+                          played: t.played,
+                          won: t.won,
+                          drawn: t.drawn,
+                          lost: t.lost,
+                          gf: t.gf,
+                          ga: t.ga,
+                          points: t.pts,
+                        }))
+                    )
+                    if (rows.length > 0) {
+                      await supabase.from("widget_klasemen").insert(rows)
+                    }
+                    widgetMapRef.current.set(blockId, widgetId)
+                  }
+                } catch (err) {
+                  console.error("Gagal sync widget_klasemen:", err)
+                }
+
                 if (editingBlock?.blockId === blockId) {
-                  // Edit mode: replace existing placeholder dengan yang baru (termasuk updated data-card-html)
                   replaceCardPlaceholderInEditor(blockId, "standings", html)
                 } else {
-                  // New insert: embed card HTML di dalam placeholder badge
                   const placeholder = buildCardPlaceholderHtml(blockId, "standings", html)
                   editor.chain().focus().insertContent(placeholder).run()
                 }

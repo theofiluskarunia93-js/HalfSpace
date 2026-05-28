@@ -2,12 +2,8 @@ import React from "react"
 import { JadwalCard, KlasemenCard } from "@/components/widgets/WidgetCards"
 import type { WidgetType } from "@/components/widgets/WidgetEditModal"
 
-// Regex mencocokkan blok placeholder dari editor
-// Group 1 = type ("JadwalPertandingan" | "KlasemenGrup")
-// Group 2 = semua baris tengah (opsional, tidak dipakai karena data dari DB)
-// Group 3 = widgetId (kode di akhir baris "klik untuk edit")
 const WIDGET_PLACEHOLDER_RE =
-  /(?:📅|🏆)(JadwalPertandingan|KlasemenGrup)WIDGET\s+AKTIF([\s\S]*?)🖇\s*klik untuk edit([a-zA-Z0-9]+)/g
+  /(?:📅|🏆)(JadwalPertandingan|KlasemenGrup)WIDGET\s+AKTIF([\s\S]*?)🖇\s*klik untuk edit([a-zA-Z0-9-]+)(?::([a-zA-Z0-9]+))?/g
 
 interface ParseOptions {
   isAdmin?: boolean
@@ -16,11 +12,7 @@ interface ParseOptions {
   refreshKey?: number
 }
 
-/**
- * Memecah string konten HTML+placeholder menjadi array React node.
- * - Teks/HTML murni dirender via dangerouslySetInnerHTML dalam <span>.
- * - Placeholder dirender menjadi komponen card interaktif.
- */
+
 export function parseWidgetContent(
   rawContent: string,
   options: ParseOptions = {}
@@ -35,6 +27,7 @@ export function parseWidgetContent(
   WIDGET_PLACEHOLDER_RE.lastIndex = 0
 
   while ((match = WIDGET_PLACEHOLDER_RE.exec(rawContent)) !== null) {
+    // Group 3 = widgetId (UUID), group 4 = blockId (opsional, untuk format baru)
     const [fullMatch, rawType, , widgetId] = match
     const matchStart = match.index
 
@@ -49,7 +42,7 @@ export function parseWidgetContent(
       )
     }
 
-    // Render card sesuai tipe
+    // Render card sesuai tipe — widgetId dipakai sebagai key Supabase
     const widgetType: WidgetType =
       rawType === "JadwalPertandingan" ? "jadwal" : "klasemen"
 
