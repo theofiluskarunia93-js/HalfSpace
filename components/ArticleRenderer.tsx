@@ -123,14 +123,30 @@ export function ArticleRenderer({ content, className = "" }: ArticleRendererProp
         "prose-figcaption:text-center prose-figcaption:text-xs",
         "prose-figcaption:text-muted-foreground prose-figcaption:italic",
 
+        // ── Card Design Block (card-design & card-table-block) ────────────
+        "[&_.card-design]:grid [&_.card-design]:gap-4 [&_.card-design]:my-6",
+        "[&_.card-design]:[grid-template-columns:repeat(auto-fill,minmax(260px,1fr))]",
+        "[&_.card-design-card]:rounded-xl [&_.card-design-card]:border [&_.card-design-card]:border-border [&_.card-design-card]:bg-card [&_.card-design-card]:p-4 [&_.card-design-card]:flex [&_.card-design-card]:flex-col [&_.card-design-card]:gap-2",
+        "[&_.card-design-field]:flex [&_.card-design-field]:items-start [&_.card-design-field]:gap-2",
+        "[&_.card-design-label]:text-[0.7rem] [&_.card-design-label]:font-bold [&_.card-design-label]:uppercase [&_.card-design-label]:tracking-wider [&_.card-design-label]:text-primary [&_.card-design-label]:min-w-[80px] [&_.card-design-label]:shrink-0 [&_.card-design-label]:pt-0.5",
+        "[&_.card-design-value]:text-sm [&_.card-design-value]:text-foreground [&_.card-design-value]:leading-relaxed",
+        // card-table-block (alias lama)
+        "[&_.card-table-block]:grid [&_.card-table-block]:gap-4 [&_.card-table-block]:my-6",
+        "[&_.card-table-block]:[grid-template-columns:repeat(auto-fill,minmax(260px,1fr))]",
+        "[&_.card-table-card]:rounded-xl [&_.card-table-card]:border [&_.card-table-card]:border-border [&_.card-table-card]:bg-card [&_.card-table-card]:p-4 [&_.card-table-card]:flex [&_.card-table-card]:flex-col [&_.card-table-card]:gap-2",
+        "[&_.card-table-field]:flex [&_.card-table-field]:items-start [&_.card-table-field]:gap-2",
+        "[&_.card-table-label]:text-[0.7rem] [&_.card-table-label]:font-bold [&_.card-table-label]:uppercase [&_.card-table-label]:tracking-wider [&_.card-table-label]:text-primary [&_.card-table-label]:min-w-[90px] [&_.card-table-label]:shrink-0 [&_.card-table-label]:pt-0.5",
+        "[&_.card-table-value]:text-sm [&_.card-table-value]:text-foreground [&_.card-table-value]:leading-relaxed",
+
         // ── Tabbed Block (MatchCard & GroupStandings) ─────────────────────
         "[&_.tabbed-block]:rounded-xl [&_.tabbed-block]:border [&_.tabbed-block]:border-border [&_.tabbed-block]:overflow-hidden [&_.tabbed-block]:my-6",
         "[&_.tb-nav]:flex [&_.tb-nav]:flex-wrap [&_.tb-nav]:gap-1.5 [&_.tb-nav]:p-2.5 [&_.tb-nav]:bg-secondary/40 [&_.tb-nav]:border-b [&_.tb-nav]:border-border",
         "[&_.tbb]:rounded-md [&_.tbb]:px-3 [&_.tbb]:py-1.5 [&_.tbb]:text-xs [&_.tbb]:font-semibold [&_.tbb]:cursor-pointer [&_.tbb]:border [&_.tbb]:border-border [&_.tbb]:bg-secondary [&_.tbb]:text-muted-foreground [&_.tbb]:transition-colors [&_.tbb]:select-none",
         "[&_.tbb-active]:bg-primary [&_.tbb-active]:border-primary [&_.tbb-active]:!text-black",
         "[&_.tb-content]:p-4 [&_.tb-content]:bg-card",
-        "[&_.tbp]:hidden",
-        "[&_.tbp-active]:block",
+        // PENTING: !important agar tidak di-override prose display:block
+        "[&_.tbp]:!hidden",
+        "[&_.tbp-active]:!block",
 
         // ── Match Card ───────────────────────────────────────────────────
         "[&_.match-block]:my-6",

@@ -50,7 +50,7 @@ export function CMSDashboard({ onLogout, onGoToPublic }: CMSDashboardProps) {
       case "create-article":
         return <CreateArticleView onBack={handleBackFromCreate} />
       case "edit-article":
-        return <CreateArticleView articleId={editArticleId} onBack={handleBackFromCreate} />
+        return <CreateArticleView key={editArticleId ?? "edit"} articleId={editArticleId} onBack={handleBackFromCreate} />
       default:
         return <DashboardView onCreateArticle={handleCreateArticle} />
     }

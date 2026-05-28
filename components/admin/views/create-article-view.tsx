@@ -925,6 +925,22 @@ type EditingBlock =
   | { type: "standings"; blockId: string; title: string; groups: StandingsGroup[] }
   | null
 
+// ─── Helper: build badge placeholder HTML (pure function, no hooks) ─────────────
+// PENTING: TipTap strip data-* attributes dari schema yang tidak dikenal.
+// Solusi: encode blockId & type di class name (card-ref-{id} & card-type-{type})
+// Embed cardHtml sebagai base64 di data-card-html agar data bertahan saat refresh.
+function buildCardPlaceholderHtml(blockId: string, type: "match" | "standings", cardHtml?: string): string {
+  const label = type === "match" ? "📅 Jadwal Pertandingan" : "🏆 Klasemen Grup"
+  const shortId = blockId.slice(0, 6)
+  const encodedHtml = cardHtml ? btoa(unescape(encodeURIComponent(cardHtml))) : ""
+  return (
+    `<p><span class="card-editor-placeholder card-ref-${blockId} card-type-${type}" ` +
+    `data-block-id="${blockId}" data-block-type="${type}" data-card-html="${encodedHtml}" contenteditable="false">` +
+    `${label}&nbsp;<span style="opacity:0.45;font-size:10px;font-weight:400;">[${shortId}]</span>` +
+    `<span style="opacity:0.4;font-size:9px;margin-left:6px;">✎ klik untuk edit</span></span></p>`
+  )
+}
+
 // ─── Main Component ───────────────────────────────────────────────────────────
 
 export function CreateArticleView({ onBack, articleId }: CreateArticleViewProps) {
@@ -1234,17 +1250,16 @@ export function CreateArticleView({ onBack, articleId }: CreateArticleViewProps)
             const type = el.dataset.blockType as "match" | "standings"
             if (!id) return
             // Simpan full HTML ke cardMapRef dan sessionStorage
-            cardMapRef.current.set(id, el.outerHTML)
-            sessionStorage.setItem(`card-html-${id}`, el.outerHTML)
-            // Ganti dengan badge placeholder di editor
-            const label = type === "match" ? "📅 Jadwal Pertandingan" : "🏆 Klasemen Grup"
-            const shortId = id.slice(0, 6)
-            const badge = doc.createElement("p")
-            badge.innerHTML =
-              `<span class="card-editor-placeholder card-ref-${id} card-type-${type}" data-block-id="${id}" data-block-type="${type}" contenteditable="false">` +
-              `${label}&nbsp;<span style="opacity:0.45;font-size:10px;font-weight:400;">[${shortId}]</span>` +
-              `<span style="opacity:0.4;font-size:9px;margin-left:6px;">✎ klik untuk edit</span></span>`
-            el.replaceWith(badge)
+            const fullHtml = el.outerHTML
+            cardMapRef.current.set(id, fullHtml)
+            sessionStorage.setItem(`card-html-${id}`, fullHtml)
+            // Gunakan buildCardPlaceholderHtml agar data-card-html (base64) ikut ter-embed
+            // sehingga data tidak hilang saat browser di-refresh
+            const badgeHtml = buildCardPlaceholderHtml(id, type, fullHtml)
+            const tmp = doc.createElement("div")
+            tmp.innerHTML = badgeHtml
+            const badgeNode = tmp.firstChild
+            if (badgeNode) el.replaceWith(badgeNode)
           })
 
           editorContent = doc.body.innerHTML
@@ -1321,25 +1336,6 @@ export function CreateArticleView({ onBack, articleId }: CreateArticleViewProps)
   const handleTagKeyDown = (e: React.KeyboardEvent<HTMLInputElement>) => {
     if (e.key === "Enter" || e.key === ",") { e.preventDefault(); addTag(tagInput) }
     else if (e.key === "Backspace" && tagInput === "" && tags.length > 0) removeTag(tags[tags.length - 1])
-  }
-
-  // Build a simple editor placeholder badge for a card block
-  // PENTING: TipTap strip data-* attributes dari schema yang tidak dikenal.
-  // Solusi: encode blockId & type langsung di class name (card-ref-{id} & card-type-{type})
-  // sehingga tetap ada setelah editor.getHTML() dan bisa di-resolve saat save.
-  // Embed cardHtml di data-card-html agar tidak bergantung pada cardMapRef / sessionStorage.
-  // Ini solusi paling reliable: data selalu ada di dalam DOM itu sendiri.
-  const buildCardPlaceholderHtml = (blockId: string, type: "match" | "standings", cardHtml?: string): string => {
-    const label = type === "match" ? "📅 Jadwal Pertandingan" : "🏆 Klasemen Grup"
-    const shortId = blockId.slice(0, 6)
-    // Encode cardHtml sebagai base64 agar aman disimpan di attribute HTML
-    const encodedHtml = cardHtml ? btoa(unescape(encodeURIComponent(cardHtml))) : ""
-    return (
-      `<p><span class="card-editor-placeholder card-ref-${blockId} card-type-${type}" ` +
-      `data-block-id="${blockId}" data-block-type="${type}" data-card-html="${encodedHtml}" contenteditable="false">` +
-      `${label}&nbsp;<span style="opacity:0.45;font-size:10px;font-weight:400;">[${shortId}]</span>` +
-      `<span style="opacity:0.4;font-size:9px;margin-left:6px;">✎ klik untuk edit</span></span></p>`
-    )
   }
 
   // Replace card block di editor setelah user selesai edit dan klik Insert/Update
