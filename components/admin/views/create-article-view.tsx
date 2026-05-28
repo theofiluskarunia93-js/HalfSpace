@@ -18,6 +18,7 @@ import {
 import { Button } from "@/components/ui/button"
 import { Input } from "@/components/ui/input"
 import { createClient } from "@/lib/supabase/client"
+import { ArticleBody } from "@/components/article/ArticleBody"
 
 // ─── Types ───────────────────────────────────────────────────────────────────
 
@@ -1119,8 +1120,9 @@ export function CreateArticleView({ onBack, articleId }: CreateArticleViewProps)
   const [showSuggestions,setShowSuggestions]= useState(false)
   const tagInputRef = useRef<HTMLInputElement>(null)
 
-  const [editorTab,   setEditorTab]   = useState<"write" | "preview">("write")
-  const [previewHtml, setPreviewHtml] = useState("")
+  const [editorTab,      setEditorTab]      = useState<"write" | "preview">("write")
+  // previewContent: konten dengan marker widget (format "save") untuk dirender via ArticleBody
+  const [previewContent, setPreviewContent] = useState("")
   const cardMapRef = useRef<Map<string, string>>(new Map())
   // widgetMapRef: blockId → widgetId (UUID dari Supabase widget_jadwal/widget_klasemen)
   // Terisi saat onInsert dipanggil (widget baru/edit), atau saat load artikel edit mode
@@ -1444,42 +1446,11 @@ export function CreateArticleView({ onBack, articleId }: CreateArticleViewProps)
         // Set content setelah cardMapRef sudah ter-populate
         editor.commands.setContent(editorContent || "")
         // Jika sedang di tab preview saat artikel di-load, paksa refresh preview
-        // agar card HTML ter-resolve dari cardMapRef yang baru saja di-populate
+        // agar widget marker ter-resolve dari widgetMapRef yang baru saja di-populate
         setTimeout(() => {
           const raw = editor.getHTML()
           const withSpacing = raw.replace(/<p><\/p>/g, "<p>&nbsp;</p>")
-          // Trigger resolveCards — cardMapRef sudah terisi saat ini
-          const resolved = (() => {
-            let r = withSpacing.replace(/\[\[CARD:([a-z0-9]+)\]\]/g, (_, id) => {
-              return (window as any).__cardMapRef?.get(id) ?? ""
-            })
-            try {
-              const parser = new DOMParser()
-              const doc = parser.parseFromString(r, "text/html")
-              doc.querySelectorAll<HTMLElement>(".card-editor-placeholder").forEach((el) => {
-                let bId: string | undefined
-                el.classList.forEach((cls) => { if (cls.startsWith("card-ref-")) bId = cls.replace("card-ref-", "") })
-                if (!bId) bId = el.dataset.blockId
-                if (!bId) { el.closest("p")?.remove() ?? el.remove(); return }
-                const cardHtml = cardMapRef.current.get(bId)
-                if (cardHtml) {
-                  const tmp = parser.parseFromString(cardHtml, "text/html")
-                  const newNode = tmp.body.firstChild
-                  const parentP = el.closest("p")
-                  if (parentP && newNode) parentP.replaceWith(newNode)
-                  else if (newNode) el.replaceWith(newNode)
-                  else el.remove()
-                } else {
-                  const parentP = el.closest("p")
-                  if (parentP) parentP.remove()
-                  else el.remove()
-                }
-              })
-              r = doc.body.innerHTML
-            } catch { /* noop */ }
-            return r
-          })()
-          setPreviewHtml(resolved)
+          setPreviewContent(resolveCards(withSpacing, "save"))
         }, 150)
       }
       const { data: articleTags } = await supabase
@@ -1641,7 +1612,7 @@ export function CreateArticleView({ onBack, articleId }: CreateArticleViewProps)
     const updatePreview = () => {
       const raw = editor.getHTML()
       const withSpacing = raw.replace(/<p><\/p>/g, "<p>&nbsp;</p>")
-      setPreviewHtml(resolveCards(withSpacing, "preview"))
+      setPreviewContent(resolveCards(withSpacing, "save"))
     }
     updatePreview()
     // Subscribe ke perubahan content saat di tab preview
@@ -2032,113 +2003,18 @@ export function CreateArticleView({ onBack, articleId }: CreateArticleViewProps)
               </>
             ) : (
               <div className="min-h-[540px] bg-card">
-                {!previewHtml.trim() ? (
+                {!previewContent.trim() ? (
                   <div className="flex h-60 items-center justify-center text-sm text-muted-foreground">
                     Belum ada konten untuk dipreview.
                   </div>
                 ) : (
-                  <div
-                    className={[
-                      "px-10 py-8",
-                      "prose prose-invert prose-lg max-w-none",
-                      "prose-p:text-foreground/90 prose-p:leading-[1.85]",
-                      "prose-headings:text-foreground prose-headings:font-semibold",
-                      "prose-h1:text-3xl prose-h1:font-extrabold prose-h1:mt-8 prose-h1:mb-4",
-                      "prose-h2:text-2xl prose-h2:font-bold prose-h2:mt-7 prose-h2:mb-3 prose-h2:border-b prose-h2:pb-3",
-                      "prose-h3:text-xl prose-h3:font-bold prose-h3:mt-6 prose-h3:mb-2",
-                      "prose-a:text-[#39FF14] prose-a:no-underline hover:prose-a:underline prose-a:font-semibold",
-                      "prose-strong:text-foreground",
-                      "prose-blockquote:border-l-2 prose-blockquote:border-l-primary",
-                      "prose-blockquote:bg-secondary/60 prose-blockquote:rounded-r-lg prose-blockquote:not-italic",
-                      "prose-code:bg-secondary prose-code:text-primary prose-code:rounded prose-code:px-1.5",
-                      "prose-code:before:content-none prose-code:after:content-none",
-                      "prose-img:rounded-xl prose-img:w-full",
-                      "prose-table:w-full prose-table:border-collapse prose-table:my-6 prose-table:text-sm",
-                      "prose-th:border prose-th:border-border prose-th:bg-secondary/80 prose-th:px-4 prose-th:py-2.5 prose-th:font-semibold prose-th:text-foreground prose-th:text-left",
-                      "prose-td:border prose-td:border-border prose-td:px-4 prose-td:py-2.5 prose-td:text-foreground/80 prose-td:align-top",
-                      "[&_tbody_tr:nth-child(even)]:bg-secondary/30",
-                      "prose-hr:border-border",
-                      // match-card styles
-                      "[&_.match-block]:my-6",
-                      "[&_.match-card-grid]:grid [&_.match-card-grid]:gap-4 [&_.match-card-grid]:my-4 [&_.match-card-grid]:grid-cols-1 sm:[&_.match-card-grid]:grid-cols-2",
-                      "[&_.match-card]:rounded-xl [&_.match-card]:border [&_.match-card]:border-border [&_.match-card]:bg-secondary/30 [&_.match-card]:p-4 [&_.match-card]:flex [&_.match-card]:flex-col [&_.match-card]:gap-2.5",
-                      "[&_.match-card-top]:flex [&_.match-card-top]:items-center [&_.match-card-top]:justify-between",
-                      "[&_.match-card-badge]:rounded-full [&_.match-card-badge]:bg-primary [&_.match-card-badge]:text-[10px] [&_.match-card-badge]:font-extrabold [&_.match-card-badge]:tracking-wide [&_.match-card-badge]:text-black [&_.match-card-badge]:px-2.5 [&_.match-card-badge]:py-0.5",
-                      "[&_.match-card-date]:text-xs [&_.match-card-date]:text-muted-foreground",
-                      "[&_.match-card-teams]:flex [&_.match-card-teams]:items-center [&_.match-card-teams]:gap-2 [&_.match-card-teams]:flex-wrap",
-                      "[&_.match-card-team]:text-base [&_.match-card-team]:font-bold [&_.match-card-team]:text-foreground",
-                      "[&_.match-card-vs]:text-sm [&_.match-card-vs]:font-bold [&_.match-card-vs]:text-primary",
-                      "[&_.match-card-score]:flex [&_.match-card-score]:items-center [&_.match-card-score]:gap-1 [&_.match-card-score]:rounded-md [&_.match-card-score]:bg-primary/10 [&_.match-card-score]:px-2.5 [&_.match-card-score]:py-0.5 [&_.match-card-score]:text-base [&_.match-card-score]:font-extrabold [&_.match-card-score]:text-primary [&_.match-card-score]:tabular-nums",
-                      "[&_.match-card-score-sep]:text-muted-foreground [&_.match-card-score-sep]:font-normal",
-                      "[&_.match-card-bottom]:flex [&_.match-card-bottom]:items-center [&_.match-card-bottom]:justify-between [&_.match-card-bottom]:flex-wrap [&_.match-card-bottom]:gap-2",
-                      "[&_.match-card-time]:rounded [&_.match-card-time]:border [&_.match-card-time]:border-border [&_.match-card-time]:bg-black/30 [&_.match-card-time]:px-2 [&_.match-card-time]:py-1 [&_.match-card-time]:text-xs [&_.match-card-time]:font-bold [&_.match-card-time]:text-foreground",
-                      "[&_.match-card-stadium]:text-xs [&_.match-card-stadium]:text-muted-foreground",
-                      // tabbed-block nav styles
-                      "[&_.tabbed-block]:rounded-xl [&_.tabbed-block]:border [&_.tabbed-block]:border-border [&_.tabbed-block]:overflow-hidden [&_.tabbed-block]:my-6",
-                      "[&_.tb-nav]:flex [&_.tb-nav]:flex-wrap [&_.tb-nav]:gap-1.5 [&_.tb-nav]:p-2.5 [&_.tb-nav]:bg-secondary/40 [&_.tb-nav]:border-b [&_.tb-nav]:border-border",
-                      "[&_.tbb]:rounded-md [&_.tbb]:px-3 [&_.tbb]:py-1 [&_.tbb]:text-xs [&_.tbb]:font-semibold [&_.tbb]:cursor-pointer [&_.tbb]:border [&_.tbb]:border-border [&_.tbb]:bg-secondary [&_.tbb]:text-muted-foreground [&_.tbb]:transition-colors",
-                      "[&_.tbb-active]:bg-primary [&_.tbb-active]:border-primary [&_.tbb-active]:text-black",
-                      "[&_.tb-content]:p-4 [&_.tb-content]:bg-card",
-                      "[&_.tbp]:hidden",
-                      "[&_.tbp-active]:block",
-                      // group standings styles
-                      "[&_.group-standings-block]:my-6",
-                      "[&_.gs-header]:flex [&_.gs-header]:items-center [&_.gs-header]:gap-2 [&_.gs-header]:px-4 [&_.gs-header]:py-3 [&_.gs-header]:border-b [&_.gs-header]:border-border [&_.gs-header]:bg-secondary/20",
-                      "[&_.gs-header-icon]:text-lg",
-                      "[&_.gs-header-title]:font-bold [&_.gs-header-title]:text-foreground [&_.gs-header-title]:text-sm [&_.gs-header-title]:flex-1",
-                      "[&_.gs-header-sub]:text-xs [&_.gs-header-sub]:text-muted-foreground",
-                      "[&_.gs-table-wrap]:overflow-x-auto",
-                      "[&_.gs-table]:w-full [&_.gs-table]:text-xs [&_.gs-table]:border-collapse",
-                      "[&_.gs-thead-row]:border-b [&_.gs-thead-row]:border-border",
-                      "[&_.gs-th]:px-2 [&_.gs-th]:py-2.5 [&_.gs-th]:text-[10px] [&_.gs-th]:font-bold [&_.gs-th]:uppercase [&_.gs-th]:tracking-wider [&_.gs-th]:text-muted-foreground",
-                      "[&_.gs-th-rank]:text-left [&_.gs-th-rank]:pl-3",
-                      "[&_.gs-th-team]:text-left",
-                      "[&_.gs-th-num]:text-center",
-                      "[&_.gs-th-pts]:text-center [&_.gs-th-pts]:text-primary",
-                      "[&_.gs-th-form]:text-center",
-                      "[&_.gs-row]:border-b [&_.gs-row]:border-border/40 [&_.gs-row]:transition-colors hover:[&_.gs-row]:bg-secondary/30",
-                      "[&_.gs-td]:px-2 [&_.gs-td]:py-2",
-                      "[&_.gs-td-rank]:pl-3",
-                      "[&_.gs-td-num]:text-center [&_.gs-td-num]:text-muted-foreground",
-                      "[&_.gs-td-pts]:text-center [&_.gs-td-pts]:font-bold [&_.gs-td-pts]:text-foreground",
-                      "[&_.gs-td-form]:text-center",
-                      "[&_.gs-td-team]:min-w-[120px]",
-                      "[&_.gs-rank]:flex [&_.gs-rank]:h-5 [&_.gs-rank]:w-5 [&_.gs-rank]:items-center [&_.gs-rank]:justify-center [&_.gs-rank]:rounded [&_.gs-rank]:text-[10px] [&_.gs-rank]:font-bold",
-                      "[&_.gs-rank-qualify]:bg-primary/20 [&_.gs-rank-qualify]:text-primary [&_.gs-rank-qualify]:border-l-2 [&_.gs-rank-qualify]:border-l-primary",
-                      "[&_.gs-rank-candidate]:bg-yellow-500/20 [&_.gs-rank-candidate]:text-yellow-400",
-                      "[&_.gs-rank-out]:text-muted-foreground",
-                      "[&_.gs-flag]:inline-flex [&_.gs-flag]:items-center [&_.gs-flag]:justify-center [&_.gs-flag]:rounded [&_.gs-flag]:bg-secondary [&_.gs-flag]:px-1 [&_.gs-flag]:text-[10px] [&_.gs-flag]:font-bold [&_.gs-flag]:text-muted-foreground [&_.gs-flag]:mr-1.5 [&_.gs-flag]:shrink-0",
-                      "[&_.gs-team-name]:font-medium [&_.gs-team-name]:text-foreground",
-                      "[&_.gs-form]:flex [&_.gs-form]:gap-0.5 [&_.gs-form]:justify-center",
-                      "[&_.gs-form-badge]:flex [&_.gs-form-badge]:h-4 [&_.gs-form-badge]:w-4 [&_.gs-form-badge]:items-center [&_.gs-form-badge]:justify-center [&_.gs-form-badge]:rounded-full [&_.gs-form-badge]:text-[8px] [&_.gs-form-badge]:font-bold",
-                      "[&_.gs-form-w]:bg-green-500/20 [&_.gs-form-w]:text-green-400",
-                      "[&_.gs-form-d]:bg-yellow-500/20 [&_.gs-form-d]:text-yellow-400",
-                      "[&_.gs-form-l]:bg-destructive/20 [&_.gs-form-l]:text-destructive",
-                      "[&_.gs-legend]:flex [&_.gs-legend]:gap-4 [&_.gs-legend]:px-3 [&_.gs-legend]:py-2 [&_.gs-legend]:border-t [&_.gs-legend]:border-border/40",
-                      "[&_.gs-legend-item]:text-[10px] [&_.gs-legend-item]:text-muted-foreground",
-                      "[&_.gs-legend-qualify]:text-primary",
-                      "[&_.gs-legend-candidate]:text-yellow-400",
-                    ].join(" ")}
-                    dangerouslySetInnerHTML={{ __html: previewHtml }}
-                  ref={(el) => {
-                    if (!el) return
-                    setTimeout(() => {
-                      el.querySelectorAll<HTMLElement>(".tabbed-block").forEach((block) => {
-                        if (block.dataset.tabInit) return
-                        block.dataset.tabInit = "1"
-                        block.querySelectorAll<HTMLElement>(".tbb").forEach((btn) => {
-                          btn.addEventListener("click", () => {
-                            const idx = btn.dataset.tab
-                            block.querySelectorAll(".tbb").forEach((b) => b.classList.remove("tbb-active"))
-                            block.querySelectorAll(".tbp").forEach((p) => p.classList.remove("tbp-active"))
-                            btn.classList.add("tbb-active")
-                            block.querySelector(`.tbp[data-panel="${idx}"]`)?.classList.add("tbp-active")
-                          })
-                        })
-                      })
-                    }, 50)
-                  }}
-                  />
+                  <div className="px-10 py-8">
+                    <ArticleBody
+                      content={previewContent}
+                      isAdmin={true}
+                      className="prose-lg"
+                    />
+                  </div>
                 )}
               </div>
             )}

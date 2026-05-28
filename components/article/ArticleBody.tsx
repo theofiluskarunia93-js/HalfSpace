@@ -12,6 +12,11 @@ interface ArticleBodyProps {
   className?: string
 }
 
+// Deteksi apakah konten mengandung marker widget
+function hasWidget(content: string): boolean {
+  return /(?:📅|🏆)(JadwalPertandingan|KlasemenGrup)WIDGET/.test(content)
+}
+
 export function ArticleBody({
   content,
   isAdmin = false,
@@ -32,21 +37,28 @@ export function ArticleBody({
   }
 
   function handleSaved() {
-    // Paksa semua card widget re-fetch data terbaru dari Supabase
     setRefreshKey((k) => k + 1)
   }
 
-  const nodes = parseWidgetContent(content, {
-    isAdmin,
-    onEdit: isAdmin ? handleEdit : undefined,
-    refreshKey,
-  })
+  // Jika konten mengandung widget, gunakan parseWidgetContent agar
+  // widget dirender sebagai React component (fetch data dari Supabase).
+  // Jika tidak ada widget, render langsung via dangerouslySetInnerHTML
+  // (lebih efisien dan tidak perlu parsing regex).
+  const containsWidget = hasWidget(content)
 
   return (
     <>
       {/* Konten artikel */}
       <div className={`prose prose-invert max-w-none ${className}`}>
-        {nodes}
+        {containsWidget ? (
+          parseWidgetContent(content, {
+            isAdmin,
+            onEdit: isAdmin ? handleEdit : undefined,
+            refreshKey,
+          })
+        ) : (
+          <span dangerouslySetInnerHTML={{ __html: content }} />
+        )}
       </div>
 
       {/* Modal edit widget — hanya muncul jika isAdmin dan ada widgetId */}
