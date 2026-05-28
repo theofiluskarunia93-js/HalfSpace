@@ -925,19 +925,158 @@ type EditingBlock =
   | { type: "standings"; blockId: string; title: string; groups: StandingsGroup[] }
   | null
 
-// ─── Helper: build badge placeholder HTML (pure function, no hooks) ─────────────
-// PENTING: TipTap strip data-* attributes dari schema yang tidak dikenal.
-// Solusi: encode blockId & type di class name (card-ref-{id} & card-type-{type})
-// Embed cardHtml sebagai base64 di data-card-html agar data bertahan saat refresh.
+// ─── Helper: build beautiful UI Card placeholder HTML ──────────────────────────
+// Menghasilkan Card UI cantik (putih + neon green) yang:
+// 1. Langsung terlihat indah di editor, preview, dan halaman artikel publik
+// 2. Tetap menyimpan class card-ref-* & card-type-* agar logika edit/click tetap berjalan
+// 3. Embed cardHtml sebagai base64 di data-card-html agar data bertahan saat refresh
 function buildCardPlaceholderHtml(blockId: string, type: "match" | "standings", cardHtml?: string): string {
-  const label = type === "match" ? "📅 Jadwal Pertandingan" : "🏆 Klasemen Grup"
-  const shortId = blockId.slice(0, 6)
   const encodedHtml = cardHtml ? btoa(unescape(encodeURIComponent(cardHtml))) : ""
+  const isMatch = type === "match"
+
+  // Parse matches atau standings dari cardHtml untuk preview di dalam card
+  let innerPreview = ""
+  if (cardHtml) {
+    try {
+      const parser = new DOMParser()
+      const doc = parser.parseFromString(cardHtml, "text/html")
+
+      if (isMatch) {
+        // Ambil semua match-card untuk preview ringkas
+        const matchCards = Array.from(doc.querySelectorAll(".match-card"))
+        const tabBtns = Array.from(doc.querySelectorAll(".tbb"))
+        const groupLabels = tabBtns.map(b => b.textContent?.trim()).filter(Boolean)
+        const totalMatches = matchCards.length
+
+        // Buat preview rows pertandingan (max 3)
+        const rows = matchCards.slice(0, 3).map((card) => {
+          const home = card.querySelector(".match-card-team")?.textContent?.trim() || "?"
+          const away = Array.from(card.querySelectorAll(".match-card-team"))[1]?.textContent?.trim() || "?"
+          const scoreEl = card.querySelector(".match-card-score")
+          const vsEl = card.querySelector(".match-card-vs")
+          const date = card.querySelector(".match-card-date")?.textContent?.trim() || ""
+          const badge = card.querySelector(".match-card-badge")?.textContent?.trim() || ""
+          const hasScore = !!scoreEl
+          const sep = scoreEl?.querySelector(".match-card-score-sep")
+          const scoreText = sep
+            ? scoreEl!.textContent!.replace(sep.textContent || "", "–").trim()
+            : scoreEl?.textContent?.trim() || "vs"
+          return `<div style="display:flex;align-items:center;justify-content:space-between;padding:6px 0;border-bottom:1px solid rgba(57,255,20,0.12);">
+  <div style="display:flex;align-items:center;gap:6px;min-width:0;">
+    <span style="background:rgba(57,255,20,0.15);color:#39FF14;font-size:9px;font-weight:800;padding:1px 5px;border-radius:20px;white-space:nowrap;">${badge}</span>
+    <span style="color:#111;font-size:11px;font-weight:700;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;max-width:80px;">${home}</span>
+  </div>
+  <span style="background:${hasScore ? "rgba(57,255,20,0.18)" : "transparent"};color:${hasScore ? "#0a7a00" : "#666"};font-size:11px;font-weight:900;padding:2px 8px;border-radius:6px;white-space:nowrap;border:1px solid ${hasScore ? "rgba(57,255,20,0.4)" : "transparent"};">${hasScore ? scoreText : "vs"}</span>
+  <span style="color:#111;font-size:11px;font-weight:700;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;max-width:80px;text-align:right;">${away}</span>
+</div>`
+        }).join("")
+
+        const more = totalMatches > 3 ? `<div style="text-align:center;padding-top:4px;color:#39FF14;font-size:10px;font-weight:700;">+${totalMatches - 3} pertandingan lainnya</div>` : ""
+        const tabPills = groupLabels.length > 1
+          ? `<div style="display:flex;gap:4px;flex-wrap:wrap;margin-bottom:8px;">${groupLabels.map((g, i) => `<span style="background:${i === 0 ? "#39FF14" : "rgba(57,255,20,0.12)"};color:${i === 0 ? "#111" : "#39FF14"};font-size:9px;font-weight:800;padding:2px 7px;border-radius:20px;">${g}</span>`).join("")}</div>`
+          : ""
+        innerPreview = tabPills + rows + more
+      } else {
+        // Standings: tampilkan tabel ringkas
+        const tabBtns = Array.from(doc.querySelectorAll(".tbb"))
+        const groupLabels = tabBtns.map(b => b.textContent?.trim()).filter(Boolean)
+        const firstPanel = doc.querySelector(".tbp")
+        const rows = firstPanel ? Array.from(firstPanel.querySelectorAll(".gs-row")).slice(0, 4) : []
+
+        const tabPills = groupLabels.length > 1
+          ? `<div style="display:flex;gap:4px;flex-wrap:wrap;margin-bottom:8px;">${groupLabels.map((g, i) => `<span style="background:${i === 0 ? "#39FF14" : "rgba(57,255,20,0.12)"};color:${i === 0 ? "#111" : "#39FF14"};font-size:9px;font-weight:800;padding:2px 7px;border-radius:20px;">${g}</span>`).join("")}</div>`
+          : ""
+
+        const tableRows = rows.map((row, i) => {
+          const name = row.querySelector(".gs-team-name")?.textContent?.trim() || "—"
+          const code = row.querySelector(".gs-flag")?.textContent?.trim() || ""
+          const pts = row.querySelector(".gs-td-pts")?.textContent?.trim() || "0"
+          const played = Array.from(row.querySelectorAll(".gs-td-num"))[0]?.textContent?.trim() || "0"
+          const qualClass = i < 2 ? "qualify" : i === 2 ? "candidate" : "out"
+          const rankColor = qualClass === "qualify" ? "#39FF14" : qualClass === "candidate" ? "#f59e0b" : "#888"
+          const rankBg = qualClass === "qualify" ? "rgba(57,255,20,0.15)" : qualClass === "candidate" ? "rgba(245,158,11,0.15)" : "transparent"
+          return `<div style="display:flex;align-items:center;justify-content:space-between;padding:5px 0;border-bottom:1px solid rgba(57,255,20,0.1);">
+  <div style="display:flex;align-items:center;gap:6px;">
+    <span style="display:inline-flex;align-items:center;justify-content:center;width:18px;height:18px;border-radius:4px;background:${rankBg};color:${rankColor};font-size:9px;font-weight:800;">${i + 1}</span>
+    <span style="background:rgba(0,0,0,0.07);color:#555;font-size:9px;font-weight:700;padding:1px 4px;border-radius:3px;">${code}</span>
+    <span style="color:#111;font-size:11px;font-weight:600;">${name}</span>
+  </div>
+  <div style="display:flex;align-items:center;gap:8px;">
+    <span style="color:#888;font-size:10px;">${played}M</span>
+    <span style="background:rgba(57,255,20,0.18);color:#0a7a00;font-size:11px;font-weight:900;padding:1px 7px;border-radius:6px;border:1px solid rgba(57,255,20,0.35);">${pts}</span>
+  </div>
+</div>`
+        }).join("")
+
+        const headerTitle = doc.querySelector(".gs-header-title")?.textContent?.trim() || "Klasemen Fase Grup"
+        innerPreview = tabPills + tableRows
+      }
+    } catch {
+      innerPreview = ""
+    }
+  }
+
+  const icon = isMatch ? "📅" : "🏆"
+  const title = isMatch ? "Jadwal Pertandingan" : "Klasemen Grup"
+  const accentColor = "#39FF14"
+  const shortId = blockId.slice(0, 6)
+
+  const editHint = `<div style="display:flex;align-items:center;justify-content:flex-end;gap:4px;padding-top:6px;">
+  <span style="color:#39FF14;font-size:9px;opacity:0.7;">✎ klik untuk edit</span>
+  <span style="background:rgba(57,255,20,0.1);color:#39FF14;font-size:8px;font-weight:700;padding:1px 5px;border-radius:10px;opacity:0.6;">${shortId}</span>
+</div>`
+
+  const emptyState = `<div style="text-align:center;padding:12px 0;color:#aaa;font-size:11px;">Klik untuk menambahkan data</div>`
+
   return (
-    `<p><span class="card-editor-placeholder card-ref-${blockId} card-type-${type}" ` +
-    `data-block-id="${blockId}" data-block-type="${type}" data-card-html="${encodedHtml}" contenteditable="false">` +
-    `${label}&nbsp;<span style="opacity:0.45;font-size:10px;font-weight:400;">[${shortId}]</span>` +
-    `<span style="opacity:0.4;font-size:9px;margin-left:6px;">✎ klik untuk edit</span></span></p>`
+    `<div class="widget-card-block card-editor-placeholder card-ref-${blockId} card-type-${type}" ` +
+    `data-block-id="${blockId}" data-block-type="${type}" data-card-html="${encodedHtml}" contenteditable="false" ` +
+    `style="` +
+      `background:#ffffff;` +
+      `border:1.5px solid rgba(57,255,20,0.45);` +
+      `border-radius:14px;` +
+      `overflow:hidden;` +
+      `margin:20px 0;` +
+      `box-shadow:0 0 0 1px rgba(57,255,20,0.1),0 4px 24px rgba(57,255,20,0.08),0 1px 4px rgba(0,0,0,0.08);` +
+      `cursor:pointer;` +
+      `transition:box-shadow 0.2s,border-color 0.2s;` +
+      `font-family:inherit;` +
+    `">` +
+    // Header bar
+    `<div style="` +
+      `background:linear-gradient(135deg,#f8fff8 0%,#f0fff0 100%);` +
+      `border-bottom:1.5px solid rgba(57,255,20,0.25);` +
+      `padding:10px 14px;` +
+      `display:flex;align-items:center;justify-content:space-between;` +
+    `">` +
+      `<div style="display:flex;align-items:center;gap:8px;">` +
+        `<span style="font-size:16px;line-height:1;">${icon}</span>` +
+        `<span style="font-size:12px;font-weight:800;color:#111;letter-spacing:-0.2px;">${title}</span>` +
+        `<span style="` +
+          `background:#39FF14;color:#111;` +
+          `font-size:8px;font-weight:900;` +
+          `padding:1px 6px;border-radius:20px;` +
+          `letter-spacing:0.5px;text-transform:uppercase;` +
+        `">WIDGET</span>` +
+      `</div>` +
+      `<div style="display:flex;align-items:center;gap:6px;">` +
+        `<div style="` +
+          `width:6px;height:6px;border-radius:50%;` +
+          `background:${accentColor};` +
+          `box-shadow:0 0 6px ${accentColor};` +
+        `"></div>` +
+        `<span style="color:#39FF14;font-size:9px;font-weight:700;letter-spacing:0.3px;">AKTIF</span>` +
+      `</div>` +
+    `</div>` +
+    // Body content
+    `<div style="padding:10px 14px 4px;">` +
+      (innerPreview ? innerPreview : emptyState) +
+    `</div>` +
+    // Footer edit hint
+    `<div style="padding:2px 14px 8px;">` +
+      editHint +
+    `</div>` +
+    `</div>`
   )
 }
 
@@ -1056,12 +1195,7 @@ export function CreateArticleView({ onBack, articleId }: CreateArticleViewProps)
           // ── group standings styles ──
           "[&_.group-standings-block]:my-4 [&_.group-standings-block]:cursor-pointer [&_.group-standings-block]:select-none",
           // ── card-editor-placeholder badge styles ──
-          "[&_.card-editor-placeholder]:inline-flex [&_.card-editor-placeholder]:items-center [&_.card-editor-placeholder]:gap-1.5",
-          "[&_.card-editor-placeholder]:my-2 [&_.card-editor-placeholder]:cursor-pointer [&_.card-editor-placeholder]:select-none",
-          "[&_.card-editor-placeholder]:rounded-md [&_.card-editor-placeholder]:border [&_.card-editor-placeholder]:border-primary/50",
-          "[&_.card-editor-placeholder]:bg-primary/10 [&_.card-editor-placeholder]:px-3 [&_.card-editor-placeholder]:py-1.5",
-          "[&_.card-editor-placeholder]:text-xs [&_.card-editor-placeholder]:font-bold [&_.card-editor-placeholder]:text-primary",
-          "hover:[&_.card-editor-placeholder]:bg-primary/20 hover:[&_.card-editor-placeholder]:border-primary",
+          "// widget-card-block uses inline styles — no Tailwind overrides needed",
           "[&_.gs-header]:flex [&_.gs-header]:items-center [&_.gs-header]:gap-2 [&_.gs-header]:px-3 [&_.gs-header]:py-2.5 [&_.gs-header]:border-b [&_.gs-header]:border-border [&_.gs-header]:bg-secondary/20",
           "[&_.gs-header-icon]:text-base",
           "[&_.gs-header-title]:font-bold [&_.gs-header-title]:text-foreground [&_.gs-header-title]:text-xs [&_.gs-header-title]:flex-1",
@@ -1233,6 +1367,11 @@ export function CreateArticleView({ onBack, articleId }: CreateArticleViewProps)
         setIsEditorChoice(data.is_editor_choice || false)
         const raw = data.content || ""
 
+        // ── Gunakan card_data JSON jika tersedia (artikel baru / sudah di-save ulang) ──
+        // Fallback ke HTML parsing untuk artikel lama yang belum punya card_data.
+        const savedCardData: Record<string, any> = data.card_data || {}
+        const hasJsonData = Object.keys(savedCardData).length > 0
+
         // Convert all existing full HTML card blocks to badge placeholders for editor display
         // Full HTML tetap disimpan di cardMapRef, akan di-resolve kembali saat save
         let editorContent = raw
@@ -1249,8 +1388,30 @@ export function CreateArticleView({ onBack, articleId }: CreateArticleViewProps)
             const id = el.dataset.blockId
             const type = el.dataset.blockType as "match" | "standings"
             if (!id) return
+
+            let fullHtml: string
+
+            if (hasJsonData && savedCardData[id]) {
+              // ── PATH UTAMA: Rebuild HTML dari JSON (reliable, tidak bergantung struktur HTML lama) ──
+              try {
+                const json = savedCardData[id]
+                if (json.type === "match") {
+                  fullHtml = json.tabs?.length > 1
+                    ? buildMatchTabbedHtml(json.tabs, id)
+                    : `<div class="match-block" data-block-id="${id}" data-block-type="match">${renderMatchTabHtml(json.tabs[0])}</div>`
+                } else {
+                  fullHtml = buildGroupStandingsHtml(json.groups, id, json.title)
+                }
+              } catch {
+                // Jika rebuild dari JSON gagal, fallback ke HTML lama
+                fullHtml = el.outerHTML
+              }
+            } else {
+              // ── FALLBACK: Pakai HTML lama (backward-compat untuk artikel sebelum migrasi) ──
+              fullHtml = el.outerHTML
+            }
+
             // Simpan full HTML ke cardMapRef dan sessionStorage
-            const fullHtml = el.outerHTML
             cardMapRef.current.set(id, fullHtml)
             sessionStorage.setItem(`card-html-${id}`, fullHtml)
             // Gunakan buildCardPlaceholderHtml agar data-card-html (base64) ikut ter-embed
@@ -1563,8 +1724,30 @@ export function CreateArticleView({ onBack, articleId }: CreateArticleViewProps)
       setMessage({ type: "error", text: "Widget kartu tidak dapat disimpan karena data tidak ditemukan. Klik badge widget di editor lalu klik 'Update Card' di sidebar, kemudian simpan kembali." })
       return
     }
+
+    // ── Kumpulkan card_data JSON dari cardMapRef ──────────────────────────────
+    // Menyimpan data widget dalam bentuk JSON terstruktur agar bisa diedit kembali
+    // tanpa harus parse HTML (lebih reliable daripada DOM parsing).
+    const cardData: Record<string, any> = {}
+    cardMapRef.current.forEach((cardHtml, blockId) => {
+      try {
+        const tmpDoc = new DOMParser().parseFromString(cardHtml, "text/html")
+        const root = tmpDoc.body.firstElementChild as HTMLElement | null
+        const blockType = root?.dataset.blockType
+        if (blockType === "match") {
+          const parsed = parseMatchBlockHtml(cardHtml)
+          if (parsed) cardData[blockId] = { type: "match", tabs: parsed }
+        } else if (blockType === "standings") {
+          const parsed = parseStandingsBlockHtml(cardHtml)
+          if (parsed) cardData[blockId] = { type: "standings", ...parsed }
+        }
+      } catch { /* skip block yang gagal di-parse */ }
+    })
+    // ─────────────────────────────────────────────────────────────────────────
+
     const payload = {
       title, slug: generateSlug(title), excerpt, content: htmlContent,
+      card_data: cardData,
       category_id: category || null, featured_image_url: featuredImageUrl,
       meta_title: metaTitle || null, meta_description: metaDescription || null,
       status: publish ? "published" : "draft",
