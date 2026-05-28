@@ -1001,23 +1001,11 @@ export function ArticleDetail({ articleId }: ArticleDetailProps) {
                   </figure>
                 )}
 
-                {/* ── Article content ── */}
-                {hasWidgetPlaceholder(processedContent || article.content || "") ? (
-                  // Konten mengandung widget → ArticleBody parser + card interaktif
-                  <ArticleBody
-                    content={processedContent || article.content || ""}
-                    isAdmin={false}
-                    className={contentClassName}
-                  />
-                ) : (
-                  // Konten biasa → dangerouslySetInnerHTML seperti semula
-                  <div
-                    className={contentClassName}
-                    dangerouslySetInnerHTML={{ __html: processedContent || article.content || "" }}
-                    itemProp="articleBody"
-                    ref={contentRef}
-                  />
-                )}
+                <ArticleBody
+                  content={processedContent || article.content || ""}
+                  isAdmin={false}
+                  className={contentClassName}
+                />
 
                 {/* Share — bottom */}
                 <div className="mt-8 border-t pt-6 border-border">
