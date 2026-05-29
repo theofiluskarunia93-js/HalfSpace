@@ -694,17 +694,8 @@ export function ArticleDetail({ articleId }: ArticleDetailProps) {
   // rawContent: konten asli dari DB, dipakai untuk ArticleBody agar
   // parseWidgetContent bisa mendeteksi marker widget tanpa terdistorsi DOMParser
   const [rawContent, setRawContent] = useState("")
-  // isAdmin: true jika ada sesi login (akses ke /admin) — munculkan tombol edit widget
-  const [isAdmin, setIsAdmin] = useState(false)
   const contentRef = useRef<HTMLDivElement>(null)
   const supabase = createClient()
-
-  // Cek session Supabase — jika ada user login, tampilkan tombol edit widget
-  useEffect(() => {
-    supabase.auth.getSession().then(({ data }) => {
-      setIsAdmin(!!data.session?.user)
-    })
-  }, [])
 
   // ── Inisialisasi tab interaktif (hanya untuk konten non-widget) ──────────
   useEffect(() => {
@@ -1002,7 +993,7 @@ export function ArticleDetail({ articleId }: ArticleDetailProps) {
 
                 <ArticleBody
                   content={rawContent || processedContent || article.content || ""}
-                  isAdmin={isAdmin}
+                  isAdmin={false}
                   className={contentClassName}
                 />
 

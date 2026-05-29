@@ -190,6 +190,22 @@ export function CreateArticleView({ onBack, articleId }: CreateArticleViewProps)
   const [editWidgetId,   setEditWidgetId]   = useState<string | null>(null)
   const [editWidgetType, setEditWidgetType] = useState<WidgetType | null>(null)
 
+  // ── Pre-loaded widgets (untuk artikel lama dari Posts → Edit) ──────────────
+  // Diisi setelah fetchArticle parse shortcode dari konten artikel.
+  const [preloadedWidgets, setPreloadedWidgets] = useState<{ widgetId: string; widgetType: WidgetType }[]>([])
+
+  // Dengarkan custom event dari tombol Edit di panel WidgetInserter
+  useEffect(() => {
+    function handleWidgetRequestEdit(e: Event) {
+      const { widgetId, widgetType } = (e as CustomEvent<{ widgetId: string; widgetType: WidgetType }>).detail
+      setEditWidgetId(widgetId)
+      setEditWidgetType(widgetType)
+      document.getElementById("widget-inserter-anchor")?.scrollIntoView({ behavior: "smooth", block: "start" })
+    }
+    window.addEventListener("widget-request-edit", handleWidgetRequestEdit)
+    return () => window.removeEventListener("widget-request-edit", handleWidgetRequestEdit)
+  }, [])
+
   // ── TipTap editor ─────────────────────────────────────────────────────────
   const editor = useEditor({
     extensions: [
@@ -302,6 +318,19 @@ export function CreateArticleView({ onBack, articleId }: CreateArticleViewProps)
         )
 
         editor.commands.setContent(editorContent || "")
+
+        // Kumpulkan semua widget yang ada di artikel untuk panel Widget di Artikel
+        const foundWidgets: { widgetId: string; widgetType: WidgetType }[] = []
+        const widgetRegex = /\[(match_data|klasemen_data)\s+id="([a-fA-F0-9-]{36})"\]/g
+        let m
+        const rawContent = data.content || ""
+        while ((m = widgetRegex.exec(rawContent)) !== null) {
+          foundWidgets.push({
+            widgetId: m[2],
+            widgetType: m[1] === "match_data" ? "jadwal" : "klasemen",
+          })
+        }
+        setPreloadedWidgets(foundWidgets)
 
         // Setelah load, refresh preview
         setTimeout(() => {
@@ -718,6 +747,7 @@ export function CreateArticleView({ onBack, articleId }: CreateArticleViewProps)
               editWidgetId={editWidgetId}
               editWidgetType={editWidgetType}
               onResetEdit={() => { setEditWidgetId(null); setEditWidgetType(null) }}
+              initialWidgets={preloadedWidgets}
             />
           </div>
 

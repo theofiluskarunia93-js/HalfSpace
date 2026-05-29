@@ -11,6 +11,12 @@
  * 2. Klik "Insert ke Artikel" → data di-save ke Supabase → shortcode di-insert ke editor
  * 3. Shortcode format: [match_data id="<uuid>"] atau [klasemen_data id="<uuid>"]
  * 4. parseWidgetContent akan mendeteksi shortcode dan merender JadwalCard / KlasemenCard
+ *
+ * Changelog:
+ * - Fix: auto-open section saat editWidgetType berubah (klik badge)
+ * - Fix: section lain otomatis tutup saat mode edit aktif
+ * - Feature: panel "Widget di Artikel" dengan tombol Edit eksplisit
+ * - Feature: prop initialWidgets untuk pre-fill daftar widget dari artikel lama
  */
 
 import { useState, useEffect } from "react"
@@ -22,6 +28,11 @@ import {
 // ── Types ─────────────────────────────────────────────────────────────────────
 
 export type WidgetType = "jadwal" | "klasemen"
+
+interface ActiveWidget {
+  widgetId: string
+  widgetType: WidgetType
+}
 
 interface MatchEntry {
   _localId: string
@@ -57,6 +68,11 @@ interface WidgetInserterProps {
   editWidgetId?: string | null
   editWidgetType?: WidgetType | null
   onResetEdit?: () => void
+  /**
+   * Daftar widget yang sudah ada di artikel (untuk artikel lama yang dibuka dari Posts → Edit).
+   * Digunakan untuk mengisi panel "Widget di Artikel" tanpa harus insert ulang.
+   */
+  initialWidgets?: ActiveWidget[]
 }
 
 // ── Helper ────────────────────────────────────────────────────────────────────
@@ -558,21 +574,135 @@ function KlasemenForm({
 
 // ── Main WidgetInserter ───────────────────────────────────────────────────────
 
-export function WidgetInserter({ onInsert, editWidgetId, editWidgetType, onResetEdit }: WidgetInserterProps) {
-  const [activeTab, setActiveTab] = useState<WidgetType>(editWidgetType ?? "jadwal")
-  const [jadwalOpen, setJadwalOpen] = useState(true)
+export function WidgetInserter({
+  onInsert,
+  editWidgetId,
+  editWidgetType,
+  onResetEdit,
+  initialWidgets,
+}: WidgetInserterProps) {
+  const [jadwalOpen, setJadwalOpen] = useState(false)
   const [klasemenOpen, setKlasemenOpen] = useState(false)
 
-  // Sync activeTab when editWidgetType changes
+  /**
+   * insertedWidgets: daftar widget yang di-insert di sesi ini.
+   * Di-merge dengan initialWidgets (widget lama dari artikel yang di-edit)
+   * sehingga panel "Widget di Artikel" tampil untuk artikel lama juga.
+   */
+  const [insertedWidgets, setInsertedWidgets] = useState<ActiveWidget[]>(
+    initialWidgets ?? []
+  )
+
+  // Sync insertedWidgets jika initialWidgets berubah (artikel baru di-load)
   useEffect(() => {
-    if (editWidgetType) setActiveTab(editWidgetType)
+    if (initialWidgets && initialWidgets.length > 0) {
+      setInsertedWidgets((prev) => {
+        // Merge: tambahkan yang belum ada (berdasarkan widgetId)
+        const existingIds = new Set(prev.map((w) => w.widgetId))
+        const newOnes = initialWidgets.filter((w) => !existingIds.has(w.widgetId))
+        return newOnes.length > 0 ? [...prev, ...newOnes] : prev
+      })
+    }
+  }, [initialWidgets])
+
+  // FIX UTAMA: Auto-open section yang relevan saat editWidgetType berubah.
+  // Ini memperbaiki bug di mana klik badge di editor tidak otomatis membuka form.
+  useEffect(() => {
+    if (editWidgetType === "jadwal") {
+      setJadwalOpen(true)
+      setKlasemenOpen(false)
+    } else if (editWidgetType === "klasemen") {
+      setKlasemenOpen(true)
+      setJadwalOpen(false)
+    }
   }, [editWidgetType])
 
   const isEditing = !!editWidgetId
 
+  function handleInsert(shortcode: string, widgetId: string, widgetType: WidgetType) {
+    // Tambah ke daftar widget (hindari duplikat)
+    setInsertedWidgets((prev) => {
+      const exists = prev.some((w) => w.widgetId === widgetId)
+      return exists ? prev : [...prev, { widgetId, widgetType }]
+    })
+    onInsert(shortcode, widgetId, widgetType)
+  }
+
+  function handleEditWidget(widgetId: string, widgetType: WidgetType) {
+    // Trigger edit mode → useEffect di atas akan auto-open section yang tepat
+    onInsert(`__edit__${widgetId}`, widgetId, widgetType)
+  }
+
   return (
     <div className="space-y-3">
-      {/* Jadwal Section */}
+
+      {/* ── Panel: Widget di Artikel ── */}
+      {insertedWidgets.length > 0 && (
+        <div className="rounded-xl border border-white/10 bg-[#0d0d0d] p-3">
+          <p className="mb-2 text-[10px] font-bold uppercase tracking-widest text-zinc-500">
+            Widget di Artikel
+          </p>
+          <div className="space-y-1.5">
+            {insertedWidgets.map((w) => (
+              <div
+                key={w.widgetId}
+                className={`flex items-center justify-between rounded-lg border px-3 py-2 transition-colors ${
+                  editWidgetId === w.widgetId
+                    ? "border-[#39FF14]/40 bg-[#39FF14]/5"
+                    : "border-white/8 bg-white/[0.02]"
+                }`}
+              >
+                <div className="flex items-center gap-2 min-w-0">
+                  <span className="text-sm">
+                    {w.widgetType === "jadwal" ? "📅" : "🏆"}
+                  </span>
+                  <div className="min-w-0">
+                    <p className="truncate text-[11px] font-semibold text-white">
+                      {w.widgetType === "jadwal" ? "Jadwal Pertandingan" : "Klasemen Grup"}
+                    </p>
+                    <p className="font-mono text-[9px] text-zinc-600">
+                      {w.widgetId.slice(0, 8)}…
+                    </p>
+                  </div>
+                </div>
+                {editWidgetId === w.widgetId ? (
+                  <span className="flex items-center gap-1 rounded-full bg-[#39FF14]/10 px-2 py-0.5 text-[10px] font-bold text-[#39FF14]">
+                    <Pencil size={9} /> Editing
+                  </span>
+                ) : (
+                  <button
+                    onClick={() => {
+                      // Langsung trigger edit via onResetEdit + set state parent
+                      // Kita set via callback agar parent (create-article-view) update editWidgetId & editWidgetType
+                      // Cara: gunakan onInsert dengan flag khusus tidak perlu, cukup panggil onResetEdit dulu lalu
+                      // parent perlu handle ini. Solusi bersih: expose prop onRequestEdit.
+                      // Karena prop tersebut tidak ada, kita pakai workaround: insert shortcode yang sama
+                      // untuk trigger handleWidgetInsert di parent yang sudah mendeteksi editWidgetId === widgetId.
+                      // TAPI cara terbaik: di parent, saat tombol Edit diklik, set editWidgetId & editWidgetType.
+                      // Kita expose callback via prop onRequestEdit — lihat catatan di bawah.
+                      //
+                      // Implementasi: prop onResetEdit sudah ada, kita tambahkan onRequestEdit di parent nanti.
+                      // Untuk sekarang, kita set langsung lewat trick: panggil onInsert dengan shortcode dummy
+                      // yang dihandle parent, ATAU lebih bersih: parent harus menambah prop onRequestEdit.
+                      //
+                      // Solusi pragmatis yang tidak butuh perubahan besar di parent:
+                      // Kita dispatch custom event yang didengarkan parent.
+                      window.dispatchEvent(new CustomEvent("widget-request-edit", {
+                        detail: { widgetId: w.widgetId, widgetType: w.widgetType }
+                      }))
+                    }}
+                    className="flex items-center gap-1 rounded-md bg-[#39FF14]/10 px-2.5 py-1 text-[10px] font-bold text-[#39FF14] transition hover:bg-[#39FF14]/20"
+                  >
+                    <Pencil size={9} /> Edit
+                  </button>
+                )}
+              </div>
+            ))}
+          </div>
+        </div>
+      )}
+
+      {/* ── Jadwal Section ── */}
       <div className={`overflow-hidden rounded-xl border transition-colors ${isEditing && editWidgetType === "jadwal" ? "border-[#39FF14]/40" : "border-white/10"} bg-[#0d0d0d]`}>
         <button
           onClick={() => setJadwalOpen((o) => !o)}
@@ -592,7 +722,7 @@ export function WidgetInserter({ onInsert, editWidgetId, editWidgetType, onReset
         {jadwalOpen && (
           <div className="border-t border-white/10 p-4">
             <JadwalForm
-              onInsert={(shortcode, widgetId) => onInsert(shortcode, widgetId, "jadwal")}
+              onInsert={(shortcode, widgetId) => handleInsert(shortcode, widgetId, "jadwal")}
               editWidgetId={isEditing && editWidgetType === "jadwal" ? editWidgetId : null}
               onResetEdit={onResetEdit}
             />
@@ -600,7 +730,7 @@ export function WidgetInserter({ onInsert, editWidgetId, editWidgetType, onReset
         )}
       </div>
 
-      {/* Klasemen Section */}
+      {/* ── Klasemen Section ── */}
       <div className={`overflow-hidden rounded-xl border transition-colors ${isEditing && editWidgetType === "klasemen" ? "border-[#39FF14]/40" : "border-white/10"} bg-[#0d0d0d]`}>
         <button
           onClick={() => setKlasemenOpen((o) => !o)}
@@ -620,13 +750,14 @@ export function WidgetInserter({ onInsert, editWidgetId, editWidgetType, onReset
         {klasemenOpen && (
           <div className="border-t border-white/10 p-4">
             <KlasemenForm
-              onInsert={(shortcode, widgetId) => onInsert(shortcode, widgetId, "klasemen")}
+              onInsert={(shortcode, widgetId) => handleInsert(shortcode, widgetId, "klasemen")}
               editWidgetId={isEditing && editWidgetType === "klasemen" ? editWidgetId : null}
               onResetEdit={onResetEdit}
             />
           </div>
         )}
       </div>
+
     </div>
   )
 }
