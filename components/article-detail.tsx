@@ -53,12 +53,63 @@ interface TocItem {
 
 function contentToHtml(content: string): string {
   if (!content) return ""
-  return content.replace(/<p><\/p>/g, "<p>&nbsp;</p>")
+  const cleaned = cleanLegacyBadgeContent(content)
+  return cleaned.replace(/<p><\/p>/g, "<p>&nbsp;</p>")
 }
 
 // Deteksi apakah konten mengandung shortcode widget
 function hasWidgetPlaceholder(content: string): boolean {
   return /\[(match_data|klasemen_data)\s+id="[a-fA-F0-9-]{36}"\]/.test(content)
+}
+
+// Bersihkan badge HTML editor yang terlanjur tersimpan di DB.
+// Mengekstrak shortcode dari data-shortcode / data-widget-* attribute
+// dan membuang seluruh elemen badge agar tidak tampil sebagai teks di artikel.
+function cleanLegacyBadgeContent(content: string): string {
+  if (!content.includes("widget-shortcode-badge")) return content
+
+  // Gunakan regex sebagai fallback SSR-safe, lalu DOMParser di client
+  if (typeof window === "undefined") {
+    // SSR: ekstrak shortcode via regex, buang seluruh badge HTML
+    return content
+      .replace(
+        /<div[^>]*class="[^"]*widget-shortcode-badge[^"]*"[^>]*data-shortcode="([^"]+)"[^>]*>[\s\S]*?<\/div>/g,
+        (_m, sc) => `<p>${sc}</p>`
+      )
+      .replace(
+        /<div[^>]*class="[^"]*widget-shortcode-badge[^"]*"[\s\S]*?<\/div>/g,
+        ""
+      )
+  }
+
+  const parser = new DOMParser()
+  const doc = parser.parseFromString(content, "text/html")
+
+  doc.querySelectorAll<HTMLElement>(".widget-shortcode-badge").forEach((el) => {
+    const shortcode =
+      el.dataset.shortcode ||
+      (() => {
+        const wId = el.dataset.widgetId
+        const wType = el.dataset.widgetType
+        if (!wId || !wType) return null
+        return wType === "jadwal"
+          ? `[match_data id="${wId}"]`
+          : `[klasemen_data id="${wId}"]`
+      })()
+
+    const parentP = el.closest("p")
+    if (shortcode) {
+      const p = doc.createElement("p")
+      p.textContent = shortcode
+      if (parentP && parentP !== el) parentP.replaceWith(p)
+      else el.replaceWith(p)
+    } else {
+      if (parentP && parentP !== el) parentP.remove()
+      else el.remove()
+    }
+  })
+
+  return doc.body.innerHTML
 }
 
 function calcReadingTime(content: string): number {
@@ -842,9 +893,11 @@ export function ArticleDetail({ articleId }: ArticleDetailProps) {
         await trackArticleView(articleId)
 
         if (data.content) {
-          // Simpan konten asli untuk dipakai ArticleBody (widget detection)
-          setRawContent(data.content)
-          const html = contentToHtml(data.content)
+          // Sanitasi badge HTML lama sebelum masuk ke state apapun
+          const cleanedContent = cleanLegacyBadgeContent(data.content)
+          // rawContent bersih dikirim ke ArticleBody untuk widget detection
+          setRawContent(cleanedContent)
+          const html = contentToHtml(cleanedContent)
           const injected = injectHeadingIds(html)
           setProcessedContent(injected)
           setToc(extractToc(injected))
