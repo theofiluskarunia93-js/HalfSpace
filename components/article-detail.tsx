@@ -53,27 +53,12 @@ interface TocItem {
 
 function contentToHtml(content: string): string {
   if (!content) return ""
-  let html = content
-  if (html.includes("card-editor-placeholder")) {
-    try {
-      const parser = new DOMParser()
-      const doc = parser.parseFromString(html, "text/html")
-      doc.querySelectorAll<HTMLElement>(".card-editor-placeholder").forEach((el) => {
-        const parentP = el.closest("p")
-        if (parentP) parentP.remove()
-        else el.remove()
-      })
-      html = doc.body.innerHTML
-    } catch {
-      html = html.replace(/<[^>]*class="[^"]*card-editor-placeholder[^"]*"[^>]*>[^]*?<\/[^>]+>/g, "")
-    }
-  }
-  return html.replace(/<p><\/p>/g, "<p>&nbsp;</p>")
+  return content.replace(/<p><\/p>/g, "<p>&nbsp;</p>")
 }
 
-// Deteksi apakah konten mengandung placeholder widget
+// Deteksi apakah konten mengandung shortcode widget
 function hasWidgetPlaceholder(content: string): boolean {
-  return /(?:📅|🏆)(JadwalPertandingan|KlasemenGrup)WIDGET/.test(content)
+  return /\[(match_data|klasemen_data)\s+id="[a-fA-F0-9-]{36}"\]/.test(content)
 }
 
 function calcReadingTime(content: string): number {
