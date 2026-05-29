@@ -135,11 +135,56 @@ function resolveShortcodesForSave(html: string): string {
   // Ganti setiap badge placeholder dengan shortcode teks
   doc.querySelectorAll<HTMLElement>(".widget-shortcode-badge").forEach((el) => {
     const shortcode = el.dataset.shortcode
-    if (!shortcode) { el.remove(); return }
     const p = doc.createElement("p")
-    p.textContent = shortcode
+    if (shortcode) {
+      p.textContent = shortcode
+    } else {
+      // Fallback: coba ekstrak dari data-widget-id & data-widget-type
+      const wId = el.dataset.widgetId
+      const wType = el.dataset.widgetType
+      if (wId && wType) {
+        p.textContent = wType === "jadwal"
+          ? `[match_data id="${wId}"]`
+          : `[klasemen_data id="${wId}"]`
+      } else {
+        el.remove()
+        return
+      }
+    }
+    // Ganti elemen atau parent <p>-nya
     const parentP = el.closest("p")
-    if (parentP) parentP.replaceWith(p)
+    if (parentP && parentP !== el) parentP.replaceWith(p)
+    else el.replaceWith(p)
+  })
+
+  return doc.body.innerHTML
+}
+
+// ─── Bersihkan konten lama yang tersimpan sebagai HTML badge penuh ────────────
+// Dipanggil saat fetchArticle — mendeteksi badge HTML yang terlanjur tersimpan
+// di DB dan mengekstrak shortcode bersihnya agar bisa diproses normal.
+function cleanLegacyBadgeContent(content: string): string {
+  // Jika tidak ada badge HTML, return langsung
+  if (!content.includes("widget-shortcode-badge")) return content
+
+  const parser = new DOMParser()
+  const doc = parser.parseFromString(content, "text/html")
+
+  doc.querySelectorAll<HTMLElement>(".widget-shortcode-badge").forEach((el) => {
+    const shortcode = el.dataset.shortcode
+    const wId = el.dataset.widgetId
+    const wType = el.dataset.widgetType
+    const resolvedShortcode = shortcode ||
+      (wId && wType
+        ? (wType === "jadwal" ? `[match_data id="${wId}"]` : `[klasemen_data id="${wId}"]`)
+        : null)
+
+    if (!resolvedShortcode) { el.remove(); return }
+
+    const p = doc.createElement("p")
+    p.textContent = resolvedShortcode
+    const parentP = el.closest("p")
+    if (parentP && parentP !== el) parentP.replaceWith(p)
     else el.replaceWith(p)
   })
 
@@ -298,7 +343,8 @@ export function CreateArticleView({ onBack, articleId }: CreateArticleViewProps)
 
         // Konten sudah berupa shortcode teks: [match_data id="..."] atau [klasemen_data id="..."]
         // Kita konversi ke badge placeholder agar tampil visual di editor.
-        let editorContent = data.content || ""
+        // Bersihkan dulu jika ada badge HTML lama yang terlanjur tersimpan di DB
+        let editorContent = cleanLegacyBadgeContent(data.content || "")
 
         // Ganti shortcode teks yang ada di dalam <p> dengan badge placeholder
         editorContent = editorContent.replace(
@@ -323,7 +369,8 @@ export function CreateArticleView({ onBack, articleId }: CreateArticleViewProps)
         const foundWidgets: { widgetId: string; widgetType: WidgetType }[] = []
         const widgetRegex = /\[(match_data|klasemen_data)\s+id="([a-fA-F0-9-]{36})"\]/g
         let m
-        const rawContent = data.content || ""
+        // Gunakan konten yang sudah dibersihkan untuk ekstrak widget IDs
+        const rawContent = cleanLegacyBadgeContent(data.content || "")
         while ((m = widgetRegex.exec(rawContent)) !== null) {
           foundWidgets.push({
             widgetId: m[2],
