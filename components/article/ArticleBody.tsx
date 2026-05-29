@@ -12,6 +12,45 @@ interface ArticleBodyProps {
   className?: string
 }
 
+// ─── Sanitasi badge HTML editor ────────────────────────────────────────────
+// Jika badge `.widget-shortcode-badge` terlanjur tersimpan di DB sebagai HTML
+// (bukan sebagai shortcode teks), fungsi ini mengekstrak shortcode bersihnya
+// sehingga teks internal badge (label, ID, dll.) tidak bocor ke halaman publik.
+function sanitizeBadgeContent(content: string): string {
+  if (typeof window === "undefined") return content
+  if (!content.includes("widget-shortcode-badge")) return content
+
+  const parser = new DOMParser()
+  const doc = parser.parseFromString(content, "text/html")
+
+  doc.querySelectorAll<HTMLElement>(".widget-shortcode-badge").forEach((el) => {
+    const shortcode =
+      el.dataset.shortcode ||
+      (() => {
+        const wId = el.dataset.widgetId
+        const wType = el.dataset.widgetType
+        if (!wId || !wType) return null
+        return wType === "jadwal"
+          ? `[match_data id="${wId}"]`
+          : `[klasemen_data id="${wId}"]`
+      })()
+
+    const parentP = el.closest("p")
+    if (shortcode) {
+      const p = doc.createElement("p")
+      p.textContent = shortcode
+      if (parentP && parentP !== el) parentP.replaceWith(p)
+      else el.replaceWith(p)
+    } else {
+      // Tidak ada info widget — hapus seluruhnya
+      if (parentP && parentP !== el) parentP.remove()
+      else el.remove()
+    }
+  })
+
+  return doc.body.innerHTML
+}
+
 export function ArticleBody({
   content,
   isAdmin = false,
@@ -35,19 +74,24 @@ export function ArticleBody({
     setRefreshKey((k) => k + 1)
   }
 
-  const containsWidget = hasWidgetShortcode(content)
+  // Bersihkan badge HTML lama sebelum apapun diproses —
+  // ini mencegah teks internal badge bocor ke halaman publik
+  const safeContent = sanitizeBadgeContent(content)
+
+  const containsWidget = hasWidgetShortcode(safeContent)
 
   return (
     <>
       <div className={`prose prose-invert max-w-none ${className}`}>
         {containsWidget ? (
-          parseWidgetContent(content, {
+          parseWidgetContent(safeContent, {
             isAdmin,
+            // onEdit hanya diteruskan untuk admin — di halaman publik undefined
             onEdit: isAdmin ? handleEdit : undefined,
             refreshKey,
           })
         ) : (
-          <span dangerouslySetInnerHTML={{ __html: content }} />
+          <span dangerouslySetInnerHTML={{ __html: safeContent }} />
         )}
       </div>
 
