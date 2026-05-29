@@ -1,41 +1,42 @@
 "use client"
 
+/**
+ * WidgetEditModal.tsx
+ *
+ * Modal yang muncul saat admin mengklik tombol "Edit Widget" pada
+ * JadwalCard / KlasemenCard di halaman artikel (posts/edit).
+ *
+ * Menggunakan komponen editor inline untuk mengubah data di Supabase
+ * berdasarkan widget_id dari shortcode yang sudah tersimpan.
+ * Setelah disimpan, card di halaman akan di-refresh otomatis.
+ */
+
 import { useEffect, useRef, useState } from "react"
 import { createClient } from "@/lib/supabase/client"
 import { X, Plus, Trash2, Save, Loader2 } from "lucide-react"
 import type { MatchRow, StandingRow } from "./WidgetCards"
+import type { WidgetType } from "./useWidgetModal"
 
-// ── Types ────────────────────────────────────────────────────────────────────
-
-export type WidgetType = "jadwal" | "klasemen"
+// ── Types ─────────────────────────────────────────────────────────────────────
 
 interface WidgetEditModalProps {
   widgetId: string | null
   widgetType: WidgetType | null
   onClose: () => void
-  onSaved?: () => void   // callback agar parent bisa refresh
+  onSaved?: () => void
 }
 
-// ── Helpers ───────────────────────────────────────────────────────────────────
+// ── Input/Select helpers ──────────────────────────────────────────────────────
 
 function Input({
-  label,
-  value,
-  onChange,
-  type = "text",
-  placeholder,
+  label, value, onChange, type = "text", placeholder,
 }: {
-  label: string
-  value: string | number
-  onChange: (v: string) => void
-  type?: string
-  placeholder?: string
+  label: string; value: string | number; onChange: (v: string) => void
+  type?: string; placeholder?: string
 }) {
   return (
     <div className="flex flex-col gap-1">
-      <label className="text-[11px] font-semibold uppercase tracking-widest text-zinc-400">
-        {label}
-      </label>
+      <label className="text-[11px] font-semibold uppercase tracking-widest text-zinc-400">{label}</label>
       <input
         type={type}
         value={value}
@@ -48,31 +49,20 @@ function Input({
 }
 
 function Select({
-  label,
-  value,
-  onChange,
-  options,
+  label, value, onChange, options,
 }: {
-  label: string
-  value: string
-  onChange: (v: string) => void
+  label: string; value: string; onChange: (v: string) => void
   options: { label: string; value: string }[]
 }) {
   return (
     <div className="flex flex-col gap-1">
-      <label className="text-[11px] font-semibold uppercase tracking-widest text-zinc-400">
-        {label}
-      </label>
+      <label className="text-[11px] font-semibold uppercase tracking-widest text-zinc-400">{label}</label>
       <select
         value={value}
         onChange={(e) => onChange(e.target.value)}
         className="rounded-lg border border-white/10 bg-[#111] px-3 py-2 text-sm text-white outline-none transition focus:border-[#39FF14]/50"
       >
-        {options.map((o) => (
-          <option key={o.value} value={o.value}>
-            {o.label}
-          </option>
-        ))}
+        {options.map((o) => <option key={o.value} value={o.value}>{o.label}</option>)}
       </select>
     </div>
   )
@@ -81,33 +71,27 @@ function Select({
 // ── Jadwal Editor ─────────────────────────────────────────────────────────────
 
 function JadwalEditor({
-  widgetId,
-  onClose,
-  onSaved,
+  widgetId, onClose, onSaved,
 }: {
-  widgetId: string
-  onClose: () => void
-  onSaved?: () => void
+  widgetId: string; onClose: () => void; onSaved?: () => void
 }) {
-  const [rows, setRows] = useState<MatchRow[]>([])
+  const [rows, setRows] = useState<(MatchRow & { _isNew?: boolean })[]>([])
   const [loading, setLoading] = useState(true)
   const [saving, setSaving] = useState(false)
   const [error, setError] = useState<string | null>(null)
-
   const supabase = createClient()
 
   useEffect(() => {
-    async function load() {
-      const { data, error } = await supabase
-        .from("widget_jadwal")
-        .select("*")
-        .eq("widget_id", widgetId)
-        .order("match_date", { ascending: true })
-      if (error) setError(error.message)
-      else setRows(data ?? [])
-      setLoading(false)
-    }
-    load()
+    supabase
+      .from("widget_jadwal")
+      .select("*")
+      .eq("widget_id", widgetId)
+      .order("match_date", { ascending: true })
+      .then(({ data, error }) => {
+        if (error) setError(error.message)
+        else setRows(data ?? [])
+        setLoading(false)
+      })
   }, [widgetId])
 
   function updateRow(index: number, field: keyof MatchRow, value: string) {
@@ -124,26 +108,25 @@ function JadwalEditor({
       {
         id: crypto.randomUUID(),
         widget_id: widgetId,
-        group_label: "A",
+        group_label: prev[0]?.group_label ?? "A",
         home_team: "",
         away_team: "",
         match_date: "",
         match_time: "",
         score_home: null,
         score_away: null,
+        stadium: "",
         status: "scheduled",
+        _isNew: true,
       } as any,
     ])
   }
 
   async function deleteRow(index: number) {
-    const row = rows[index]
-    if (!row.id.includes("-")) {
-      // row belum tersimpan di DB
-      setRows((prev) => prev.filter((_, i) => i !== index))
-      return
+    const row = rows[index] as any
+    if (!row._isNew) {
+      await supabase.from("widget_jadwal").delete().eq("id", row.id)
     }
-    await supabase.from("widget_jadwal").delete().eq("id", row.id)
     setRows((prev) => prev.filter((_, i) => i !== index))
   }
 
@@ -159,9 +142,10 @@ function JadwalEditor({
           away_team: row.away_team,
           match_date: row.match_date || null,
           match_time: row.match_time || null,
-          score_home: row.score_home ?? null,
-          score_away: row.score_away ?? null,
-          status: row.status ?? "scheduled",
+          score_home: row.score_home != null && row.score_home !== "" ? Number(row.score_home) : null,
+          score_away: row.score_away != null && row.score_away !== "" ? Number(row.score_away) : null,
+          status: (row as any).status ?? "scheduled",
+          stadium: (row as any).stadium || null,
         }
         const { error } = await supabase
           .from("widget_jadwal")
@@ -177,89 +161,47 @@ function JadwalEditor({
     }
   }
 
-  if (loading) {
-    return (
-      <div className="flex items-center justify-center py-16">
-        <Loader2 className="animate-spin text-[#39FF14]" size={24} />
-      </div>
-    )
-  }
+  if (loading) return (
+    <div className="flex items-center justify-center py-16">
+      <Loader2 className="animate-spin text-[#39FF14]" size={24} />
+    </div>
+  )
 
   return (
     <div className="space-y-4">
       {error && (
-        <p className="rounded-lg border border-red-500/30 bg-red-500/10 px-4 py-2 text-sm text-red-400">
-          {error}
-        </p>
+        <p className="rounded-lg border border-red-500/30 bg-red-500/10 px-4 py-2 text-sm text-red-400">{error}</p>
       )}
 
       {rows.map((row, i) => (
-        <div
-          key={row.id}
-          className="relative rounded-xl border border-white/10 bg-white/[0.03] p-4"
-        >
+        <div key={row.id} className="relative rounded-xl border border-white/10 bg-white/[0.03] p-4">
           <button
             onClick={() => deleteRow(i)}
-            className="absolute right-3 top-3 text-zinc-600 hover:text-red-400 transition-colors"
+            className="absolute right-3 top-3 text-zinc-600 transition-colors hover:text-red-400"
           >
             <Trash2 size={14} />
           </button>
-
           <div className="grid grid-cols-2 gap-3 sm:grid-cols-3">
-            <Input
-              label="Grup"
-              value={row.group_label}
-              onChange={(v) => updateRow(i, "group_label", v)}
-              placeholder="A"
-            />
-            <Input
-              label="Tim Tuan Rumah"
-              value={row.home_team}
-              onChange={(v) => updateRow(i, "home_team", v)}
-              placeholder="Tim A"
-            />
-            <Input
-              label="Tim Tamu"
-              value={row.away_team}
-              onChange={(v) => updateRow(i, "away_team", v)}
-              placeholder="Tim B"
-            />
-            <Input
-              label="Tanggal"
-              value={row.match_date ?? ""}
-              onChange={(v) => updateRow(i, "match_date", v)}
-              type="date"
-            />
-            <Input
-              label="Waktu"
-              value={row.match_time ?? ""}
-              onChange={(v) => updateRow(i, "match_time", v)}
-              type="time"
-            />
+            <Input label="Grup" value={row.group_label} onChange={(v) => updateRow(i, "group_label", v)} placeholder="A" />
+            <Input label="Tim Kandang" value={row.home_team} onChange={(v) => updateRow(i, "home_team", v)} placeholder="Tim A" />
+            <Input label="Tim Tamu" value={row.away_team} onChange={(v) => updateRow(i, "away_team", v)} placeholder="Tim B" />
+            <Input label="Tanggal" value={row.match_date ?? ""} onChange={(v) => updateRow(i, "match_date", v)} type="date" />
+            <Input label="Waktu" value={row.match_time ?? ""} onChange={(v) => updateRow(i, "match_time", v)} type="time" />
+            <Input label="Stadion" value={(row as any).stadium ?? ""} onChange={(v) => updateRow(i, "stadium" as any, v)} placeholder="Nama Stadion" />
             <Select
               label="Status"
-              value={row.status ?? "scheduled"}
-              onChange={(v) => updateRow(i, "status", v)}
+              value={(row as any).status ?? "scheduled"}
+              onChange={(v) => updateRow(i, "status" as any, v)}
               options={[
                 { label: "Akan Datang", value: "scheduled" },
                 { label: "Live", value: "live" },
                 { label: "Selesai", value: "finished" },
               ]}
             />
-            {(row.status === "live" || row.status === "finished") && (
+            {((row as any).status === "live" || (row as any).status === "finished") && (
               <>
-                <Input
-                  label="Skor Tuan Rumah"
-                  value={row.score_home ?? ""}
-                  onChange={(v) => updateRow(i, "score_home", v)}
-                  type="number"
-                />
-                <Input
-                  label="Skor Tamu"
-                  value={row.score_away ?? ""}
-                  onChange={(v) => updateRow(i, "score_away", v)}
-                  type="number"
-                />
+                <Input label="Skor Kandang" value={row.score_home ?? ""} onChange={(v) => updateRow(i, "score_home" as any, v)} type="number" />
+                <Input label="Skor Tamu" value={row.score_away ?? ""} onChange={(v) => updateRow(i, "score_away" as any, v)} type="number" />
               </>
             )}
           </div>
@@ -274,10 +216,7 @@ function JadwalEditor({
       </button>
 
       <div className="flex justify-end gap-3 pt-2">
-        <button
-          onClick={onClose}
-          className="rounded-lg border border-white/10 px-5 py-2 text-sm text-zinc-400 hover:text-white transition"
-        >
+        <button onClick={onClose} className="rounded-lg border border-white/10 px-5 py-2 text-sm text-zinc-400 transition hover:text-white">
           Batal
         </button>
         <button
@@ -296,39 +235,36 @@ function JadwalEditor({
 // ── Klasemen Editor ───────────────────────────────────────────────────────────
 
 function KlasemenEditor({
-  widgetId,
-  onClose,
-  onSaved,
+  widgetId, onClose, onSaved,
 }: {
-  widgetId: string
-  onClose: () => void
-  onSaved?: () => void
+  widgetId: string; onClose: () => void; onSaved?: () => void
 }) {
-  const [rows, setRows] = useState<StandingRow[]>([])
+  const [rows, setRows] = useState<(StandingRow & { _isNew?: boolean })[]>([])
   const [loading, setLoading] = useState(true)
   const [saving, setSaving] = useState(false)
   const [error, setError] = useState<string | null>(null)
-
   const supabase = createClient()
 
   useEffect(() => {
-    async function load() {
-      const { data, error } = await supabase
-        .from("widget_klasemen")
-        .select("*")
-        .eq("widget_id", widgetId)
-        .order("rank", { ascending: true })
-      if (error) setError(error.message)
-      else setRows(data ?? [])
-      setLoading(false)
-    }
-    load()
+    supabase
+      .from("widget_klasemen")
+      .select("*")
+      .eq("widget_id", widgetId)
+      .order("rank", { ascending: true })
+      .then(({ data, error }) => {
+        if (error) setError(error.message)
+        else setRows(data ?? [])
+        setLoading(false)
+      })
   }, [widgetId])
 
   function updateRow(index: number, field: keyof StandingRow, value: string) {
     setRows((prev) => {
       const copy = [...prev]
-      copy[index] = { ...copy[index], [field]: field === "team_name" || field === "group_label" ? value : Number(value) }
+      copy[index] = {
+        ...copy[index],
+        [field]: field === "team_name" || field === "group_label" ? value : Number(value),
+      }
       return copy
     })
   }
@@ -341,17 +277,19 @@ function KlasemenEditor({
         id: crypto.randomUUID(),
         widget_id: widgetId,
         rank: lastRank,
-        group_label: "A",
+        group_label: prev[0]?.group_label ?? "A",
         team_name: "",
-        played: 0, won: 0, drawn: 0, lost: 0,
-        gf: 0, ga: 0, points: 0,
+        played: 0, won: 0, drawn: 0, lost: 0, gf: 0, ga: 0, points: 0,
+        _isNew: true,
       } as any,
     ])
   }
 
   async function deleteRow(index: number) {
-    const row = rows[index]
-    await supabase.from("widget_klasemen").delete().eq("id", row.id)
+    const row = rows[index] as any
+    if (!row._isNew) {
+      await supabase.from("widget_klasemen").delete().eq("id", row.id)
+    }
     setRows((prev) => prev.filter((_, i) => i !== index))
   }
 
@@ -387,34 +325,26 @@ function KlasemenEditor({
     }
   }
 
-  if (loading) {
-    return (
-      <div className="flex items-center justify-center py-16">
-        <Loader2 className="animate-spin text-[#39FF14]" size={24} />
-      </div>
-    )
-  }
+  if (loading) return (
+    <div className="flex items-center justify-center py-16">
+      <Loader2 className="animate-spin text-[#39FF14]" size={24} />
+    </div>
+  )
 
   return (
     <div className="space-y-4">
       {error && (
-        <p className="rounded-lg border border-red-500/30 bg-red-500/10 px-4 py-2 text-sm text-red-400">
-          {error}
-        </p>
+        <p className="rounded-lg border border-red-500/30 bg-red-500/10 px-4 py-2 text-sm text-red-400">{error}</p>
       )}
 
       {rows.map((row, i) => (
-        <div
-          key={row.id}
-          className="relative rounded-xl border border-white/10 bg-white/[0.03] p-4"
-        >
+        <div key={row.id} className="relative rounded-xl border border-white/10 bg-white/[0.03] p-4">
           <button
             onClick={() => deleteRow(i)}
-            className="absolute right-3 top-3 text-zinc-600 hover:text-red-400 transition-colors"
+            className="absolute right-3 top-3 text-zinc-600 transition-colors hover:text-red-400"
           >
             <Trash2 size={14} />
           </button>
-
           <div className="grid grid-cols-3 gap-3 sm:grid-cols-5">
             <Input label="Grup" value={row.group_label} onChange={(v) => updateRow(i, "group_label", v)} placeholder="A" />
             <div className="col-span-2 sm:col-span-2">
@@ -440,10 +370,7 @@ function KlasemenEditor({
       </button>
 
       <div className="flex justify-end gap-3 pt-2">
-        <button
-          onClick={onClose}
-          className="rounded-lg border border-white/10 px-5 py-2 text-sm text-zinc-400 hover:text-white transition"
-        >
+        <button onClick={onClose} className="rounded-lg border border-white/10 px-5 py-2 text-sm text-zinc-400 transition hover:text-white">
           Batal
         </button>
         <button
@@ -461,20 +388,13 @@ function KlasemenEditor({
 
 // ── Main Modal ────────────────────────────────────────────────────────────────
 
-export function WidgetEditModal({
-  widgetId,
-  widgetType,
-  onClose,
-  onSaved,
-}: WidgetEditModalProps) {
+export function WidgetEditModal({ widgetId, widgetType, onClose, onSaved }: WidgetEditModalProps) {
   const overlayRef = useRef<HTMLDivElement>(null)
 
-  // Close on overlay click
   function handleOverlayClick(e: React.MouseEvent) {
     if (e.target === overlayRef.current) onClose()
   }
 
-  // Close on Escape
   useEffect(() => {
     function onKey(e: KeyboardEvent) {
       if (e.key === "Escape") onClose()
@@ -485,17 +405,16 @@ export function WidgetEditModal({
 
   if (!widgetId || !widgetType) return null
 
-  const title =
-    widgetType === "jadwal" ? "Edit Jadwal Pertandingan" : "Edit Klasemen Grup"
+  const title = widgetType === "jadwal" ? "Edit Jadwal Pertandingan" : "Edit Klasemen Grup"
 
   return (
     <div
       ref={overlayRef}
       onClick={handleOverlayClick}
-      className="fixed inset-0 z-50 flex items-center justify-center bg-black/70 backdrop-blur-sm p-4"
+      className="fixed inset-0 z-50 flex items-center justify-center bg-black/70 p-4 backdrop-blur-sm"
     >
-      <div className="relative w-full max-w-2xl max-h-[90vh] overflow-y-auto rounded-2xl border border-white/10 bg-[#0d0d0d] shadow-2xl shadow-black/60">
-        {/* Modal header */}
+      <div className="relative max-h-[90vh] w-full max-w-2xl overflow-y-auto rounded-2xl border border-white/10 bg-[#0d0d0d] shadow-2xl shadow-black/60">
+        {/* Header */}
         <div className="sticky top-0 z-10 flex items-center justify-between border-b border-white/10 bg-[#0d0d0d] px-6 py-4">
           <div>
             <p className="text-[10px] font-bold uppercase tracking-widest text-[#39FF14]/60">
@@ -511,7 +430,7 @@ export function WidgetEditModal({
           </button>
         </div>
 
-        {/* Modal body */}
+        {/* Body */}
         <div className="px-6 py-5">
           {widgetType === "jadwal" ? (
             <JadwalEditor widgetId={widgetId} onClose={onClose} onSaved={onSaved} />

@@ -1,29 +1,31 @@
 import React from "react"
 import { JadwalCard, KlasemenCard } from "@/components/widgets/WidgetCards"
-import type { WidgetType } from "@/components/widgets/WidgetEditModal"
+import type { WidgetType } from "@/components/widgets/useWidgetModal"
 
-// ─── Regex untuk mengenali marker widget yang disimpan di DB ──────────────────
-//
-// Format marker yang disimpan ke DB (mode "save" di resolveCards):
-//   <p>📅JadwalPertandinganWIDGET AKTIF\n🖇 klik untuk edit{widgetId}:{blockId}</p>
-//   <p>🏆KlasemenGrupWIDGET AKTIF\n🖇 klik untuk edit{widgetId}:{blockId}</p>
-//
-// Setelah melalui TipTap getHTML() / DOMParser, \n bisa menjadi <br> atau tetap \n.
-// Regex ini menangani kedua kemungkinan, serta strip tag HTML pembungkus (<p>, <br>).
-//
-// Pola yang dikenali (dalam raw HTML string):
-//   Opsional: <p> (dengan atribut apapun)
-//   Emoji awal: 📅 atau 🏆
-//   Tipe: JadwalPertandingan atau KlasemenGrup
-//   WIDGET AKTIF
-//   Karakter apapun (termasuk \n, <br>, <br/>, spasi, emoji 🖇)
-//   "klik untuk edit"
-//   widgetId: UUID (hex + dash)
-//   ":" + blockId (alphanumeric) — blockId diabaikan, hanya widgetId yang diperlukan
-//   Opsional: </p>
-//
-const WIDGET_PLACEHOLDER_RE =
-  /<p[^>]*>\s*(?:📅|🏆)(JadwalPertandingan|KlasemenGrup)WIDGET\s+AKTIF[\s\S]*?klik\s+untuk\s+edit([a-fA-F0-9-]{36})[^<]*<\/p>|(?:📅|🏆)(JadwalPertandingan|KlasemenGrup)WIDGET\s+AKTIF[\s\S]*?klik\s+untuk\s+edit([a-fA-F0-9-]{36})/g
+/**
+ * parseWidgetContent
+ *
+ * Mendeteksi shortcode widget dalam konten HTML artikel dan
+ * me-render komponen React yang sesuai.
+ *
+ * Format shortcode yang didukung:
+ *   [match_data id="<uuid>"]
+ *   [klasemen_data id="<uuid>"]
+ *
+ * Shortcode ini disisipkan oleh WidgetInserter saat admin mengklik
+ * "Simpan & Insert" di editor artikel. Saat artikel dirender di frontend,
+ * fungsi ini menggantikan setiap shortcode dengan komponen JadwalCard /
+ * KlasemenCard yang mengambil data langsung dari Supabase via widget_id.
+ *
+ * Karena shortcode disimpan di dalam tag <p> oleh TipTap, regex
+ * juga menangani wrapping <p>...</p> agar tidak ada tag kosong tersisa.
+ */
+
+// Mencocokkan shortcode baik di dalam maupun di luar tag <p>
+// Grup 1: tipe widget ("match_data" | "klasemen_data")
+// Grup 2: UUID widget
+const SHORTCODE_RE =
+  /(?:<p[^>]*>)?\s*\[(match_data|klasemen_data)\s+id="([a-fA-F0-9-]{36})"\]\s*(?:<\/p>)?/g
 
 interface ParseOptions {
   isAdmin?: boolean
@@ -41,21 +43,17 @@ export function parseWidgetContent(
   let lastIndex = 0
   let match: RegExpExecArray | null
 
-  // Reset lastIndex agar pencarian selalu dimulai dari awal string
-  WIDGET_PLACEHOLDER_RE.lastIndex = 0
+  SHORTCODE_RE.lastIndex = 0
 
-  while ((match = WIDGET_PLACEHOLDER_RE.exec(rawContent)) !== null) {
+  while ((match = SHORTCODE_RE.exec(rawContent)) !== null) {
     const fullMatch = match[0]
     const matchStart = match.index
-
-    // Grup 1 & 2: dari pola dengan <p> wrapper
-    // Grup 3 & 4: dari pola tanpa <p> wrapper (fallback)
-    const rawType = match[1] ?? match[3]
-    const widgetId = match[2] ?? match[4]
+    const rawType = match[1]   // "match_data" | "klasemen_data"
+    const widgetId = match[2]  // UUID
 
     if (!rawType || !widgetId) continue
 
-    // 1. Render teks HTML (sebelum marker widget)
+    // 1. Render HTML sebelum shortcode
     if (matchStart > lastIndex) {
       const htmlChunk = rawContent.slice(lastIndex, matchStart)
       if (htmlChunk.trim()) {
@@ -68,9 +66,8 @@ export function parseWidgetContent(
       }
     }
 
-    // 2. Render Widget Card berdasarkan tipe
-    const widgetType: WidgetType =
-      rawType === "JadwalPertandingan" ? "jadwal" : "klasemen"
+    // 2. Render widget card
+    const widgetType: WidgetType = rawType === "match_data" ? "jadwal" : "klasemen"
 
     if (widgetType === "jadwal") {
       nodes.push(
@@ -95,7 +92,7 @@ export function parseWidgetContent(
     lastIndex = matchStart + fullMatch.length
   }
 
-  // 3. Render sisa teks HTML setelah widget terakhir
+  // 3. Render sisa HTML setelah shortcode terakhir
   if (lastIndex < rawContent.length) {
     const htmlChunk = rawContent.slice(lastIndex)
     if (htmlChunk.trim()) {
@@ -109,4 +106,14 @@ export function parseWidgetContent(
   }
 
   return nodes
+}
+
+/**
+ * hasWidgetShortcode
+ *
+ * Cek cepat apakah konten mengandung shortcode widget.
+ * Digunakan oleh ArticleBody untuk memilih render path.
+ */
+export function hasWidgetShortcode(content: string): boolean {
+  return /\[(match_data|klasemen_data)\s+id="[a-fA-F0-9-]{36}"\]/.test(content)
 }
