@@ -1,31 +1,19 @@
 import React from "react"
-import { JadwalCard, KlasemenCard } from "@/components/widgets/WidgetCards"
+import { JadwalCard, KlasemenCard, TransferCard, PeluangCard } from "@/components/widgets/WidgetCards"
 import type { WidgetType } from "@/components/widgets/useWidgetModal"
 
 /**
  * parseWidgetContent
  *
- * Mendeteksi shortcode widget dalam konten HTML artikel dan
- * me-render komponen React yang sesuai.
- *
- * Format shortcode yang didukung:
+ * Shortcode yang didukung:
  *   [match_data id="<uuid>"]
  *   [klasemen_data id="<uuid>"]
- *
- * Shortcode ini disisipkan oleh WidgetInserter saat admin mengklik
- * "Simpan & Insert" di editor artikel. Saat artikel dirender di frontend,
- * fungsi ini menggantikan setiap shortcode dengan komponen JadwalCard /
- * KlasemenCard yang mengambil data langsung dari Supabase via widget_id.
- *
- * Karena shortcode disimpan di dalam tag <p> oleh TipTap, regex
- * juga menangani wrapping <p>...</p> agar tidak ada tag kosong tersisa.
+ *   [transfer_data id="<uuid>"]
+ *   [peluang_data id="<uuid>"]
  */
 
-// Mencocokkan shortcode baik di dalam maupun di luar tag <p>
-// Grup 1: tipe widget ("match_data" | "klasemen_data")
-// Grup 2: UUID widget
 const SHORTCODE_RE =
-  /(?:<p[^>]*>)?\s*\[(match_data|klasemen_data)\s+id="([a-fA-F0-9-]{36})"\]\s*(?:<\/p>)?/g
+  /(?:<p[^>]*>)?\s*\[(match_data|klasemen_data|transfer_data|peluang_data)\s+id="([a-fA-F0-9-]{36})"\]\s*(?:<\/p>)?/g
 
 interface ParseOptions {
   isAdmin?: boolean
@@ -48,12 +36,11 @@ export function parseWidgetContent(
   while ((match = SHORTCODE_RE.exec(rawContent)) !== null) {
     const fullMatch = match[0]
     const matchStart = match.index
-    const rawType = match[1]   // "match_data" | "klasemen_data"
-    const widgetId = match[2]  // UUID
+    const rawType = match[1]
+    const widgetId = match[2]
 
     if (!rawType || !widgetId) continue
 
-    // 1. Render HTML sebelum shortcode
     if (matchStart > lastIndex) {
       const htmlChunk = rawContent.slice(lastIndex, matchStart)
       if (htmlChunk.trim()) {
@@ -66,8 +53,11 @@ export function parseWidgetContent(
       }
     }
 
-    // 2. Render widget card
-    const widgetType: WidgetType = rawType === "match_data" ? "jadwal" : "klasemen"
+    const widgetType: WidgetType =
+      rawType === "match_data"    ? "jadwal"   :
+      rawType === "klasemen_data" ? "klasemen" :
+      rawType === "transfer_data" ? "transfer" :
+      "peluang"
 
     if (widgetType === "jadwal") {
       nodes.push(
@@ -78,7 +68,7 @@ export function parseWidgetContent(
           onEdit={onEdit ? (id) => onEdit(id, "jadwal") : undefined}
         />
       )
-    } else {
+    } else if (widgetType === "klasemen") {
       nodes.push(
         <KlasemenCard
           key={`klasemen-${widgetId}-${refreshKey}`}
@@ -87,12 +77,29 @@ export function parseWidgetContent(
           onEdit={onEdit ? (id) => onEdit(id, "klasemen") : undefined}
         />
       )
+    } else if (widgetType === "transfer") {
+      nodes.push(
+        <TransferCard
+          key={`transfer-${widgetId}-${refreshKey}`}
+          widgetId={widgetId}
+          isAdmin={isAdmin}
+          onEdit={onEdit ? (id) => onEdit(id, "transfer") : undefined}
+        />
+      )
+    } else {
+      nodes.push(
+        <PeluangCard
+          key={`peluang-${widgetId}-${refreshKey}`}
+          widgetId={widgetId}
+          isAdmin={isAdmin}
+          onEdit={onEdit ? (id) => onEdit(id, "peluang") : undefined}
+        />
+      )
     }
 
     lastIndex = matchStart + fullMatch.length
   }
 
-  // 3. Render sisa HTML setelah shortcode terakhir
   if (lastIndex < rawContent.length) {
     const htmlChunk = rawContent.slice(lastIndex)
     if (htmlChunk.trim()) {
@@ -108,12 +115,6 @@ export function parseWidgetContent(
   return nodes
 }
 
-/**
- * hasWidgetShortcode
- *
- * Cek cepat apakah konten mengandung shortcode widget.
- * Digunakan oleh ArticleBody untuk memilih render path.
- */
 export function hasWidgetShortcode(content: string): boolean {
-  return /\[(match_data|klasemen_data)\s+id="[a-fA-F0-9-]{36}"\]/.test(content)
+  return /\[(match_data|klasemen_data|transfer_data|peluang_data)\s+id="[a-fA-F0-9-]{36}"\]/.test(content)
 }

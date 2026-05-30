@@ -72,11 +72,22 @@ function ToolbarSeparator() {
 // Shortcode asli disimpan sebagai data attribute agar bisa diekstrak saat save.
 
 function buildShortcodePlaceholder(widgetId: string, widgetType: WidgetType): string {
-  const shortcode = widgetType === "jadwal"
-    ? `[match_data id="${widgetId}"]`
-    : `[klasemen_data id="${widgetId}"]`
-  const icon = widgetType === "jadwal" ? "📅" : "🏆"
-  const label = widgetType === "jadwal" ? "Jadwal Pertandingan" : "Klasemen Grup"
+  const shortcodeMap: Record<WidgetType, string> = {
+    jadwal:   `[match_data id="${widgetId}"]`,
+    klasemen: `[klasemen_data id="${widgetId}"]`,
+    transfer: `[transfer_data id="${widgetId}"]`,
+    peluang:  `[peluang_data id="${widgetId}"]`,
+  }
+  const iconMap: Record<WidgetType, string> = {
+    jadwal: "📅", klasemen: "🏆", transfer: "🔄", peluang: "⭐",
+  }
+  const labelMap: Record<WidgetType, string> = {
+    jadwal: "Jadwal Pertandingan", klasemen: "Klasemen Grup",
+    transfer: "Transfer Pemain", peluang: "Peluang Juara",
+  }
+  const shortcode = shortcodeMap[widgetType] ?? shortcodeMap.jadwal
+  const icon = iconMap[widgetType] ?? "📦"
+  const label = labelMap[widgetType] ?? widgetType
   const shortId = widgetId.slice(0, 8)
 
   return (
@@ -143,9 +154,13 @@ function resolveShortcodesForSave(html: string): string {
       const wId = el.dataset.widgetId
       const wType = el.dataset.widgetType
       if (wId && wType) {
-        p.textContent = wType === "jadwal"
-          ? `[match_data id="${wId}"]`
-          : `[klasemen_data id="${wId}"]`
+        const scMap: Record<string, string> = {
+          jadwal:   `[match_data id="${wId}"]`,
+          klasemen: `[klasemen_data id="${wId}"]`,
+          transfer: `[transfer_data id="${wId}"]`,
+          peluang:  `[peluang_data id="${wId}"]`,
+        }
+        p.textContent = scMap[wType] ?? `[match_data id="${wId}"]`
       } else {
         el.remove()
         return
@@ -176,7 +191,12 @@ function cleanLegacyBadgeContent(content: string): string {
     const wType = el.dataset.widgetType
     const resolvedShortcode = shortcode ||
       (wId && wType
-        ? (wType === "jadwal" ? `[match_data id="${wId}"]` : `[klasemen_data id="${wId}"]`)
+        ? ({
+            jadwal:   `[match_data id="${wId}"]`,
+            klasemen: `[klasemen_data id="${wId}"]`,
+            transfer: `[transfer_data id="${wId}"]`,
+            peluang:  `[peluang_data id="${wId}"]`,
+          }[wType] ?? null)
         : null)
 
     if (!resolvedShortcode) { el.remove(); return }
@@ -341,24 +361,32 @@ export function CreateArticleView({ onBack, articleId }: CreateArticleViewProps)
         setMetaDescription(data.meta_description || "")
         setIsEditorChoice(data.is_editor_choice || false)
 
-        // Konten sudah berupa shortcode teks: [match_data id="..."] atau [klasemen_data id="..."]
+        // Konten sudah berupa shortcode teks: [match_data id="..."] dll
         // Kita konversi ke badge placeholder agar tampil visual di editor.
         // Bersihkan dulu jika ada badge HTML lama yang terlanjur tersimpan di DB
         let editorContent = cleanLegacyBadgeContent(data.content || "")
 
+        // Helper: map shortcode type → WidgetType
+        function rawToWidgetType(raw: string): WidgetType {
+          if (raw === "match_data")    return "jadwal"
+          if (raw === "klasemen_data") return "klasemen"
+          if (raw === "transfer_data") return "transfer"
+          return "peluang"
+        }
+
         // Ganti shortcode teks yang ada di dalam <p> dengan badge placeholder
         editorContent = editorContent.replace(
-          /<p[^>]*>\s*\[(match_data|klasemen_data)\s+id="([a-fA-F0-9-]{36})"\]\s*<\/p>/g,
+          /<p[^>]*>\s*\[(match_data|klasemen_data|transfer_data|peluang_data)\s+id="([a-fA-F0-9-]{36})"\]\s*<\/p>/g,
           (_match, rawType: string, wId: string) => {
-            const wType: WidgetType = rawType === "match_data" ? "jadwal" : "klasemen"
+            const wType: WidgetType = rawToWidgetType(rawType)
             return buildShortcodePlaceholder(wId, wType)
           }
         )
         // Fallback: shortcode tanpa <p> wrapper
         editorContent = editorContent.replace(
-          /\[(match_data|klasemen_data)\s+id="([a-fA-F0-9-]{36})"\]/g,
+          /\[(match_data|klasemen_data|transfer_data|peluang_data)\s+id="([a-fA-F0-9-]{36})"\]/g,
           (_match, rawType: string, wId: string) => {
-            const wType: WidgetType = rawType === "match_data" ? "jadwal" : "klasemen"
+            const wType: WidgetType = rawToWidgetType(rawType)
             return buildShortcodePlaceholder(wId, wType)
           }
         )
@@ -367,14 +395,14 @@ export function CreateArticleView({ onBack, articleId }: CreateArticleViewProps)
 
         // Kumpulkan semua widget yang ada di artikel untuk panel Widget di Artikel
         const foundWidgets: { widgetId: string; widgetType: WidgetType }[] = []
-        const widgetRegex = /\[(match_data|klasemen_data)\s+id="([a-fA-F0-9-]{36})"\]/g
+        const widgetRegex = /\[(match_data|klasemen_data|transfer_data|peluang_data)\s+id="([a-fA-F0-9-]{36})"\]/g
         let m
         // Gunakan konten yang sudah dibersihkan untuk ekstrak widget IDs
         const rawContent = cleanLegacyBadgeContent(data.content || "")
         while ((m = widgetRegex.exec(rawContent)) !== null) {
           foundWidgets.push({
             widgetId: m[2],
-            widgetType: m[1] === "match_data" ? "jadwal" : "klasemen",
+            widgetType: rawToWidgetType(m[1]),
           })
         }
         setPreloadedWidgets(foundWidgets)

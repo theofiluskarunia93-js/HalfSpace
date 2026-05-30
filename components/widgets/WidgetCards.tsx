@@ -1,6 +1,6 @@
 "use client"
 
-import { useEffect, useState } from "react"
+import React, { useEffect, useState } from "react"
 import { createClient } from "@/lib/supabase/client"
 import { Pencil, CalendarDays, Trophy, Loader2, AlertCircle, Clock, MapPin } from "lucide-react"
 
@@ -373,6 +373,441 @@ export function KlasemenCard({ widgetId, isAdmin, onEdit }: KlasemenCardProps) {
             </div>
           </div>
         </>
+      )}
+    </div>
+  )
+}
+
+// ── Transfer Pemain Card ───────────────────────────────────────────────────────
+// Matches screenshot 1-4: dark table with league tabs, player list, transfer value, status
+
+export interface TransferRow {
+  id: string
+  widget_id: string
+  league_label: string
+  player_name: string
+  player_initials: string
+  position: string
+  age: number
+  from_club: string
+  from_club_color: string
+  to_club: string
+  league_dest: string
+  transfer_value: string
+  is_free: boolean
+  status: "confirmed" | "official" | "medical" | "rumor"
+  transfer_date: string | null
+}
+
+interface TransferCardProps {
+  widgetId: string
+  isAdmin?: boolean
+  onEdit?: (widgetId: string) => void
+}
+
+export function TransferCard({ widgetId, isAdmin, onEdit }: TransferCardProps) {
+  const [transfers, setTransfers] = useState<TransferRow[]>([])
+  const [loading, setLoading] = useState(true)
+  const [error, setError] = useState<string | null>(null)
+  const [activeLeague, setActiveLeague] = useState<string | null>(null)
+
+  useEffect(() => {
+    async function fetchData() {
+      try {
+        const supabase = createClient()
+        const { data, error } = await supabase
+          .from("widget_transfer")
+          .select("*")
+          .eq("widget_id", widgetId)
+          .order("transfer_date", { ascending: false })
+        if (error) throw error
+        setTransfers(data ?? [])
+        if (data && data.length > 0) setActiveLeague(data[0].league_label)
+      } catch (e: any) {
+        setError(e.message ?? "Gagal memuat data transfer.")
+      } finally {
+        setLoading(false)
+      }
+    }
+    fetchData()
+  }, [widgetId])
+
+  const leagues = [...new Set(transfers.map((t) => t.league_label))].sort()
+  const filtered = activeLeague ? transfers.filter((t) => t.league_label === activeLeague) : transfers
+
+  const statusConfig = {
+    confirmed: { label: "CONFIRMED", color: "#39FF14", bg: "rgba(57,255,20,0.1)", border: "rgba(57,255,20,0.4)" },
+    official:  { label: "OFFICIAL",  color: "#60a5fa", bg: "rgba(96,165,250,0.1)", border: "rgba(96,165,250,0.4)" },
+    medical:   { label: "MEDICAL",   color: "#fbbf24", bg: "rgba(251,191,36,0.1)", border: "rgba(251,191,36,0.4)" },
+    rumor:     { label: "RUMOR",     color: "#a78bfa", bg: "rgba(167,139,250,0.1)", border: "rgba(167,139,250,0.4)" },
+  }
+
+  function formatDate(d: string | null) {
+    if (!d) return ""
+    try {
+      return new Date(d).toLocaleDateString("id-ID", { day: "2-digit", month: "short", year: "numeric" })
+    } catch { return d }
+  }
+
+  return (
+    <div className="not-prose my-6 overflow-hidden rounded-2xl border border-white/10 bg-[#0f1117] shadow-lg">
+      {/* Header */}
+      <div className="flex items-center justify-between border-b border-white/10 bg-[#13151c] px-5 py-3.5">
+        <div className="flex items-center gap-2.5">
+          <span className="text-lg">🔄</span>
+          <span className="font-semibold text-white">Transfer Pemain</span>
+        </div>
+        {isAdmin && onEdit && (
+          <button
+            onClick={() => onEdit(widgetId)}
+            className="flex items-center gap-1.5 rounded-lg border border-[#39FF14]/30 bg-[#39FF14]/10 px-3 py-1.5 text-xs font-medium text-[#39FF14] transition-all hover:bg-[#39FF14]/20 hover:border-[#39FF14]/60"
+          >
+            <Pencil size={12} />
+            Edit Widget
+          </button>
+        )}
+      </div>
+
+      {loading ? (
+        <LoadingState />
+      ) : error ? (
+        <ErrorState message={error} />
+      ) : transfers.length === 0 ? (
+        <p className="py-8 text-center text-sm text-gray-500">Belum ada data transfer.</p>
+      ) : (
+        <>
+          {/* League tabs */}
+          {leagues.length > 0 && (
+            <div className="flex flex-wrap gap-2 border-b border-white/10 bg-[#13151c] px-5 py-3">
+              <button
+                onClick={() => setActiveLeague(null)}
+                className={`rounded-lg px-4 py-1.5 text-xs font-bold uppercase tracking-wider transition-all ${
+                  activeLeague === null
+                    ? "bg-[#39FF14] text-black"
+                    : "border border-white/10 bg-white/5 text-gray-300 hover:border-[#39FF14]/40 hover:text-white"
+                }`}
+              >
+                Semua Liga
+              </button>
+              {leagues.map((l) => (
+                <button
+                  key={l}
+                  onClick={() => setActiveLeague(l)}
+                  className={`rounded-lg px-4 py-1.5 text-xs font-bold uppercase tracking-wider transition-all ${
+                    activeLeague === l
+                      ? "bg-[#39FF14] text-black"
+                      : "border border-white/10 bg-white/5 text-gray-300 hover:border-[#39FF14]/40 hover:text-white"
+                  }`}
+                >
+                  {l}
+                </button>
+              ))}
+            </div>
+          )}
+
+          {/* Table */}
+          <div className="overflow-x-auto">
+            <table className="w-full text-sm">
+              <thead>
+                <tr className="border-b border-white/10 bg-[#181b24]">
+                  <th className="px-4 py-3 text-left text-[10px] font-bold uppercase tracking-widest text-[#39FF14]/80">#</th>
+                  <th className="px-4 py-3 text-left text-[10px] font-bold uppercase tracking-widest text-[#39FF14]/80">Pemain</th>
+                  <th className="px-4 py-3 text-left text-[10px] font-bold uppercase tracking-widest text-gray-500">Ke</th>
+                  <th className="px-4 py-3 text-left text-[10px] font-bold uppercase tracking-widest text-gray-500">Liga</th>
+                  <th className="px-4 py-3 text-left text-[10px] font-bold uppercase tracking-widest text-gray-500">Nilai Transfer</th>
+                  <th className="px-4 py-3 text-left text-[10px] font-bold uppercase tracking-widest text-gray-500">Status</th>
+                  <th className="px-4 py-3 text-left text-[10px] font-bold uppercase tracking-widest text-gray-500">Tanggal</th>
+                </tr>
+              </thead>
+              <tbody className="divide-y divide-white/[0.05]">
+                {/* Group header */}
+                {activeLeague && (
+                  <tr className="bg-[#39FF14]/5">
+                    <td colSpan={7} className="px-4 py-2">
+                      <span className="flex items-center gap-2 text-[11px] font-bold uppercase tracking-widest text-[#39FF14]/70">
+                        <span className="h-1.5 w-1.5 rounded-full bg-[#39FF14]/60" />
+                        {activeLeague}
+                      </span>
+                    </td>
+                  </tr>
+                )}
+                {filtered.map((row, i) => {
+                  const st = statusConfig[row.status] ?? statusConfig.rumor
+                  return (
+                    <tr key={row.id} className="transition-colors hover:bg-white/[0.02]">
+                      <td className="px-4 py-3 text-xs font-mono text-gray-500 tabular-nums">
+                        {String(i + 1).padStart(2, "0")}
+                      </td>
+                      <td className="px-4 py-3">
+                        <div className="flex items-center gap-3">
+                          <div
+                            className="flex h-9 w-9 shrink-0 items-center justify-center rounded-full border-2 border-[#39FF14]/40 text-xs font-black text-[#39FF14]"
+                            style={{ background: "rgba(57,255,20,0.08)" }}
+                          >
+                            {row.player_initials || row.player_name.slice(0,2).toUpperCase()}
+                          </div>
+                          <div>
+                            <p className="font-bold text-white text-sm">{row.player_name}</p>
+                            <p className="text-[11px] text-gray-500 uppercase tracking-wide">
+                              {row.position}{row.age ? ` · ${row.age} TH` : ""}
+                            </p>
+                          </div>
+                        </div>
+                      </td>
+                      <td className="px-4 py-3">
+                        <div className="flex items-center gap-2">
+                          <span className="text-green-400">→</span>
+                          <div
+                            className="h-3 w-3 shrink-0 rounded-sm"
+                            style={{ background: row.from_club_color || "#888" }}
+                          />
+                          <span className="font-semibold text-white text-sm">{row.to_club}</span>
+                        </div>
+                      </td>
+                      <td className="px-4 py-3">
+                        <span className="rounded border border-[#a78bfa]/40 bg-[#a78bfa]/10 px-2 py-0.5 text-[10px] font-bold uppercase tracking-wider text-[#a78bfa]">
+                          {row.league_dest || row.league_label}
+                        </span>
+                      </td>
+                      <td className="px-4 py-3">
+                        {row.is_free ? (
+                          <span className="font-black text-blue-400 text-sm">Free</span>
+                        ) : (
+                          <span className="font-black text-[#39FF14] text-sm">€ {row.transfer_value}</span>
+                        )}
+                      </td>
+                      <td className="px-4 py-3">
+                        <span
+                          className="rounded border px-2 py-0.5 text-[10px] font-bold uppercase tracking-wider"
+                          style={{ color: st.color, background: st.bg, borderColor: st.border }}
+                        >
+                          <span
+                            className="mr-1 inline-block h-1.5 w-1.5 rounded-full align-middle"
+                            style={{ background: st.color }}
+                          />
+                          {st.label}
+                        </span>
+                      </td>
+                      <td className="px-4 py-3 text-[11px] text-gray-500 tabular-nums whitespace-nowrap">
+                        {formatDate(row.transfer_date)}
+                      </td>
+                    </tr>
+                  )
+                })}
+              </tbody>
+            </table>
+          </div>
+        </>
+      )}
+    </div>
+  )
+}
+
+// ── Peluang Juara Card ──────────────────────────────────────────────────────
+// Matches screenshot 5-7: ranked list with win %, pros/cons per team/country
+
+export interface PeluangRow {
+  id: string
+  widget_id: string
+  rank: number
+  team_name: string
+  team_flag: string
+  category: string
+  win_pct: number
+  reasons_win: string[]
+  reasons_lose: string[]
+}
+
+interface PeluangCardProps {
+  widgetId: string
+  isAdmin?: boolean
+  onEdit?: (widgetId: string) => void
+}
+
+export function PeluangCard({ widgetId, isAdmin, onEdit }: PeluangCardProps) {
+  const [teams, setTeams] = useState<PeluangRow[]>([])
+  const [loading, setLoading] = useState(true)
+  const [error, setError] = useState<string | null>(null)
+  const [expanded, setExpanded] = useState<string | null>(null)
+
+  useEffect(() => {
+    async function fetchData() {
+      try {
+        const supabase = createClient()
+        const { data, error } = await supabase
+          .from("widget_peluang")
+          .select("*")
+          .eq("widget_id", widgetId)
+          .order("rank", { ascending: true })
+        if (error) throw error
+        const parsed = (data ?? []).map((r: any) => ({
+          ...r,
+          reasons_win: Array.isArray(r.reasons_win)
+            ? r.reasons_win
+            : (r.reasons_win ? JSON.parse(r.reasons_win) : []),
+          reasons_lose: Array.isArray(r.reasons_lose)
+            ? r.reasons_lose
+            : (r.reasons_lose ? JSON.parse(r.reasons_lose) : []),
+        }))
+        setTeams(parsed)
+      } catch (e: any) {
+        setError(e.message ?? "Gagal memuat data peluang.")
+      } finally {
+        setLoading(false)
+      }
+    }
+    fetchData()
+  }, [widgetId])
+
+  // Group by category
+  const categories = [...new Set(teams.map((t) => t.category))].filter(Boolean)
+
+  const categoryColors: Record<string, string> = {
+    "FAVORIT UTAMA": "#39FF14",
+    "KANDIDAT KUAT": "#fbbf24",
+    "DARK HORSE": "#60a5fa",
+    "PELENGKAP": "#9ca3af",
+  }
+
+  return (
+    <div className="not-prose my-6 overflow-hidden rounded-2xl border border-white/10 bg-[#0f1117] shadow-lg">
+      {/* Header */}
+      <div className="flex items-center justify-between border-b border-white/10 bg-[#13151c] px-5 py-3.5">
+        <div className="flex items-center gap-2.5">
+          <span className="text-lg">🏆</span>
+          <span className="font-semibold text-white">Peluang Juara</span>
+        </div>
+        {isAdmin && onEdit && (
+          <button
+            onClick={() => onEdit(widgetId)}
+            className="flex items-center gap-1.5 rounded-lg border border-[#39FF14]/30 bg-[#39FF14]/10 px-3 py-1.5 text-xs font-medium text-[#39FF14] transition-all hover:bg-[#39FF14]/20 hover:border-[#39FF14]/60"
+          >
+            <Pencil size={12} />
+            Edit Widget
+          </button>
+        )}
+      </div>
+
+      {loading ? (
+        <LoadingState />
+      ) : error ? (
+        <ErrorState message={error} />
+      ) : teams.length === 0 ? (
+        <p className="py-8 text-center text-sm text-gray-500">Belum ada data peluang juara.</p>
+      ) : (
+        <div className="overflow-x-auto">
+          <table className="w-full text-sm">
+            <thead>
+              <tr className="border-b border-white/10 bg-[#181b24]">
+                <th className="px-4 py-3 text-left text-[10px] font-bold uppercase tracking-widest text-[#39FF14]/80">#</th>
+                <th className="px-4 py-3 text-left text-[10px] font-bold uppercase tracking-widest text-[#39FF14]/80">Tim Nasional</th>
+                <th className="px-4 py-3 text-left text-[10px] font-bold uppercase tracking-widest text-gray-500">Kategori</th>
+                <th className="px-4 py-3 text-left text-[10px] font-bold uppercase tracking-widest text-gray-500">Peluang Juara</th>
+                <th className="px-4 py-3 text-left text-[10px] font-bold uppercase tracking-widest text-gray-500">Peluang Tidak Juara</th>
+                <th className="px-4 py-3 text-left text-[10px] font-bold uppercase tracking-widest text-gray-500">✅ Alasan Bisa Juara</th>
+                <th className="px-4 py-3 text-left text-[10px] font-bold uppercase tracking-widest text-gray-500">❌ Alasan Tidak Juara</th>
+              </tr>
+            </thead>
+            <tbody className="divide-y divide-white/[0.05]">
+              {(() => {
+                const rows: React.ReactNode[] = []
+                let lastCat = ""
+                teams.forEach((team) => {
+                  if (team.category && team.category !== lastCat) {
+                    lastCat = team.category
+                    const catColor = categoryColors[team.category] || "#39FF14"
+                    rows.push(
+                      <tr key={`cat-${team.category}`} className="bg-[#39FF14]/5">
+                        <td colSpan={7} className="px-4 py-2">
+                          <span
+                            className="flex items-center gap-2 text-[11px] font-bold uppercase tracking-widest"
+                            style={{ color: `${catColor}99` }}
+                          >
+                            <span className="h-1.5 w-1.5 rounded-full" style={{ background: catColor }} />
+                            {team.category}
+                          </span>
+                        </td>
+                      </tr>
+                    )
+                  }
+                  const catColor = categoryColors[team.category] || "#39FF14"
+                  const losePct = Math.max(0, 100 - team.win_pct)
+                  rows.push(
+                    <tr key={team.id} className="transition-colors hover:bg-white/[0.02]">
+                      <td className="px-4 py-4 align-top">
+                        <div
+                          className="flex h-8 w-8 items-center justify-center rounded-lg text-xs font-black text-black"
+                          style={{ background: catColor }}
+                        >
+                          {team.rank}
+                        </div>
+                      </td>
+                      <td className="px-4 py-4 align-top">
+                        <div className="flex items-center gap-3">
+                          <span className="text-2xl leading-none">{team.team_flag}</span>
+                          <div>
+                            <p className="font-bold text-white">{team.team_name}</p>
+                          </div>
+                        </div>
+                      </td>
+                      <td className="px-4 py-4 align-top">
+                        <span
+                          className="rounded border px-2 py-0.5 text-[10px] font-bold uppercase tracking-wider"
+                          style={{ color: catColor, background: `${catColor}15`, borderColor: `${catColor}40` }}
+                        >
+                          {team.category}
+                        </span>
+                      </td>
+                      <td className="px-4 py-4 align-top">
+                        <div className="flex items-center gap-3 min-w-[120px]">
+                          <div className="h-2 flex-1 overflow-hidden rounded-full bg-white/10">
+                            <div
+                              className="h-full rounded-full"
+                              style={{ width: `${team.win_pct}%`, background: "#39FF14" }}
+                            />
+                          </div>
+                          <span className="w-12 text-right text-sm font-bold text-[#39FF14]">{team.win_pct}%</span>
+                        </div>
+                      </td>
+                      <td className="px-4 py-4 align-top">
+                        <div className="flex items-center gap-3 min-w-[120px]">
+                          <div className="h-2 flex-1 overflow-hidden rounded-full bg-white/10">
+                            <div
+                              className="h-full rounded-full bg-red-500"
+                              style={{ width: `${losePct}%` }}
+                            />
+                          </div>
+                          <span className="w-12 text-right text-sm font-bold text-red-400">{losePct}%</span>
+                        </div>
+                      </td>
+                      <td className="px-4 py-4 align-top max-w-[200px]">
+                        <ul className="space-y-1">
+                          {team.reasons_win.map((r: string, i: number) => (
+                            <li key={i} className="flex items-start gap-1.5 text-[11px] text-gray-300">
+                              <span className="mt-0.5 shrink-0 text-[#39FF14]">▲</span>
+                              {r}
+                            </li>
+                          ))}
+                        </ul>
+                      </td>
+                      <td className="px-4 py-4 align-top max-w-[200px]">
+                        <ul className="space-y-1">
+                          {team.reasons_lose.map((r: string, i: number) => (
+                            <li key={i} className="flex items-start gap-1.5 text-[11px] text-gray-300">
+                              <span className="mt-0.5 shrink-0 text-red-400">▼</span>
+                              {r}
+                            </li>
+                          ))}
+                        </ul>
+                      </td>
+                    </tr>
+                  )
+                })
+                return rows
+              })()}
+            </tbody>
+          </table>
+        </div>
       )}
     </div>
   )
