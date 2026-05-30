@@ -70,16 +70,60 @@ function cleanLegacyBadgeContent(content: string): string {
 
   // Gunakan regex sebagai fallback SSR-safe, lalu DOMParser di client
   if (typeof window === "undefined") {
-    // SSR: ekstrak shortcode via regex, buang seluruh badge HTML
-    return content
-      .replace(
-        /<div[^>]*class="[^"]*widget-shortcode-badge[^"]*"[^>]*data-shortcode="([^"]+)"[^>]*>[\s\S]*?<\/div>/g,
-        (_m, sc) => `<p>${sc}</p>`
+    // SSR: Regex non-greedy tidak bisa menangani nested div dengan benar.
+    // Gunakan fungsi pembantu yang menghitung kedalaman tag <div> secara manual
+    // agar bisa mencocokkan penutup </div> yang tepat untuk badge bersarang.
+    function extractNestedDiv(html: string, startIndex: number): { full: string; end: number } | null {
+      let depth = 0
+      let i = startIndex
+      while (i < html.length) {
+        if (html.startsWith("<div", i)) { depth++; i += 4; continue }
+        if (html.startsWith("</div>", i)) {
+          depth--
+          if (depth === 0) return { full: html.slice(startIndex, i + 6), end: i + 6 }
+          i += 6; continue
+        }
+        i++
+      }
+      return null
+    }
+
+    // Regex hanya untuk mendeteksi posisi awal badge, bukan mengekstrak seluruh isinya
+    const badgeStartRegex = /<div[^>]*class="[^"]*widget-shortcode-badge[^"]*"([^>]*)>/g
+    let result = ""
+    let lastIndex = 0
+    let match: RegExpExecArray | null
+
+    while ((match = badgeStartRegex.exec(content)) !== null) {
+      const matchStart = match.index
+      result += content.slice(lastIndex, matchStart)
+
+      // Ekstrak shortcode dari atribut
+      const attrsStr = match[0]
+      const scMatch  = attrsStr.match(/data-shortcode="([^"]+)"/)
+      const wIdMatch = attrsStr.match(/data-widget-id="([^"]+)"/)
+      const wTpMatch = attrsStr.match(/data-widget-type="([^"]+)"/)
+
+      const shortcode = scMatch?.[1] ?? (
+        wIdMatch && wTpMatch
+          ? (wTpMatch[1] === "jadwal"
+              ? `[match_data id="${wIdMatch[1]}"]`
+              : `[klasemen_data id="${wIdMatch[1]}"]`)
+          : null
       )
-      .replace(
-        /<div[^>]*class="[^"]*widget-shortcode-badge[^"]*"[\s\S]*?<\/div>/g,
-        ""
-      )
+
+      // Lewati seluruh elemen badge (termasuk nested div-nya)
+      const nested = extractNestedDiv(content, matchStart)
+      const endIndex = nested ? nested.end : badgeStartRegex.lastIndex
+
+      // Ganti badge dengan shortcode bersih (atau hapus jika tidak ada shortcode)
+      if (shortcode) result += `<p>${shortcode}</p>`
+      lastIndex = endIndex
+      badgeStartRegex.lastIndex = endIndex
+    }
+
+    result += content.slice(lastIndex)
+    return result
   }
 
   const parser = new DOMParser()
