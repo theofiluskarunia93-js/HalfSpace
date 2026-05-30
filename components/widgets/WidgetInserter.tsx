@@ -59,7 +59,7 @@ interface TransferEntry {
   from_club_color: string
   to_club: string
   league_dest: string
-  transfer_value: string
+  transfer_value: number | ""
   is_free: boolean
   status: "confirmed" | "official" | "medical" | "rumor"
   transfer_date: string
@@ -482,7 +482,8 @@ function TransferForm({
             position: r.position ?? "", age: r.age != null ? String(r.age) : "",
             from_club: r.from_club ?? "", from_club_color: r.from_club_color ?? "#888888",
             to_club: r.to_club ?? "", league_dest: r.league_dest ?? "",
-            transfer_value: r.transfer_value ?? "", is_free: r.is_free ?? false,
+            transfer_value: r.transfer_value != null ? Number(r.transfer_value) : "",
+            is_free: r.is_free ?? false,
             status: r.status ?? "confirmed", transfer_date: r.transfer_date ?? "",
           })))
           setActiveLeague(data[0].league_label ?? "Premier League")
@@ -515,7 +516,7 @@ function TransferForm({
         from_club_color: r.from_club_color || null,
         to_club: r.to_club || null,
         league_dest: r.league_dest || r.league_label,
-        transfer_value: r.is_free ? null : (r.transfer_value || null),
+        transfer_value: r.is_free ? null : (r.transfer_value !== "" ? Number(r.transfer_value) : null),
         is_free: r.is_free,
         status: r.status,
         transfer_date: r.transfer_date || null,
@@ -569,7 +570,23 @@ function TransferForm({
               <FField label="Liga Tujuan" value={row.league_dest} onChange={(v) => updateRow(row._localId, { league_dest: v })} placeholder="Premier League" />
               <FField label="Warna Klub Asal" value={row.from_club_color} onChange={(v) => updateRow(row._localId, { from_club_color: v })} type="color" />
               <div className="col-span-2 flex items-end gap-2">
-                <FField label="Nilai Transfer" value={row.transfer_value} onChange={(v) => updateRow(row._localId, { transfer_value: v })} placeholder="180M" className="flex-1" />
+                <div className={`flex flex-col gap-1 flex-1`}>
+                  <label className="text-[10px] font-bold uppercase tracking-widest text-zinc-500">Nilai Transfer (juta €)</label>
+                  <div className="relative flex items-center">
+                    <span className="pointer-events-none absolute left-2.5 text-xs text-zinc-500">€</span>
+                    <input
+                      type="number"
+                      min="0"
+                      step="0.1"
+                      value={row.transfer_value}
+                      onChange={(e) => updateRow(row._localId, { transfer_value: e.target.value === "" ? "" : Number(e.target.value) })}
+                      placeholder="85"
+                      disabled={row.is_free}
+                      className="w-full rounded-md border border-white/10 bg-white/5 pl-6 pr-10 py-1.5 text-xs text-white placeholder-zinc-600 outline-none transition focus:border-[#39FF14]/50 focus:ring-1 focus:ring-[#39FF14]/20 disabled:opacity-40"
+                    />
+                    <span className="pointer-events-none absolute right-2.5 text-[10px] text-zinc-500">juta</span>
+                  </div>
+                </div>
                 <div className="mb-0.5 flex items-center gap-2 rounded-md border border-white/10 bg-white/5 px-2.5 py-1.5">
                   <FCheckbox label="Free Transfer" checked={row.is_free} onChange={(v) => updateRow(row._localId, { is_free: v })} />
                 </div>

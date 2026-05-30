@@ -313,9 +313,17 @@ export function KlasemenCard({ widgetId, isAdmin, onEdit }: KlasemenCardProps) {
             </div>
           )}
 
-          {/* Table */}
-          <div className="overflow-x-auto">
-            <table className="w-full text-sm">
+          {/* Table — horizontal scroll on mobile with visible scrollbar */}
+          <div
+            className="overflow-x-auto"
+            style={{
+              overflowX: "auto",
+              WebkitOverflowScrolling: "touch",
+              scrollbarWidth: "thin",
+              scrollbarColor: "rgba(57,255,20,0.4) rgba(255,255,255,0.05)",
+            }}
+          >
+            <table className="w-full min-w-[480px] text-sm">
               <thead>
                 <tr className="border-b border-white/10 bg-[#181b24]">
                   <th className="px-4 py-3 text-left text-[10px] font-bold uppercase tracking-widest text-gray-500">
@@ -347,7 +355,7 @@ export function KlasemenCard({ widgetId, isAdmin, onEdit }: KlasemenCardProps) {
                         >
                           {i + 1}
                         </span>
-                        <span className="font-medium text-white">{row.team_name}</span>
+                        <span className="font-medium text-white whitespace-nowrap">{row.team_name}</span>
                       </div>
                     </td>
                     <td className="px-3 py-3 text-center tabular-nums text-gray-300">{row.played}</td>
@@ -359,6 +367,12 @@ export function KlasemenCard({ widgetId, isAdmin, onEdit }: KlasemenCardProps) {
                 ))}
               </tbody>
             </table>
+          </div>
+          {/* Mobile scroll hint */}
+          <div className="flex items-center justify-center gap-1.5 border-t border-white/5 py-2 sm:hidden">
+            <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" className="text-[#39FF14]/40"><path d="M5 12h14M12 5l7 7-7 7"/></svg>
+            <span className="text-[10px] text-gray-600">Geser untuk lihat lebih</span>
+            <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" className="text-[#39FF14]/40 rotate-180"><path d="M5 12h14M12 5l7 7-7 7"/></svg>
           </div>
 
           {/* Legend */}
@@ -393,7 +407,7 @@ export interface TransferRow {
   from_club_color: string
   to_club: string
   league_dest: string
-  transfer_value: string
+  transfer_value: number | null
   is_free: boolean
   status: "confirmed" | "official" | "medical" | "rumor"
   transfer_date: string | null
@@ -447,6 +461,14 @@ export function TransferCard({ widgetId, isAdmin, onEdit }: TransferCardProps) {
     try {
       return new Date(d).toLocaleDateString("id-ID", { day: "2-digit", month: "short", year: "numeric" })
     } catch { return d }
+  }
+
+  // Format numeric transfer value to readable string (in millions €)
+  function formatTransferValue(val: number | null): string {
+    if (val === null || val === undefined) return "-"
+    if (val >= 1000) return `€${(val / 1000).toFixed(val % 1000 === 0 ? 0 : 1)}M`
+    if (val >= 1) return `€${val}M`
+    return `€${(val * 1000).toFixed(0)}K`
   }
 
   return (
@@ -505,9 +527,17 @@ export function TransferCard({ widgetId, isAdmin, onEdit }: TransferCardProps) {
             </div>
           )}
 
-          {/* Table */}
-          <div className="overflow-x-auto">
-            <table className="w-full text-sm">
+          {/* Table — horizontal scroll on mobile with visible scrollbar */}
+          <div
+            className="overflow-x-auto"
+            style={{
+              overflowX: "auto",
+              WebkitOverflowScrolling: "touch",
+              scrollbarWidth: "thin",
+              scrollbarColor: "rgba(57,255,20,0.4) rgba(255,255,255,0.05)",
+            }}
+          >
+            <table className="w-full min-w-[640px] text-sm">
               <thead>
                 <tr className="border-b border-white/10 bg-[#181b24]">
                   <th className="px-4 py-3 text-left text-[10px] font-bold uppercase tracking-widest text-[#39FF14]/80">#</th>
@@ -547,7 +577,7 @@ export function TransferCard({ widgetId, isAdmin, onEdit }: TransferCardProps) {
                             {row.player_initials || row.player_name.slice(0,2).toUpperCase()}
                           </div>
                           <div>
-                            <p className="font-bold text-white text-sm">{row.player_name}</p>
+                            <p className="font-bold text-white text-sm whitespace-nowrap">{row.player_name}</p>
                             <p className="text-[11px] text-gray-500 uppercase tracking-wide">
                               {row.position}{row.age ? ` · ${row.age} TH` : ""}
                             </p>
@@ -561,11 +591,11 @@ export function TransferCard({ widgetId, isAdmin, onEdit }: TransferCardProps) {
                             className="h-3 w-3 shrink-0 rounded-sm"
                             style={{ background: row.from_club_color || "#888" }}
                           />
-                          <span className="font-semibold text-white text-sm">{row.to_club}</span>
+                          <span className="font-semibold text-white text-sm whitespace-nowrap">{row.to_club}</span>
                         </div>
                       </td>
                       <td className="px-4 py-3">
-                        <span className="rounded border border-[#a78bfa]/40 bg-[#a78bfa]/10 px-2 py-0.5 text-[10px] font-bold uppercase tracking-wider text-[#a78bfa]">
+                        <span className="rounded border border-[#a78bfa]/40 bg-[#a78bfa]/10 px-2 py-0.5 text-[10px] font-bold uppercase tracking-wider text-[#a78bfa] whitespace-nowrap">
                           {row.league_dest || row.league_label}
                         </span>
                       </td>
@@ -573,12 +603,14 @@ export function TransferCard({ widgetId, isAdmin, onEdit }: TransferCardProps) {
                         {row.is_free ? (
                           <span className="font-black text-blue-400 text-sm">Free</span>
                         ) : (
-                          <span className="font-black text-[#39FF14] text-sm">€ {row.transfer_value}</span>
+                          <span className="font-black text-[#39FF14] text-sm tabular-nums">
+                            {formatTransferValue(row.transfer_value)}
+                          </span>
                         )}
                       </td>
                       <td className="px-4 py-3">
                         <span
-                          className="rounded border px-2 py-0.5 text-[10px] font-bold uppercase tracking-wider"
+                          className="rounded border px-2 py-0.5 text-[10px] font-bold uppercase tracking-wider whitespace-nowrap"
                           style={{ color: st.color, background: st.bg, borderColor: st.border }}
                         >
                           <span
@@ -596,6 +628,12 @@ export function TransferCard({ widgetId, isAdmin, onEdit }: TransferCardProps) {
                 })}
               </tbody>
             </table>
+          </div>
+          {/* Mobile scroll hint */}
+          <div className="flex items-center justify-center gap-1.5 border-t border-white/5 py-2 sm:hidden">
+            <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" className="text-[#39FF14]/40"><path d="M5 12h14M12 5l7 7-7 7"/></svg>
+            <span className="text-[10px] text-gray-600">Geser untuk lihat lebih</span>
+            <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" className="text-[#39FF14]/40 rotate-180"><path d="M5 12h14M12 5l7 7-7 7"/></svg>
           </div>
         </>
       )}
@@ -695,8 +733,16 @@ export function PeluangCard({ widgetId, isAdmin, onEdit }: PeluangCardProps) {
       ) : teams.length === 0 ? (
         <p className="py-8 text-center text-sm text-gray-500">Belum ada data peluang juara.</p>
       ) : (
-        <div className="overflow-x-auto">
-          <table className="w-full text-sm">
+        <div
+          className="overflow-x-auto"
+          style={{
+            overflowX: "auto",
+            WebkitOverflowScrolling: "touch",
+            scrollbarWidth: "thin",
+            scrollbarColor: "rgba(57,255,20,0.4) rgba(255,255,255,0.05)",
+          }}
+        >
+          <table className="w-full min-w-[700px] text-sm">
             <thead>
               <tr className="border-b border-white/10 bg-[#181b24]">
                 <th className="px-4 py-3 text-left text-[10px] font-bold uppercase tracking-widest text-[#39FF14]/80">#</th>
@@ -807,6 +853,12 @@ export function PeluangCard({ widgetId, isAdmin, onEdit }: PeluangCardProps) {
               })()}
             </tbody>
           </table>
+        </div>
+        {/* Mobile scroll hint */}
+        <div className="flex items-center justify-center gap-1.5 border-t border-white/5 py-2 sm:hidden">
+          <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" className="text-[#39FF14]/40"><path d="M5 12h14M12 5l7 7-7 7"/></svg>
+          <span className="text-[10px] text-gray-600">Geser untuk lihat lebih</span>
+          <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" className="text-[#39FF14]/40 rotate-180"><path d="M5 12h14M12 5l7 7-7 7"/></svg>
         </div>
       )}
     </div>
