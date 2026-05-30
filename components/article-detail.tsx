@@ -68,19 +68,19 @@ function hasWidgetPlaceholder(content: string): boolean {
 function cleanLegacyBadgeContent(content: string): string {
   if (!content.includes("widget-shortcode-badge")) return content
 
-  // Gunakan regex sebagai fallback SSR-safe, lalu DOMParser di client
+  // ── SSR path (tidak ada DOMParser) ────────────────────────────────────────
   if (typeof window === "undefined") {
-    // SSR: Regex non-greedy tidak bisa menangani nested div dengan benar.
-    // Gunakan fungsi pembantu yang menghitung kedalaman tag <div> secara manual
-    // agar bisa mencocokkan penutup </div> yang tepat untuk badge bersarang.
-    function extractNestedDiv(html: string, startIndex: number): { full: string; end: number } | null {
+    // Hitung kedalaman tag <div> secara manual agar nested div bisa di-skip
+    // dengan benar — regex greedy tidak bisa menangani ini.
+    function extractNestedDiv(html: string, startIndex: number): { end: number } | null {
       let depth = 0
       let i = startIndex
       while (i < html.length) {
-        if (html.startsWith("<div", i)) { depth++; i += 4; continue }
-        if (html.startsWith("</div>", i)) {
+        // Case-insensitive & toleran whitespace: <div , <DIV>, dll
+        if (/^<div[\s>]/i.test(html.slice(i, i + 5))) { depth++; i += 4; continue }
+        if (/^<\/div>/i.test(html.slice(i, i + 6))) {
           depth--
-          if (depth === 0) return { full: html.slice(startIndex, i + 6), end: i + 6 }
+          if (depth === 0) return { end: i + 6 }
           i += 6; continue
         }
         i++
@@ -88,8 +88,8 @@ function cleanLegacyBadgeContent(content: string): string {
       return null
     }
 
-    // Regex hanya untuk mendeteksi posisi awal badge, bukan mengekstrak seluruh isinya
-    const badgeStartRegex = /<div[^>]*class="[^"]*widget-shortcode-badge[^"]*"([^>]*)>/g
+    // Flag `i` agar cocok meski kapitalisasi berbeda
+    const badgeStartRegex = /<div[^>]*class="[^"]*widget-shortcode-badge[^"]*"([^>]*)>/gi
     let result = ""
     let lastIndex = 0
     let match: RegExpExecArray | null
@@ -98,7 +98,7 @@ function cleanLegacyBadgeContent(content: string): string {
       const matchStart = match.index
       result += content.slice(lastIndex, matchStart)
 
-      // Ekstrak shortcode dari atribut
+      // Ekstrak shortcode dari atribut div pembuka
       const attrsStr = match[0]
       const scMatch  = attrsStr.match(/data-shortcode="([^"]+)"/)
       const wIdMatch = attrsStr.match(/data-widget-id="([^"]+)"/)
@@ -112,11 +112,10 @@ function cleanLegacyBadgeContent(content: string): string {
           : null
       )
 
-      // Lewati seluruh elemen badge (termasuk nested div-nya)
+      // Skip seluruh badge (nested div) — gunakan lastIndex sebagai fallback
       const nested = extractNestedDiv(content, matchStart)
       const endIndex = nested ? nested.end : badgeStartRegex.lastIndex
 
-      // Ganti badge dengan shortcode bersih (atau hapus jika tidak ada shortcode)
       if (shortcode) result += `<p>${shortcode}</p>`
       lastIndex = endIndex
       badgeStartRegex.lastIndex = endIndex
@@ -126,6 +125,7 @@ function cleanLegacyBadgeContent(content: string): string {
     return result
   }
 
+  // ── Client path (DOMParser tersedia) ─────────────────────────────────────
   const parser = new DOMParser()
   const doc = parser.parseFromString(content, "text/html")
 
@@ -141,15 +141,23 @@ function cleanLegacyBadgeContent(content: string): string {
           : `[klasemen_data id="${wId}"]`
       })()
 
-    const parentP = el.closest("p")
+    // Naiki ke ancestor tertinggi yang masih merupakan anak tunggal dari parent-nya
+    // agar semua wrapper div ikut terhapus — mencegah teks inner badge bocor ke DOM.
+    let target: Element = el
+    while (
+      target.parentElement &&
+      target.parentElement !== doc.body &&
+      target.parentElement.children.length === 1
+    ) {
+      target = target.parentElement
+    }
+
     if (shortcode) {
       const p = doc.createElement("p")
       p.textContent = shortcode
-      if (parentP && parentP !== el) parentP.replaceWith(p)
-      else el.replaceWith(p)
+      target.replaceWith(p)
     } else {
-      if (parentP && parentP !== el) parentP.remove()
-      else el.remove()
+      target.remove()
     }
   })
 
