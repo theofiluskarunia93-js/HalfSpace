@@ -561,6 +561,7 @@ export function CreateArticleView({ onBack, articleId }: CreateArticleViewProps)
     // Konversi badge placeholder → shortcode teks untuk disimpan ke DB
     const htmlContent = resolveShortcodesForSave(rawHtml)
 
+    const now = new Date().toISOString()
     const payload = {
       title,
       slug: generateSlug(title),
@@ -571,7 +572,8 @@ export function CreateArticleView({ onBack, articleId }: CreateArticleViewProps)
       meta_title: metaTitle || null,
       meta_description: metaDescription || null,
       status: publish ? "published" : "draft",
-      published_at: publish ? new Date().toISOString() : null,
+      published_at: publish ? now : null,
+      updated_at: now,
       is_editor_choice: isEditorChoice,
     }
 

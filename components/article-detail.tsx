@@ -10,7 +10,7 @@ import { ArticleBody } from "@/components/article/ArticleBody"
 import {
   Clock, Eye, Calendar, ChevronRight, Home,
   Share2, Twitter, Facebook, Link2, Check,
-  BookOpen, ArrowUp, User, MessageSquare, Send,
+  BookOpen, ArrowUp, User, MessageSquare, Send, RefreshCw,
 } from "lucide-react"
 
 // ─── Types ─────────────────────────────────────────────────────────────────
@@ -26,6 +26,7 @@ interface Article {
   views: number
   published_at: string
   created_at: string
+  updated_at: string | null
   categories: { name: string; slug: string } | null
 }
 
@@ -220,7 +221,7 @@ function ArticleSchema({ article }: { article: Article }) {
     "description": article.excerpt ?? "",
     "image": article.featured_image_url ? [article.featured_image_url] : [],
     "datePublished": article.published_at || article.created_at,
-    "dateModified": article.created_at,
+    "dateModified": article.updated_at || article.created_at,
     "author": {
       "@type": "Organization",
       "name": "Redaksi HalfSpace",
@@ -662,50 +663,86 @@ function ArticleSkeleton() {
   )
 }
 
-// ─── Comment Section ───────────────────────────────────────────────────────
+// ─── Comment Section (Supabase realtime) ───────────────────────────────────
 interface Comment {
   id: string
+  article_id: string
   name: string
   text: string
-  timestamp: string
+  created_at: string
 }
 
 function CommentSection({ articleId }: { articleId: string }) {
+  const supabaseComments = createClient()
   const [comments, setComments] = useState<Comment[]>([])
   const [name, setName] = useState("")
   const [text, setText] = useState("")
   const [isSubmitting, setIsSubmitting] = useState(false)
   const [submitted, setSubmitted] = useState(false)
+  const [isLoading, setIsLoading] = useState(true)
+  const [error, setError] = useState<string | null>(null)
 
+  // Fetch awal + subscribe realtime
   useEffect(() => {
-    try {
-      const stored = localStorage.getItem(`comments_${articleId}`)
-      if (stored) setComments(JSON.parse(stored))
-    } catch {}
+    setIsLoading(true)
+    setError(null)
+
+    // Fetch komentar awal
+    supabaseComments
+      .from("comments")
+      .select("*")
+      .eq("article_id", articleId)
+      .order("created_at", { ascending: false })
+      .then(({ data, error: err }) => {
+        if (err) setError("Gagal memuat komentar.")
+        else setComments((data as Comment[]) || [])
+        setIsLoading(false)
+      })
+
+    // Subscribe realtime — komentar baru langsung muncul tanpa reload
+    const channel = supabaseComments
+      .channel(`comments:${articleId}`)
+      .on(
+        "postgres_changes",
+        {
+          event: "INSERT",
+          schema: "public",
+          table: "comments",
+          filter: `article_id=eq.${articleId}`,
+        },
+        (payload) => {
+          setComments((prev) => [payload.new as Comment, ...prev])
+        }
+      )
+      .subscribe()
+
+    return () => {
+      supabaseComments.removeChannel(channel)
+    }
   }, [articleId])
 
-  const handleSubmit = () => {
+  const handleSubmit = async () => {
     if (!name.trim() || !text.trim()) return
     setIsSubmitting(true)
-    setTimeout(() => {
-      const newComment: Comment = {
-        id: Date.now().toString(),
+    setError(null)
+
+    const { error: insertError } = await supabaseComments
+      .from("comments")
+      .insert({
+        article_id: articleId,
         name: name.trim(),
         text: text.trim(),
-        timestamp: new Date().toLocaleDateString("id-ID", {
-          day: "numeric", month: "long", year: "numeric",
-          hour: "2-digit", minute: "2-digit",
-        }),
-      }
-      const updated = [newComment, ...comments]
-      setComments(updated)
-      try { localStorage.setItem(`comments_${articleId}`, JSON.stringify(updated)) } catch {}
+      })
+
+    if (insertError) {
+      setError("Gagal mengirim komentar. Coba lagi.")
+    } else {
       setName("")
       setText("")
-      setIsSubmitting(false)
       setSubmitted(true)
       setTimeout(() => setSubmitted(false), 3000)
-    }, 600)
+    }
+    setIsSubmitting(false)
   }
 
   return (
@@ -716,13 +753,14 @@ function CommentSection({ articleId }: { articleId: string }) {
       >
         <MessageSquare className="h-5 w-5 text-primary" aria-hidden="true" />
         Komentar
-        {comments.length > 0 && (
+        {!isLoading && comments.length > 0 && (
           <span className="ml-1 rounded-full bg-primary/15 px-2 py-0.5 text-xs font-semibold text-primary normal-case tracking-normal">
             {comments.length}
           </span>
         )}
       </h2>
 
+      {/* Form komentar */}
       <div className="rounded-xl border border-border bg-card p-5 mb-6">
         <p className="mb-4 text-sm font-semibold text-foreground">Tulis Komentar</p>
         <div className="flex flex-col gap-3">
@@ -742,6 +780,9 @@ function CommentSection({ articleId }: { articleId: string }) {
             maxLength={1000}
             className="w-full resize-none rounded-lg border border-border bg-background px-3 py-2 text-sm text-foreground placeholder:text-muted-foreground focus:outline-none focus:ring-1 focus:ring-primary"
           />
+          {error && (
+            <p className="text-xs text-destructive">{error}</p>
+          )}
           <div className="flex items-center justify-between flex-wrap gap-2">
             <p className="text-xs text-muted-foreground">
               Harap jaga sopan santun dalam berkomentar.
@@ -763,7 +804,21 @@ function CommentSection({ articleId }: { articleId: string }) {
         </div>
       </div>
 
-      {comments.length === 0 ? (
+      {/* Daftar komentar */}
+      {isLoading ? (
+        <div className="flex flex-col gap-3">
+          {[1, 2].map((i) => (
+            <div key={i} className="animate-pulse rounded-xl border border-border bg-card px-5 py-4">
+              <div className="mb-2 flex items-center justify-between">
+                <div className="h-3 w-24 rounded bg-muted" />
+                <div className="h-3 w-20 rounded bg-muted" />
+              </div>
+              <div className="h-3 w-full rounded bg-muted" />
+              <div className="mt-1 h-3 w-3/4 rounded bg-muted" />
+            </div>
+          ))}
+        </div>
+      ) : comments.length === 0 ? (
         <p className="text-sm text-muted-foreground text-center py-6">
           Belum ada komentar. Jadilah yang pertama berkomentar!
         </p>
@@ -773,7 +828,15 @@ function CommentSection({ articleId }: { articleId: string }) {
             <div key={c.id} className="rounded-xl border border-border bg-card px-5 py-4">
               <div className="flex items-center justify-between gap-2 mb-2">
                 <span className="text-sm font-semibold text-foreground">{c.name}</span>
-                <span className="text-xs text-muted-foreground">{c.timestamp}</span>
+                <time
+                  dateTime={c.created_at}
+                  className="text-xs text-muted-foreground"
+                >
+                  {new Date(c.created_at).toLocaleDateString("id-ID", {
+                    day: "numeric", month: "long", year: "numeric",
+                    hour: "2-digit", minute: "2-digit",
+                  })}
+                </time>
               </div>
               <p className="text-sm text-foreground/85 leading-relaxed whitespace-pre-wrap">{c.text}</p>
             </div>
@@ -1040,6 +1103,18 @@ export function ArticleDetail({ articleId }: ArticleDetailProps) {
                         {formatDateTime(article.published_at || article.created_at)}
                       </time>
                     </span>
+                    {article.updated_at && article.updated_at !== article.published_at && article.updated_at !== article.created_at && (
+                      <span className="flex items-center gap-1.5 rounded-full bg-primary/10 px-2 py-0.5 text-primary">
+                        <RefreshCw className="h-3 w-3 flex-shrink-0" aria-hidden="true" />
+                        <time
+                          dateTime={article.updated_at}
+                          itemProp="dateModified"
+                          title="Artikel ini telah diperbarui"
+                        >
+                          Diperbarui: {formatDateTime(article.updated_at)}
+                        </time>
+                      </span>
+                    )}
                     <span className="flex items-center gap-1.5">
                       <Clock className="h-3.5 w-3.5 flex-shrink-0" aria-hidden="true" />
                       {readingTime} menit baca
