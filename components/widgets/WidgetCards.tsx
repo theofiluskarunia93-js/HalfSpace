@@ -733,6 +733,7 @@ export function PeluangCard({ widgetId, isAdmin, onEdit }: PeluangCardProps) {
       ) : teams.length === 0 ? (
         <p className="py-8 text-center text-sm text-gray-500">Belum ada data peluang juara.</p>
       ) : (
+        <>
         <div
           className="overflow-x-auto"
           style={{
@@ -860,6 +861,7 @@ export function PeluangCard({ widgetId, isAdmin, onEdit }: PeluangCardProps) {
           <span className="text-[10px] text-gray-600">Geser untuk lihat lebih</span>
           <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" className="text-[#39FF14]/40 rotate-180"><path d="M5 12h14M12 5l7 7-7 7"/></svg>
         </div>
+        </>
       )}
     </div>
   )
