@@ -1,11 +1,58 @@
 "use client"
 
-import { useState, useEffect } from "react"
+import { useState, useEffect, useCallback } from "react"
 import { useRouter } from "next/navigation"
 import { PublicPage } from "@/app/page"
 import { createClient } from "@/lib/supabase/client"
 import { trackArticleView } from "@/lib/supabase/tracking"
 import { GroupArticleGrid } from "@/components/group-article-grid"
+import { ChevronLeft, ChevronRight } from "lucide-react"
+
+// ─── Pagination constant ───────────────────────────────────────────────────
+const PAGE_SIZE = 9
+
+// ─── Pagination component (opsional, hanya dipakai ArticleGrid) ───────────
+function Pagination({
+  page, totalPages, onChange,
+}: {
+  page: number; totalPages: number; onChange: (p: number) => void
+}) {
+  if (totalPages <= 1) return null
+  return (
+    <div className="mt-10 flex items-center justify-center gap-2">
+      <button
+        onClick={() => onChange(page - 1)}
+        disabled={page === 0}
+        className="flex h-9 w-9 items-center justify-center rounded-lg border border-border text-muted-foreground transition-colors hover:text-foreground disabled:opacity-40"
+      >
+        <ChevronLeft className="h-4 w-4" />
+      </button>
+      {Array.from({ length: totalPages }, (_, i) => (
+        <button
+          key={i}
+          onClick={() => onChange(i)}
+          className={`h-9 min-w-[36px] rounded-lg border px-3 text-sm font-medium transition-colors ${
+            i === page
+              ? "border-primary bg-primary text-primary-foreground"
+              : "border-border text-muted-foreground hover:text-foreground"
+          }`}
+        >
+          {i + 1}
+        </button>
+      )).slice(
+        Math.max(0, page - 2),
+        Math.min(totalPages, page + 3)
+      )}
+      <button
+        onClick={() => onChange(page + 1)}
+        disabled={page >= totalPages - 1}
+        className="flex h-9 w-9 items-center justify-center rounded-lg border border-border text-muted-foreground transition-colors hover:text-foreground disabled:opacity-40"
+      >
+        <ChevronRight className="h-4 w-4" />
+      </button>
+    </div>
+  )
+}
 
 const COMP_TO_ROUTE: Record<string, string> = {
   "champions-league": "/europe/champions-league",
@@ -125,33 +172,59 @@ function SkeletonCard() {
 
 function ArticleGrid({ categorySlug, title }: { categorySlug?: string; title: string }) {
   const [articles, setArticles] = useState<any[]>([])
+  const [totalCount, setTotalCount] = useState(0)
+  const [page, setPage] = useState(0)
   const [isLoading, setIsLoading] = useState(true)
   const router = useRouter()
   const supabase = createClient()
 
-  useEffect(() => {
-    async function fetchArticles() {
-      let query = supabase
-        .from("articles")
-        .select("*, categories(name, slug)")
-        .eq("status", "published")
-        .order("published_at", { ascending: false })
-        .limit(6)
+  const totalPages = Math.ceil(totalCount / PAGE_SIZE)
 
-      if (categorySlug) {
-        const { data: cat } = await supabase
-          .from("categories")
-          .select("id")
-          .eq("slug", categorySlug)
-          .single()
-        if (cat) query = query.eq("category_id", cat.id)
-      }
+  const fetchArticles = useCallback(async () => {
+    setIsLoading(true)
+    const from = page * PAGE_SIZE
+    const to = from + PAGE_SIZE - 1
 
-      const { data } = await query
-      setArticles(data || [])
-      setIsLoading(false)
+    // Resolve category id once if slug provided
+    let categoryId: string | null = null
+    if (categorySlug) {
+      const { data: cat } = await supabase
+        .from("categories")
+        .select("id")
+        .eq("slug", categorySlug)
+        .single()
+      categoryId = cat?.id ?? null
     }
+
+    // Count query
+    let countQuery = supabase
+      .from("articles")
+      .select("id", { count: "exact", head: true })
+      .eq("status", "published")
+    if (categoryId) countQuery = countQuery.eq("category_id", categoryId)
+
+    // Data query with .range()
+    let dataQuery = supabase
+      .from("articles")
+      .select("*, categories(name, slug)")
+      .eq("status", "published")
+      .order("published_at", { ascending: false })
+      .range(from, to)
+    if (categoryId) dataQuery = dataQuery.eq("category_id", categoryId)
+
+    const [{ count }, { data }] = await Promise.all([countQuery, dataQuery])
+    setTotalCount(count ?? 0)
+    setArticles(data || [])
+    setIsLoading(false)
+  }, [supabase, categorySlug, page])
+
+  useEffect(() => {
     fetchArticles()
+  }, [fetchArticles])
+
+  // Reset page on category change
+  useEffect(() => {
+    setPage(0)
   }, [categorySlug])
 
   const handleView = async (id: string) => {
@@ -160,22 +233,32 @@ function ArticleGrid({ categorySlug, title }: { categorySlug?: string; title: st
   }
 
   if (isLoading) return (
-    <div className="grid gap-6 md:grid-cols-2 lg:grid-cols-3">
-      {[1,2,3].map(i => <SkeletonCard key={i} />)}
+    <div>
+      <div className="grid gap-6 md:grid-cols-2 lg:grid-cols-3">
+        {[1,2,3,4,5,6].map(i => <SkeletonCard key={i} />)}
+      </div>
     </div>
   )
 
-  if (articles.length === 0) return (
+  if (articles.length === 0 && page === 0) return (
     <div className="rounded-xl border border-dashed border-border bg-card/50 p-12 text-center text-muted-foreground">
       Belum ada artikel untuk {title}. Tambahkan artikel melalui CMS.
     </div>
   )
 
   return (
-    <div className="grid gap-6 md:grid-cols-2 lg:grid-cols-3">
-      {articles.map(article => (
-        <ArticleCard key={article.id} article={article} onView={handleView} />
-      ))}
+    <div>
+      <div className="grid gap-6 md:grid-cols-2 lg:grid-cols-3">
+        {articles.map(article => (
+          <ArticleCard key={article.id} article={article} onView={handleView} />
+        ))}
+      </div>
+      <Pagination page={page} totalPages={totalPages} onChange={p => { setPage(p); window.scrollTo({ top: 0, behavior: "smooth" }) }} />
+      {totalCount > 0 && (
+        <p className="mt-4 text-center text-xs text-muted-foreground">
+          Menampilkan {page * PAGE_SIZE + 1}–{Math.min((page + 1) * PAGE_SIZE, totalCount)} dari {totalCount} artikel
+        </p>
+      )}
     </div>
   )
 }

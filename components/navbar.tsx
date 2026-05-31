@@ -1,9 +1,9 @@
 "use client"
 
-import { useState, useEffect } from "react"
+import { useState, useEffect, useRef, useCallback } from "react"
 import { useRouter } from "next/navigation"
 import { PublicPage } from "@/app/page"
-import { ChevronDown, Menu, X } from "lucide-react"
+import { ChevronDown, Menu, X, Search } from "lucide-react"
 import { Button } from "@/components/ui/button"
 import { createClient } from "@/lib/supabase/client"
 
@@ -55,12 +55,136 @@ const asiaComps = [
   { id: "aff-cup", label: "AFF Cup" },
 ] as const
 
+// ─── Search Types ─────────────────────────────────────────────────────────
+interface SearchResult {
+  id: string
+  title: string
+  excerpt: string | null
+  categories: { name: string }[] | null
+}
+
+// ─── SearchBar ────────────────────────────────────────────────────────────
+function SearchBar({ onClose }: { onClose: () => void }) {
+  const router = useRouter()
+  const supabase = createClient()
+  const [query, setQuery] = useState("")
+  const [results, setResults] = useState<SearchResult[]>([])
+  const [isSearching, setIsSearching] = useState(false)
+  const inputRef = useRef<HTMLInputElement>(null)
+  const containerRef = useRef<HTMLDivElement>(null)
+
+  useEffect(() => {
+    inputRef.current?.focus()
+  }, [])
+
+  // Close on click outside
+  useEffect(() => {
+    function handleClick(e: MouseEvent) {
+      if (containerRef.current && !containerRef.current.contains(e.target as Node)) {
+        onClose()
+      }
+    }
+    document.addEventListener("mousedown", handleClick)
+    return () => document.removeEventListener("mousedown", handleClick)
+  }, [onClose])
+
+  // Debounced search — 350ms
+  const doSearch = useCallback(async (q: string) => {
+    const trimmed = q.trim()
+    if (trimmed.length < 2) {
+      setResults([])
+      setIsSearching(false)
+      return
+    }
+    setIsSearching(true)
+    const { data } = await supabase
+      .from("articles")
+      .select("id, title, excerpt, categories(name)")
+      .eq("status", "published")
+      .or(`title.ilike.%${trimmed}%,excerpt.ilike.%${trimmed}%`)
+      .order("published_at", { ascending: false })
+      .limit(6)
+    setResults((data as SearchResult[]) || [])
+    setIsSearching(false)
+  }, [supabase])
+
+  useEffect(() => {
+    const t = setTimeout(() => doSearch(query), 350)
+    return () => clearTimeout(t)
+  }, [query, doSearch])
+
+  const handleSelect = (id: string) => {
+    router.push(`/article/${id}`)
+    onClose()
+  }
+
+  return (
+    <div ref={containerRef} className="relative w-full max-w-xl mx-auto">
+      {/* Input */}
+      <div className="flex items-center gap-2 rounded-xl border border-primary/40 bg-card px-4 py-2.5 shadow-lg">
+        <Search className="h-4 w-4 text-muted-foreground shrink-0" />
+        <input
+          ref={inputRef}
+          value={query}
+          onChange={e => setQuery(e.target.value)}
+          onKeyDown={e => e.key === "Escape" && onClose()}
+          placeholder="Cari artikel..."
+          className="flex-1 bg-transparent text-sm text-foreground placeholder:text-muted-foreground focus:outline-none"
+        />
+        {isSearching && (
+          <div className="h-3.5 w-3.5 animate-spin rounded-full border-2 border-primary border-t-transparent shrink-0" />
+        )}
+        <button onClick={onClose} className="text-muted-foreground hover:text-foreground transition-colors">
+          <X className="h-4 w-4" />
+        </button>
+      </div>
+
+      {/* Dropdown results */}
+      {query.trim().length >= 2 && (
+        <div className="absolute left-0 right-0 top-full mt-2 rounded-xl border border-border bg-card shadow-xl overflow-hidden z-50">
+          {results.length === 0 && !isSearching ? (
+            <p className="px-4 py-6 text-center text-sm text-muted-foreground">
+              Tidak ada artikel ditemukan untuk &quot;{query}&quot;
+            </p>
+          ) : (
+            <ul>
+              {results.map((r, i) => (
+                <li key={r.id}>
+                  <button
+                    onClick={() => handleSelect(r.id)}
+                    className="flex w-full flex-col gap-0.5 px-4 py-3 text-left transition-colors hover:bg-secondary"
+                  >
+                    <span className="flex items-center gap-2">
+                      {r.categories?.[0]?.name && (
+                        <span className="rounded bg-primary/15 px-1.5 py-0.5 text-[10px] font-semibold text-primary">
+                          {r.categories?.[0]?.name}
+                        </span>
+                      )}
+                      <span className="text-sm font-medium text-foreground line-clamp-1">{r.title}</span>
+                    </span>
+                    {r.excerpt && (
+                      <span className="text-xs text-muted-foreground line-clamp-1 pl-0.5">{r.excerpt}</span>
+                    )}
+                  </button>
+                  {i < results.length - 1 && <div className="mx-4 border-b border-border/50" />}
+                </li>
+              ))}
+            </ul>
+          )}
+        </div>
+      )}
+    </div>
+  )
+}
+
+// ─── Navbar ────────────────────────────────────────────────────────────────
 export function Navbar({ currentPage, onPageChange, onScrollToSection }: NavbarProps) {
   const router = useRouter()
   const [isMenuOpen, setIsMenuOpen] = useState(false)
   const [openDropdown, setOpenDropdown] = useState<string | null>(null)
   const [openSubmenu, setOpenSubmenu] = useState<string | null>(null)
   const [logoUrl, setLogoUrl] = useState<string | null>(null)
+  const [searchOpen, setSearchOpen] = useState(false)
   const supabase = createClient()
 
   useEffect(() => {
@@ -100,8 +224,15 @@ export function Navbar({ currentPage, onPageChange, onScrollToSection }: NavbarP
     <nav className="sticky top-0 z-50 border-b border-border bg-background/95 backdrop-blur supports-[backdrop-filter]:bg-background/60">
       <div className="mx-auto max-w-7xl px-4">
 
+        {/* Search overlay */}
+        {searchOpen && (
+          <div className="absolute inset-x-0 top-0 z-50 flex h-16 items-center px-4 bg-background/95 backdrop-blur">
+            <SearchBar onClose={() => setSearchOpen(false)} />
+          </div>
+        )}
+
         {/* Main navbar row */}
-        <div className="flex h-16 items-center">
+        <div className={`flex h-16 items-center ${searchOpen ? "invisible" : ""}`}>
 
           {/* Logo */}
           <div className="flex-1 md:flex-none md:w-auto">
@@ -119,8 +250,15 @@ export function Navbar({ currentPage, onPageChange, onScrollToSection }: NavbarP
           {/* Center spacer (trending & standings removed) */}
           <div className="flex flex-1 items-center justify-center" />
 
-          {/* Desktop hamburger */}
-          <div className="hidden w-[200px] items-center justify-end gap-6 md:flex">
+          {/* Desktop: search + hamburger */}
+          <div className="hidden w-[200px] items-center justify-end gap-3 md:flex">
+            <button
+              onClick={() => setSearchOpen(true)}
+              className="neon-nav-icon flex items-center text-foreground transition-colors"
+              aria-label="Cari artikel"
+            >
+              <Search className="h-5 w-5" />
+            </button>
             <div className="relative">
               <button
                 onClick={() => setOpenDropdown(openDropdown === "categories" ? null : "categories")}
@@ -206,8 +344,11 @@ export function Navbar({ currentPage, onPageChange, onScrollToSection }: NavbarP
             </div>
           </div>
 
-          {/* Mobile hamburger */}
-          <div className="flex w-[120px] justify-end md:hidden">
+          {/* Mobile: search + hamburger */}
+          <div className="flex w-[120px] items-center justify-end gap-1 md:hidden">
+            <Button variant="ghost" size="icon" className="neon-nav-icon text-foreground" onClick={() => setSearchOpen(true)}>
+              <Search className="h-5 w-5" />
+            </Button>
             <Button variant="ghost" size="icon" className="neon-nav-icon text-foreground" onClick={() => setIsMenuOpen(!isMenuOpen)}>
               {isMenuOpen ? <X className="h-5 w-5" /> : <Menu className="h-5 w-5" />}
             </Button>

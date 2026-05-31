@@ -11,6 +11,7 @@ import {
   Globe,
   ChevronLeft,
   ChevronRight,
+  MessageSquare,
 } from "lucide-react"
 import { Button } from "@/components/ui/button"
 
@@ -27,6 +28,7 @@ const menuItems = [
   { id: "dashboard" as CMSView, label: "Dashboard", icon: LayoutDashboard },
   { id: "posts" as CMSView, label: "Posts", icon: FileText },
   { id: "analytics" as CMSView, label: "Analytics", icon: BarChart3 },
+  { id: "comments" as CMSView, label: "Komentar", icon: MessageSquare },
   { id: "users" as CMSView, label: "Users", icon: Users },
   { id: "settings" as CMSView, label: "Settings", icon: Settings },
 ]

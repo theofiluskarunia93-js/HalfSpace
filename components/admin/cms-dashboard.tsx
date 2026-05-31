@@ -8,8 +8,9 @@ import { AnalyticsView } from "./views/analytics-view"
 import { UsersView } from "./views/users-view"
 import { SettingsView } from "./views/settings-view"
 import { CreateArticleView } from "./views/create-article-view"
+import { CommentsView } from "./views/comments-view"
 
-export type CMSView = "dashboard" | "posts" | "analytics" | "users" | "settings" | "create-article" | "edit-article"
+export type CMSView = "dashboard" | "posts" | "analytics" | "comments" | "users" | "settings" | "create-article" | "edit-article"
 
 interface CMSDashboardProps {
   onLogout: () => void
@@ -43,6 +44,8 @@ export function CMSDashboard({ onLogout, onGoToPublic }: CMSDashboardProps) {
         return <PostsView onCreateArticle={handleCreateArticle} onEditArticle={handleEditArticle} />
       case "analytics":
         return <AnalyticsView />
+      case "comments":
+        return <CommentsView />
       case "users":
         return <UsersView />
       case "settings":
