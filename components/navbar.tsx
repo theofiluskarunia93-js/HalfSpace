@@ -59,6 +59,7 @@ const asiaComps = [
 // ─── Search Types ─────────────────────────────────────────────────────────
 interface SearchResult {
   id: string
+  slug: string
   title: string
   excerpt: string | null
   categories: { name: string }[] | null
@@ -100,7 +101,7 @@ function SearchBar({ onClose }: { onClose: () => void }) {
     setIsSearching(true)
     const { data } = await supabase
       .from("articles")
-      .select("id, title, excerpt, categories(name)")
+      .select("id, slug, title, excerpt, categories(name)")
       .eq("status", "published")
       .or(`title.ilike.%${trimmed}%,excerpt.ilike.%${trimmed}%`)
       .order("published_at", { ascending: false })
@@ -114,8 +115,8 @@ function SearchBar({ onClose }: { onClose: () => void }) {
     return () => clearTimeout(t)
   }, [query, doSearch])
 
-  const handleSelect = (id: string) => {
-    router.push(`/article/${id}`)
+  const handleSelect = (slug: string) => {
+    router.push(`/article/${slug}`)
     onClose()
   }
 
@@ -152,7 +153,7 @@ function SearchBar({ onClose }: { onClose: () => void }) {
               {results.map((r, i) => (
                 <li key={r.id}>
                   <button
-                    onClick={() => handleSelect(r.id)}
+                    onClick={() => handleSelect(r.slug)}
                     className="flex w-full flex-col gap-0.5 px-4 py-3 text-left transition-colors hover:bg-secondary"
                   >
                     <span className="flex items-center gap-2">

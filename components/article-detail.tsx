@@ -217,7 +217,7 @@ function formatDateTime(dateStr: string): string {
 const BASE_URL = process.env.NEXT_PUBLIC_BASE_URL ?? "https://halfspace.id"
 
 function ArticleSchema({ article }: { article: Article }) {
-  const articleUrl = `${BASE_URL}/article/${article.id}`
+  const articleUrl = `${BASE_URL}/article/${article.slug}`
   const schema = {
     "@context": "https://schema.org",
     "@type": "NewsArticle",
@@ -254,7 +254,7 @@ function ArticleSchema({ article }: { article: Article }) {
 }
 
 function BreadcrumbSchema({ article }: { article: Article }) {
-  const articleUrl = `${BASE_URL}/article/${article.id}`
+  const articleUrl = `${BASE_URL}/article/${article.slug}`
   const schema = {
     "@context": "https://schema.org",
     "@type": "BreadcrumbList",
@@ -578,7 +578,7 @@ function RelatedArticles({ currentId, categorySlug }: { currentId: string; categ
           key={article.id}
           onClick={async () => {
             await trackArticleView(article.id)
-            router.push(`/article/${article.id}`)
+            router.push(`/article/${article.slug}`)
           }}
           className="group cursor-pointer overflow-hidden rounded-xl border border-border bg-card transition-colors hover:border-primary/50"
         >

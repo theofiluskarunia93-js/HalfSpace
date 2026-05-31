@@ -218,6 +218,7 @@ export function CreateArticleView({ onBack, articleId }: CreateArticleViewProps)
   const supabase   = createClient()
 
   const [title,           setTitle]           = useState("")
+  const [savedSlug,       setSavedSlug]       = useState("")   // slug yang sudah tersimpan di DB (edit mode)
   const [category,        setCategory]        = useState("")
   const [excerpt,         setExcerpt]         = useState("")
   const [metaTitle,       setMetaTitle]       = useState("")
@@ -353,6 +354,7 @@ export function CreateArticleView({ onBack, articleId }: CreateArticleViewProps)
       const { data } = await supabase.from("articles").select("*").eq("id", articleId).single()
       if (data) {
         setTitle(data.title || "")
+        setSavedSlug(data.slug || "")
         setExcerpt(data.excerpt || "")
         setCategory(data.category_id || "")
         setFeaturedImageUrl(data.featured_image_url || null)
@@ -562,9 +564,12 @@ export function CreateArticleView({ onBack, articleId }: CreateArticleViewProps)
     const htmlContent = resolveShortcodesForSave(rawHtml)
 
     const now = new Date().toISOString()
+    // Edit mode: pertahankan slug yang sudah ada agar URL tidak berubah.
+    // Create mode: generate slug baru dari title.
+    const articleSlug = isEditMode && savedSlug ? savedSlug : generateSlug(title)
     const payload = {
       title,
-      slug: generateSlug(title),
+      slug: articleSlug,
       excerpt,
       content: htmlContent,
       category_id: category || null,
@@ -585,6 +590,7 @@ export function CreateArticleView({ onBack, articleId }: CreateArticleViewProps)
       const { data: inserted, error } = await supabase.from("articles").insert(payload).select("id").single()
       if (error || !inserted) { setIsLoading(false); setMessage({ type: "error", text: error?.message || "Gagal menyimpan" }); return }
       savedArticleId = inserted.id
+      setSavedSlug(articleSlug)  // simpan slug agar save berikutnya tidak regenerate
     }
 
     if (savedArticleId) await syncTags(savedArticleId)

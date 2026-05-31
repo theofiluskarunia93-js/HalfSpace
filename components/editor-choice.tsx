@@ -59,7 +59,7 @@ export function EditorChoice() {
           {articles.map((article: Article, idx: number) => (
             <li key={article.id}>
               <button
-                onClick={() => router.push(`/article/${article.id}`)}
+                onClick={() => router.push(`/article/${article.slug}`)}
                 className="group flex w-full items-start gap-4 py-4 text-left transition-colors hover:text-primary"
               >
                 {/* Number badge */}

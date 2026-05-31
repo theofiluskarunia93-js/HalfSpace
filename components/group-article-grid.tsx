@@ -11,7 +11,7 @@ const GROUP_SLUGS: Record<string, string[]> = {
   asia: ["afc-cup", "aff-cup"],
 }
 
-function ArticleCard({ article, onView }: { article: any; onView: (id: string) => void }) {
+function ArticleCard({ article, onView }: { article: any; onView: (id: string, slug: string) => void }) {
   const timeAgo = (dateStr: string) => {
     const diff = Date.now() - new Date(dateStr).getTime()
     const minutes = Math.floor(diff / 60000)
@@ -25,7 +25,7 @@ function ArticleCard({ article, onView }: { article: any; onView: (id: string) =
 
   return (
     <article
-      onClick={() => onView(article.id)}
+      onClick={() => onView(article.id, article.slug)}
       className="group cursor-pointer overflow-hidden rounded-xl border border-border bg-card transition-colors hover:border-primary/50"
     >
       <div className="aspect-video bg-muted overflow-hidden">
@@ -129,9 +129,9 @@ export function GroupArticleGrid({ groupKey, title }: GroupArticleGridProps) {
   }, [groupKey])
 
   // FIX: router.push ditambahkan
-  const handleView = async (id: string) => {
+  const handleView = async (id: string, slug: string) => {
     await trackArticleView(id)
-    router.push(`/article/${id}`)
+    router.push(`/article/${slug}`)
   }
 
   if (isLoading)

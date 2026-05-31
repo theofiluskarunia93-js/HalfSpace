@@ -111,12 +111,12 @@ export default async function sitemap(): Promise<MetadataRoute.Sitemap> {
   // Ambil semua artikel yang sudah published
   const { data: articles } = await supabase
     .from("articles")
-    .select("id, published_at, updated_at")
+    .select("slug, published_at, updated_at")
     .eq("status", "published")
     .order("published_at", { ascending: false })
 
   const articleRoutes: MetadataRoute.Sitemap = (articles ?? []).map((article) => ({
-    url: `${BASE_URL}/article/${article.id}`,
+    url: `${BASE_URL}/article/${article.slug}`,
     lastModified: new Date(article.updated_at ?? article.published_at),
     changeFrequency: "weekly",
     priority: 0.9,

@@ -42,10 +42,10 @@ function timeAgo(dateStr: string) {
 }
 
 // ─── Sub-components ───────────────────────────────────────────────────────────
-function ArticleCard({ article, onView }: { article: Article; onView: (id: string) => void }) {
+function ArticleCard({ article, onView }: { article: Article; onView: (id: string, slug: string) => void }) {
   return (
     <article
-      onClick={() => onView(article.id)}
+      onClick={() => onView(article.id, article.slug)}
       className="group cursor-pointer overflow-hidden rounded-xl border border-border bg-card transition-colors hover:border-primary/50"
     >
       <div className="aspect-video bg-muted overflow-hidden">
@@ -258,9 +258,9 @@ export function ArticleGrid({ categorySlug, title, pageSize = 9, limit }: Articl
     setPage(0)
   }, [categorySlug])
 
-  const handleView = async (id: string) => {
+  const handleView = async (id: string, slug: string) => {
     await trackArticleView(id)
-    router.push(`/article/${id}`)
+    router.push(`/article/${slug}`)
   }
 
   const handlePageChange = (newPage: number) => {

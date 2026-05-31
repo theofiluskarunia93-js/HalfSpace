@@ -31,7 +31,7 @@ export function TrendingArticles({ widgetVisible = true }: TrendingArticlesProps
     async function fetchTrending() {
       const { data } = await supabase
         .from("articles")
-        .select("*, categories(name)")
+        .select("id, slug, title, excerpt, featured_image_url, author, views, published_at, created_at, categories(name)")
         .eq("status", "published")
         .or("is_editor_choice.is.null,is_editor_choice.eq.false")
         .order("created_at", { ascending: false })
@@ -71,7 +71,7 @@ export function TrendingArticles({ widgetVisible = true }: TrendingArticlesProps
             {articles.map((article, idx) => (
               <article
                 key={article.id}
-                onClick={() => router.push(`/article/${article.id}`)}
+                onClick={() => router.push(`/article/${article.slug}`)}
                 className="group cursor-pointer overflow-hidden rounded-xl border border-border bg-card transition-all hover:border-primary/50"
               >
                 {/* Image — lebih tinggi karena 2 kolom */}
@@ -174,7 +174,7 @@ export function TrendingArticles({ widgetVisible = true }: TrendingArticlesProps
           {articles.map((article) => (
             <article
               key={article.id}
-              onClick={() => router.push(`/article/${article.id}`)}
+              onClick={() => router.push(`/article/${article.slug}`)}
               className="group min-w-[300px] flex-shrink-0 cursor-pointer overflow-hidden rounded-xl border border-border bg-card transition-all hover:border-primary/50 sm:min-w-[380px] md:min-w-[420px]"
             >
               <div className="relative h-52 overflow-hidden bg-muted sm:h-56">

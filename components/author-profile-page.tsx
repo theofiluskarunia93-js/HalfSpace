@@ -76,10 +76,10 @@ function TikTokIcon({ className }: { className?: string }) {
 }
 
 // ─── Article Card ──────────────────────────────────────────────────────────
-function ArticleCard({ article, onView }: { article: Article; onView: (id: string) => void }) {
+function ArticleCard({ article, onView }: { article: Article; onView: (id: string, slug: string) => void }) {
   return (
     <article
-      onClick={() => onView(article.id)}
+      onClick={() => onView(article.id, article.slug)}
       className="group cursor-pointer overflow-hidden rounded-xl border border-border bg-card transition-colors hover:border-primary/50"
     >
       <div className="aspect-video overflow-hidden bg-muted">
@@ -205,9 +205,9 @@ export function AuthorProfilePage() {
     setIsLoading(false)
   }
 
-  const handleView = async (id: string) => {
+  const handleView = async (id: string, slug: string) => {
     await trackArticleView(id)
-    router.push(`/article/${id}`)
+    router.push(`/article/${slug}`)
   }
 
   const loadMore = () => fetchArticles(page + 1)

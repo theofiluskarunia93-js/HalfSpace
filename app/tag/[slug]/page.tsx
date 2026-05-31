@@ -106,7 +106,7 @@ export default async function TagPage({ params }: Props) {
                   const timeAgo = minutes < 1 ? "Baru saja" : minutes < 60 ? `${minutes} menit yang lalu` : hours < 24 ? `${hours} jam yang lalu` : `${days} hari yang lalu`
 
                   return (
-                  <Link key={article.id} href={`/article/${article.id}`}>
+                  <Link key={article.id} href={`/article/${article.slug}`}>
                     <article className="group cursor-pointer overflow-hidden rounded-xl border border-border bg-card transition-all hover:border-primary/50 hover:shadow-lg hover:shadow-primary/5">
                       <div className="aspect-video overflow-hidden bg-muted">
                         {article.featured_image_url ? (

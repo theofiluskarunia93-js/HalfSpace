@@ -118,10 +118,10 @@ const pageData: Record<PublicPage, { title: string; description: string; categor
   contact: { title: "Contact Us", description: "Get in touch with the HalfSpace team." },
 }
 
-function ArticleCard({ article, onView }: { article: any; onView: (id: string) => void }) {
+function ArticleCard({ article, onView }: { article: any; onView: (id: string, slug: string) => void }) {
   return (
     <article
-      onClick={() => onView(article.id)}
+      onClick={() => onView(article.id, article.slug)}
       className="group cursor-pointer overflow-hidden rounded-xl border border-border bg-card transition-colors hover:border-primary/50"
     >
       <div className="relative aspect-video bg-muted overflow-hidden">
@@ -228,9 +228,9 @@ function ArticleGrid({ categorySlug, title }: { categorySlug?: string; title: st
     setPage(0)
   }, [categorySlug])
 
-  const handleView = async (id: string) => {
+  const handleView = async (id: string, slug: string) => {
     await trackArticleView(id)
-    router.push(`/article/${id}`)
+    router.push(`/article/${slug}`)
   }
 
   if (isLoading) return (
