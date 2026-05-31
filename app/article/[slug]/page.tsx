@@ -6,6 +6,30 @@ import { ArticleDetailWrapper } from "@/components/article-detail-wrapper"
 // 10.000 pengunjung artikel yang sama = 1 query ke Supabase, bukan 10.000.
 export const revalidate = 3600
 
+// Artikel di luar daftar ini tetap bisa diakses (on-demand),
+// tapi tidak akan diblokir — dynamicParams default true.
+export async function generateStaticParams() {
+  const supabaseUrl = process.env.NEXT_PUBLIC_SUPABASE_URL!
+  const supabaseKey = process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY!
+
+  try {
+    const res = await fetch(
+      `${supabaseUrl}/rest/v1/articles?status=eq.published&select=slug&order=published_at.desc&limit=100`,
+      {
+        headers: {
+          apikey: supabaseKey,
+          Authorization: `Bearer ${supabaseKey}`,
+        },
+      }
+    )
+    if (!res.ok) return []
+    const articles: { slug: string }[] = await res.json()
+    return articles.map((a) => ({ slug: a.slug }))
+  } catch {
+    return []
+  }
+}
+
 interface Props {
   params: Promise<{ slug: string }>
 }

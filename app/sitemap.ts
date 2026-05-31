@@ -100,6 +100,11 @@ const STATIC_ROUTES: MetadataRoute.Sitemap = [
     changeFrequency: "monthly",
     priority: 0.4,
   },
+  {
+    url: `${BASE_URL}/search`,
+    changeFrequency: "monthly",
+    priority: 0.3,
+  },
 ]
 
 export default async function sitemap(): Promise<MetadataRoute.Sitemap> {
@@ -122,13 +127,27 @@ export default async function sitemap(): Promise<MetadataRoute.Sitemap> {
     priority: 0.9,
   }))
 
-  // Ambil semua tag yang punya artikel published
-  const { data: tags } = await supabase
-    .from("tags")
-    .select("slug")
+  // Ambil tag yang punya minimal 1 artikel published,
+  // sekaligus ambil tanggal artikel terbaru untuk lastModified
+  const { data: tagData } = await supabase
+    .from("article_tags")
+    .select("tags(slug), articles!inner(published_at, updated_at, status)")
+    .eq("articles.status", "published")
 
-  const tagRoutes: MetadataRoute.Sitemap = (tags ?? []).map((tag) => ({
-    url: `${BASE_URL}/tag/${tag.slug}`,
+  // Kelompokkan per tag: ambil tanggal terbaru dari artikel di tag tsb
+  const tagMap = new Map<string, Date>()
+  for (const row of tagData ?? []) {
+    const slug = (row.tags as any)?.slug
+    const article = row.articles as any
+    if (!slug) continue
+    const date = new Date(article.updated_at ?? article.published_at)
+    const existing = tagMap.get(slug)
+    if (!existing || date > existing) tagMap.set(slug, date)
+  }
+
+  const tagRoutes: MetadataRoute.Sitemap = Array.from(tagMap.entries()).map(([slug, lastDate]) => ({
+    url: `${BASE_URL}/tag/${slug}`,
+    lastModified: lastDate,
     changeFrequency: "daily",
     priority: 0.6,
   }))

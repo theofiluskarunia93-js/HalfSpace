@@ -1,9 +1,33 @@
+import type { Metadata } from "next"
 import { NavbarStandalone } from "@/components/navbar-standalone"
 import { FooterStandalone } from "@/components/footer-standalone"
 
-export const metadata = {
-  title: "About Us - HalfSpace",
-  description: "Mengenal HalfSpace, media olahraga untuk para pencinta sepak bola.",
+export async function generateMetadata(): Promise<Metadata> {
+  const BASE_URL = process.env.NEXT_PUBLIC_BASE_URL ?? "https://halfspace.id"
+  const title = "About Us | HalfSpace"
+  const description = "Mengenal HalfSpace, media olahraga untuk para pencinta sepak bola."
+
+  return {
+    title,
+    description,
+    alternates: {
+      canonical: `${BASE_URL}/about-us`,
+    },
+    openGraph: {
+      title,
+      description,
+      type: "website",
+      url: `${BASE_URL}/about-us`,
+      siteName: "HalfSpace",
+      images: [{ url: `${BASE_URL}/og-default.jpg`, width: 1200, height: 630, alt: "HalfSpace" }],
+    },
+    twitter: {
+      card: "summary_large_image",
+      title,
+      description,
+      images: [`${BASE_URL}/og-default.jpg`],
+    },
+  }
 }
 
 export default function AboutUsPage() {

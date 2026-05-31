@@ -88,12 +88,14 @@ export async function GroupArticleGridServer({ groupKey, title }: Props) {
       {articles.map((article) => (
         <Link key={article.id} href={`/article/${article.slug}`}>
           <article className="group cursor-pointer overflow-hidden rounded-xl border border-border bg-card transition-colors hover:border-primary/50">
-            <div className="aspect-video overflow-hidden bg-muted">
+            <div className="aspect-video overflow-hidden bg-muted relative">
               {article.featured_image_url ? (
-                <img
+                <Image
                   src={article.featured_image_url}
                   alt={article.title}
-                  className="h-full w-full object-cover transition-transform group-hover:scale-105"
+                  fill
+                  sizes="(max-width: 768px) 100vw, (max-width: 1024px) 50vw, 33vw"
+                  className="object-cover transition-transform group-hover:scale-105"
                 />
               ) : (
                 <div className="flex h-full items-center justify-center text-muted-foreground">

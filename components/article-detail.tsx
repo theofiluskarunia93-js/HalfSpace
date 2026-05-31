@@ -2,6 +2,7 @@
 
 import { useState, useEffect, useRef, useCallback } from "react"
 import { useRouter } from "next/navigation"
+import Image from "next/image"
 import { createClient } from "@/lib/supabase/client"
 import { trackArticleView } from "@/lib/supabase/tracking"
 import { NavbarStandalone } from "@/components/navbar-standalone"
@@ -586,23 +587,15 @@ function RelatedArticles({ currentId, categorySlug }: { currentId: string; categ
           }}
           className="group cursor-pointer overflow-hidden rounded-xl border border-border bg-card transition-colors hover:border-primary/50"
         >
-          <div className="aspect-video overflow-hidden bg-muted">
+          <div className="aspect-video overflow-hidden bg-muted relative">
             {article.featured_image_url ? (
-              <picture>
-                <source
-                  srcSet={article.featured_image_url.replace(/\.(jpg|jpeg|png)$/i, ".webp")}
-                  type="image/webp"
-                />
-                <img
-                  src={article.featured_image_url}
-                  alt={article.featured_image_alt || article.title}
-                  loading="lazy"
-                  decoding="async"
-                  className="h-full w-full object-cover transition-transform duration-300 group-hover:scale-105"
-                  width={400}
-                  height={225}
-                />
-              </picture>
+              <Image
+                src={article.featured_image_url}
+                alt={article.featured_image_alt || article.title}
+                fill
+                sizes="(max-width: 640px) 100vw, (max-width: 1024px) 50vw, 33vw"
+                className="object-cover transition-transform duration-300 group-hover:scale-105"
+              />
             ) : (
               <div className="flex h-full items-center justify-center text-muted-foreground/30">
                 <svg className="h-10 w-10" fill="currentColor" viewBox="0 0 24 24" aria-hidden="true">
@@ -1179,26 +1172,15 @@ export function ArticleDetail({ articleId, initialData }: ArticleDetailProps) {
                 {/* Featured image */}
                 {article.featured_image_url && (
                   <figure className="mb-8 overflow-hidden rounded-xl" itemProp="image" itemScope itemType="https://schema.org/ImageObject">
-                    <picture>
-                      <source
-                        srcSet={article.featured_image_url.replace(/\.(jpg|jpeg|png)$/i, ".webp")}
-                        type="image/webp"
-                      />
-                      <img
-                        src={article.featured_image_url}
-                        alt={article.featured_image_alt || article.title}
-                        className="w-full object-cover max-h-[480px] rounded-xl"
-                        loading="eager"
-                        fetchPriority="high"
-                        decoding="async"
-                        width={1200}
-                        height={630}
-                        itemProp="url"
-                        onError={(e) => {
-                          ;(e.target as HTMLImageElement).style.display = "none"
-                        }}
-                      />
-                    </picture>
+                    <Image
+                      src={article.featured_image_url}
+                      alt={article.featured_image_alt || article.title}
+                      width={1200}
+                      height={630}
+                      priority
+                      className="w-full object-cover max-h-[480px] rounded-xl"
+                      itemProp="url"
+                    />
                     {article.featured_image_alt && (
                       <figcaption className="mt-2 text-center text-xs italic text-muted-foreground">
                         {article.featured_image_alt}

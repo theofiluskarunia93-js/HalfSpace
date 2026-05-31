@@ -1,6 +1,7 @@
 "use client"
 
 import { useRef, useState } from "react"
+import Image from "next/image"
 import { ChevronLeft, ChevronRight } from "lucide-react"
 import { Button } from "@/components/ui/button"
 import { useRouter } from "next/navigation"
@@ -80,12 +81,12 @@ export function TrendingArticles({ widgetVisible = true, initialArticles }: Tren
                 {/* Image — fixed aspect ratio mencegah CLS */}
                 <div className="relative aspect-[16/9] overflow-hidden bg-muted">
                   {article.featured_image_url ? (
-                    <img
+                    <Image
                       src={article.featured_image_url}
                       alt={article.title}
-                      className="h-full w-full object-cover transition-transform duration-300 group-hover:scale-105"
-                      width={800}
-                      height={450}
+                      fill
+                      sizes="(max-width: 640px) 100vw, 50vw"
+                      className="object-cover transition-transform duration-300 group-hover:scale-105"
                     />
                   ) : (
                     <div className="absolute inset-0 flex items-center justify-center text-muted-foreground">
@@ -183,12 +184,12 @@ export function TrendingArticles({ widgetVisible = true, initialArticles }: Tren
               {/* Fixed aspect ratio — tidak ada CLS */}
               <div className="relative aspect-[16/9] overflow-hidden bg-muted">
                 {article.featured_image_url ? (
-                  <img
+                  <Image
                     src={article.featured_image_url}
                     alt={article.title}
-                    className="h-full w-full object-cover transition-transform duration-300 group-hover:scale-105"
-                    width={800}
-                    height={450}
+                    fill
+                    sizes="(max-width: 640px) 300px, (max-width: 768px) 380px, 420px"
+                    className="object-cover transition-transform duration-300 group-hover:scale-105"
                   />
                 ) : (
                   <div className="absolute inset-0 flex items-center justify-center text-muted-foreground">

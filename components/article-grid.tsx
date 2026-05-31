@@ -2,6 +2,7 @@
 
 import { useState, useEffect, useCallback } from "react"
 import { useRouter } from "next/navigation"
+import Image from "next/image"
 import { createClient } from "@/lib/supabase/client"
 import { trackArticleView } from "@/lib/supabase/tracking"
 import { ChevronLeft, ChevronRight } from "lucide-react"
@@ -48,12 +49,14 @@ function ArticleCard({ article, onView }: { article: Article; onView: (id: strin
       onClick={() => onView(article.id, article.slug)}
       className="group cursor-pointer overflow-hidden rounded-xl border border-border bg-card transition-colors hover:border-primary/50"
     >
-      <div className="aspect-video bg-muted overflow-hidden">
+      <div className="aspect-video bg-muted overflow-hidden relative">
         {article.featured_image_url ? (
-          <img
+          <Image
             src={article.featured_image_url}
             alt={article.title}
-            className="h-full w-full object-cover transition-transform group-hover:scale-105"
+            fill
+            sizes="(max-width: 640px) 100vw, (max-width: 1024px) 50vw, 33vw"
+            className="object-cover transition-transform group-hover:scale-105"
           />
         ) : (
           <div className="flex h-full items-center justify-center text-muted-foreground">
