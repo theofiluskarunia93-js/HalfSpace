@@ -1,6 +1,7 @@
 "use client"
 
 import { useState, useEffect, useCallback } from "react"
+import Image from "next/image"
 import { useRouter } from "next/navigation"
 import { PublicPage } from "@/app/page"
 import { createClient } from "@/lib/supabase/client"
@@ -123,10 +124,10 @@ function ArticleCard({ article, onView }: { article: any; onView: (id: string) =
       onClick={() => onView(article.id)}
       className="group cursor-pointer overflow-hidden rounded-xl border border-border bg-card transition-colors hover:border-primary/50"
     >
-      <div className="aspect-video bg-muted overflow-hidden">
+      <div className="relative aspect-video bg-muted overflow-hidden">
         {article.featured_image_url ? (
-          <img src={article.featured_image_url} alt={article.title}
-            className="h-full w-full object-cover transition-transform group-hover:scale-105" />
+          <Image src={article.featured_image_url} alt={article.title}
+            fill className="object-cover transition-transform group-hover:scale-105" sizes="(max-width: 768px) 100vw, (max-width: 1200px) 50vw, 33vw" />
         ) : (
           <div className="flex h-full items-center justify-center text-muted-foreground">
             <svg className="h-12 w-12 opacity-30" fill="currentColor" viewBox="0 0 24 24">

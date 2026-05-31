@@ -1,6 +1,7 @@
 "use client"
 
 import { useState, useEffect } from "react"
+import Image from "next/image"
 import { useRouter, usePathname } from "next/navigation"
 import { ChevronDown, Menu, X } from "lucide-react"
 import { Button } from "@/components/ui/button"
@@ -63,7 +64,7 @@ export function NavbarStandalone() {
           <div className="w-[120px] md:w-[200px]">
             <button onClick={() => navigate("/")} className="flex items-center">
               {logoUrl ? (
-                <img src={logoUrl} alt="Logo" className="h-8 object-contain" />
+                <Image src={logoUrl} alt="Logo" width={200} height={32} className="h-8 w-auto object-contain" />
               ) : (
                 <span
                   className="text-2xl font-bold tracking-tight text-primary neon-glow-subtle"

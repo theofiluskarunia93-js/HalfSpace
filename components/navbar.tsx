@@ -1,6 +1,7 @@
 "use client"
 
 import { useState, useEffect, useRef, useCallback } from "react"
+import Image from "next/image"
 import { useRouter } from "next/navigation"
 import { PublicPage } from "@/app/page"
 import { ChevronDown, Menu, X, Search } from "lucide-react"
@@ -238,7 +239,7 @@ export function Navbar({ currentPage, onPageChange, onScrollToSection }: NavbarP
           <div className="flex-1 md:flex-none md:w-auto">
             <button onClick={() => handlePageClick("home")} className="flex items-center">
               {logoUrl ? (
-                <img src={logoUrl} alt="Logo" className="h-12 md:h-14 w-auto object-contain max-w-[180px] md:max-w-[240px]" />
+                <Image src={logoUrl} alt="Logo" width={240} height={56} className="h-12 md:h-14 w-auto object-contain max-w-[180px] md:max-w-[240px]" />
               ) : (
                 <span className="text-3xl md:text-4xl font-bold tracking-tight text-primary neon-glow-subtle" style={{ fontFamily: "var(--font-oswald)" }}>
                   HalfSpace
