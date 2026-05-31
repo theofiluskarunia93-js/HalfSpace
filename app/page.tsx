@@ -1,10 +1,10 @@
 // Server Component — fetch data di server, tidak ada "use client".
-// ISR: halaman di-generate ulang setiap 5 menit.
+// ISR: halaman di-generate ulang setiap 1 menit.
 // Googlebot mendapat HTML penuh dengan artikel, bukan shell kosong.
 
 import { HomeClient } from "@/components/home-client"
 
-export const revalidate = 300 // 5 menit
+export const revalidate = 60 // 1 menit
 
 interface Article {
   id: string
@@ -40,7 +40,7 @@ async function fetchTrendingArticles(): Promise<Article[]> {
           Authorization: `Bearer ${supabaseKey}`,
           "Content-Type": "application/json",
         },
-        next: { revalidate: 300 },
+        next: { revalidate: 60 },
       }
     )
     if (!res.ok) return []
@@ -63,7 +63,7 @@ async function fetchEditorChoiceArticles(): Promise<EditorChoiceArticle[]> {
           Authorization: `Bearer ${supabaseKey}`,
           "Content-Type": "application/json",
         },
-        next: { revalidate: 300 },
+        next: { revalidate: 60 },
       }
     )
     if (!res.ok) return []
