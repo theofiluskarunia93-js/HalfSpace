@@ -213,7 +213,11 @@ function formatDateTime(dateStr: string): string {
 }
 
 // ─── Schema Markup ─────────────────────────────────────────────────────────
+// BASE_URL diambil dari env agar SSR tidak menghasilkan field kosong
+const BASE_URL = process.env.NEXT_PUBLIC_BASE_URL ?? "https://halfspace.id"
+
 function ArticleSchema({ article }: { article: Article }) {
+  const articleUrl = `${BASE_URL}/article/${article.id}`
   const schema = {
     "@context": "https://schema.org",
     "@type": "NewsArticle",
@@ -225,19 +229,19 @@ function ArticleSchema({ article }: { article: Article }) {
     "author": {
       "@type": "Organization",
       "name": "Redaksi HalfSpace",
-      "url": typeof window !== "undefined" ? `${window.location.origin}/author/redaksi-halfspace` : "/author/redaksi-halfspace",
+      "url": `${BASE_URL}/author/redaksi-halfspace`,
     },
     "publisher": {
       "@type": "Organization",
       "name": "HalfSpace",
       "logo": {
         "@type": "ImageObject",
-        "url": typeof window !== "undefined" ? `${window.location.origin}/logo.png` : "/logo.png",
+        "url": `${BASE_URL}/logo.png`,
       },
     },
     "mainEntityOfPage": {
       "@type": "WebPage",
-      "@id": typeof window !== "undefined" ? window.location.href : "",
+      "@id": articleUrl,
     },
     "articleSection": article.categories?.name ?? "Umum",
   }
@@ -250,16 +254,16 @@ function ArticleSchema({ article }: { article: Article }) {
 }
 
 function BreadcrumbSchema({ article }: { article: Article }) {
-  const origin = typeof window !== "undefined" ? window.location.origin : ""
+  const articleUrl = `${BASE_URL}/article/${article.id}`
   const schema = {
     "@context": "https://schema.org",
     "@type": "BreadcrumbList",
     "itemListElement": [
-      { "@type": "ListItem", "position": 1, "name": "Home", "item": origin + "/" },
+      { "@type": "ListItem", "position": 1, "name": "Home", "item": `${BASE_URL}/` },
       ...(article.categories
-        ? [{ "@type": "ListItem", "position": 2, "name": article.categories.name, "item": `${origin}/${article.categories.slug}` }]
+        ? [{ "@type": "ListItem", "position": 2, "name": article.categories.name, "item": `${BASE_URL}/${article.categories.slug}` }]
         : []),
-      { "@type": "ListItem", "position": article.categories ? 3 : 2, "name": article.title, "item": typeof window !== "undefined" ? window.location.href : "" },
+      { "@type": "ListItem", "position": article.categories ? 3 : 2, "name": article.title, "item": articleUrl },
     ],
   }
   return (
