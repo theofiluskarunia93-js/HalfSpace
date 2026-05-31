@@ -65,7 +65,7 @@ function formatTime(timeStr: string): string {
 
 function LoadingState() {
   return (
-    <div className="flex items-center justify-center gap-2 py-10 text-gray-400">
+    <div className="flex min-h-[140px] items-center justify-center gap-2 text-gray-400">
       <Loader2 size={16} className="animate-spin text-[#39FF14]" />
       <span className="text-sm">Memuat data...</span>
     </div>
@@ -116,7 +116,7 @@ export function JadwalCard({ widgetId, isAdmin, onEdit }: JadwalCardProps) {
   const filtered = activeGroup ? matches.filter((m) => m.group_label === activeGroup) : matches
 
   return (
-    <div className="not-prose my-6 overflow-hidden rounded-2xl border border-white/10 bg-[#0f1117] shadow-lg">
+    <div className="not-prose my-6 overflow-hidden rounded-2xl border border-white/10 bg-[#0f1117] shadow-lg min-h-[220px]">
       {/* Header */}
       <div className="flex items-center justify-between border-b border-white/10 bg-[#13151c] px-5 py-3.5">
         <div className="flex items-center gap-2.5">
@@ -265,7 +265,7 @@ export function KlasemenCard({ widgetId, isAdmin, onEdit }: KlasemenCardProps) {
     })
 
   return (
-    <div className="not-prose my-6 overflow-hidden rounded-2xl border border-white/10 bg-[#0f1117] shadow-lg">
+    <div className="not-prose my-6 overflow-hidden rounded-2xl border border-white/10 bg-[#0f1117] shadow-lg min-h-[220px]">
       {/* Header */}
       <div className="flex items-center justify-between border-b border-white/10 bg-[#13151c] px-5 py-3.5">
         <div className="flex items-center gap-2.5">
@@ -472,7 +472,7 @@ export function TransferCard({ widgetId, isAdmin, onEdit }: TransferCardProps) {
   }
 
   return (
-    <div className="not-prose my-6 overflow-hidden rounded-2xl border border-white/10 bg-[#0f1117] shadow-lg">
+    <div className="not-prose my-6 overflow-hidden rounded-2xl border border-white/10 bg-[#0f1117] shadow-lg min-h-[220px]">
       {/* Header */}
       <div className="flex items-center justify-between border-b border-white/10 bg-[#13151c] px-5 py-3.5">
         <div className="flex items-center gap-2.5">
@@ -708,7 +708,7 @@ export function PeluangCard({ widgetId, isAdmin, onEdit }: PeluangCardProps) {
   }
 
   return (
-    <div className="not-prose my-6 overflow-hidden rounded-2xl border border-white/10 bg-[#0f1117] shadow-lg">
+    <div className="not-prose my-6 overflow-hidden rounded-2xl border border-white/10 bg-[#0f1117] shadow-lg min-h-[220px]">
       {/* Header */}
       <div className="flex items-center justify-between border-b border-white/10 bg-[#13151c] px-5 py-3.5">
         <div className="flex items-center gap-2.5">

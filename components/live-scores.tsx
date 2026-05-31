@@ -378,7 +378,7 @@ function MatchStrip({
 // ─── Skeleton ──────────────────────────────────────────────────────────────
 function SkeletonStrip({ cardCount = 5 }: { cardCount?: number }) {
   return (
-    <div className="flex gap-2 px-8 py-3 animate-pulse">
+    <div className="flex gap-2 px-8 py-3 animate-pulse min-h-[130px]">
       {Array.from({ length: cardCount }).map((_, i) => (
         <div key={i} className="flex-shrink-0 rounded-xl bg-muted" style={{ width: 120, height: 130 }} />
       ))}
@@ -564,7 +564,7 @@ export function LiveScores() {
   }
 
   return (
-    <section className="border-y border-border bg-card py-4">
+    <section className="border-y border-border bg-card py-4 min-h-[200px]">
       <div className="mx-auto max-w-7xl px-4">
 
         {/* ── Header ── */}
@@ -636,7 +636,7 @@ export function LiveScores() {
         )}
 
         {/* ── Content ── */}
-        <div className="overflow-hidden rounded-xl border border-border bg-card">
+        <div className="overflow-hidden rounded-xl border border-border bg-card min-h-[146px]">
           {isLoading ? (
             <>
               <div className="flex items-center gap-2 border-b border-border bg-secondary/40 px-3 py-2 animate-pulse">

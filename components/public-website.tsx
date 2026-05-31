@@ -12,13 +12,42 @@ import { Footer } from "./footer"
 import { PageContent } from "./page-content"
 import { createClient } from "@/lib/supabase/client"
 
+interface Article {
+  id: string
+  title: string
+  slug: string
+  excerpt: string | null
+  featured_image_url: string | null
+  featured_image_alt: string | null
+  author: string
+  views: number
+  published_at: string
+  created_at: string
+  categories: { name: string; slug: string } | null
+}
+
+interface EditorChoiceArticle {
+  id: string
+  title: string
+  slug: string
+  categories: { name: string }[] | null
+}
+
 interface PublicWebsiteProps {
   currentPage: PublicPage
   onPageChange: (page: PublicPage) => void
   onGoToAdmin: () => void
+  initialTrending: Article[]
+  initialEditorChoice: EditorChoiceArticle[]
 }
 
-export function PublicWebsite({ currentPage, onPageChange, onGoToAdmin }: PublicWebsiteProps) {
+export function PublicWebsite({
+  currentPage,
+  onPageChange,
+  onGoToAdmin,
+  initialTrending,
+  initialEditorChoice,
+}: PublicWebsiteProps) {
   const [showLiveScore, setShowLiveScore] = useState(true)
   const [showStandings, setShowStandings] = useState(true)
   const supabase = createClient()
@@ -47,25 +76,27 @@ export function PublicWebsite({ currentPage, onPageChange, onGoToAdmin }: Public
 
   return (
     <div className="min-h-screen bg-background">
-      <Navbar 
-        currentPage={currentPage} 
-        onPageChange={onPageChange} 
+      <Navbar
+        currentPage={currentPage}
+        onPageChange={onPageChange}
         onScrollToSection={handleScrollToSection}
       />
-      
+
       {currentPage === "home" ? (
         <>
           <HeroSection />
           {showLiveScore && <LiveScores />}
-          <TrendingArticles widgetVisible={showLiveScore || showStandings} />
-          {/* Editor Choice — tepat di bawah Trending */}
-          <EditorChoice />
+          <TrendingArticles
+            widgetVisible={showLiveScore || showStandings}
+            initialArticles={initialTrending}
+          />
+          <EditorChoice initialArticles={initialEditorChoice} />
           {showStandings && <StandingsSection />}
         </>
       ) : (
         <PageContent currentPage={currentPage} onPageChange={onPageChange} />
       )}
-      
+
       <Footer onGoToAdmin={onGoToAdmin} onPageChange={onPageChange} />
     </div>
   )

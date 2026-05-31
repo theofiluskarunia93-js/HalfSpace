@@ -4,10 +4,36 @@ import { useState, useEffect } from "react"
 import { createClient } from "@/lib/supabase/client"
 import { PublicWebsite } from "@/components/public-website"
 import { AdminCMS } from "@/components/admin-cms"
-
 import { AppView, PublicPage } from "@/types/pages"
 
-export function HomeClient() {
+interface Article {
+  id: string
+  title: string
+  slug: string
+  excerpt: string | null
+  featured_image_url: string | null
+  featured_image_alt: string | null
+  author: string
+  views: number
+  published_at: string
+  created_at: string
+  categories: { name: string; slug: string } | null
+}
+
+interface EditorChoiceArticle {
+  id: string
+  title: string
+  slug: string
+  categories: { name: string }[] | null
+}
+
+interface HomeClientProps {
+  // Data yang sudah di-fetch di server — diteruskan ke komponen client
+  initialTrending: Article[]
+  initialEditorChoice: EditorChoiceArticle[]
+}
+
+export function HomeClient({ initialTrending, initialEditorChoice }: HomeClientProps) {
   const [appView, setAppView] = useState<AppView>("public")
   const [currentPage, setCurrentPage] = useState<PublicPage>("home")
   const [isLoggedIn, setIsLoggedIn] = useState(false)
@@ -56,6 +82,8 @@ export function HomeClient() {
       currentPage={currentPage}
       onPageChange={setCurrentPage}
       onGoToAdmin={handleGoToAdmin}
+      initialTrending={initialTrending}
+      initialEditorChoice={initialEditorChoice}
     />
   )
 }

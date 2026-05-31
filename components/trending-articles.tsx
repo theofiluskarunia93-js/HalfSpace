@@ -1,19 +1,33 @@
 "use client"
 
-import { useRef, useEffect, useState } from "react"
+import { useRef, useState } from "react"
 import { ChevronLeft, ChevronRight } from "lucide-react"
 import { Button } from "@/components/ui/button"
-import { createClient } from "@/lib/supabase/client"
 import { useRouter } from "next/navigation"
+
+interface Article {
+  id: string
+  title: string
+  slug: string
+  excerpt: string | null
+  featured_image_url: string | null
+  author: string
+  views: number
+  published_at: string
+  created_at: string
+  categories: { name: string; slug: string } | null
+}
 
 interface TrendingArticlesProps {
   widgetVisible?: boolean
+  // Data dari server (app/page.tsx) — tidak perlu fetch ulang di client
+  initialArticles: Article[]
 }
 
-export function TrendingArticles({ widgetVisible = true }: TrendingArticlesProps) {
+export function TrendingArticles({ widgetVisible = true, initialArticles }: TrendingArticlesProps) {
   const scrollRef = useRef<HTMLDivElement>(null)
-  const [articles, setArticles] = useState<any[]>([])
-  const supabase = createClient()
+  // State diisi langsung dari server data — tidak ada loading state, tidak ada CLS
+  const [articles] = useState<Article[]>(initialArticles)
   const router = useRouter()
 
   const timeAgo = (dateStr: string) => {
@@ -27,20 +41,6 @@ export function TrendingArticles({ widgetVisible = true }: TrendingArticlesProps
     return `${days} hari yang lalu`
   }
 
-  useEffect(() => {
-    async function fetchTrending() {
-      const { data } = await supabase
-        .from("articles")
-        .select("id, slug, title, excerpt, featured_image_url, author, views, published_at, created_at, categories(name)")
-        .eq("status", "published")
-        .or("is_editor_choice.is.null,is_editor_choice.eq.false")
-        .order("created_at", { ascending: false })
-        .limit(widgetVisible ? 10 : 12)
-      if (data) setArticles(data)
-    }
-    fetchTrending()
-  }, [widgetVisible])
-
   const scroll = (direction: "left" | "right") => {
     if (scrollRef.current) {
       scrollRef.current.scrollBy({
@@ -50,7 +50,10 @@ export function TrendingArticles({ widgetVisible = true }: TrendingArticlesProps
     }
   }
 
-  if (articles.length === 0) return null
+  // Slice sesuai mode — di server sudah di-fetch limit 12
+  const displayArticles = widgetVisible ? articles.slice(0, 10) : articles.slice(0, 12)
+
+  if (displayArticles.length === 0) return null
 
   // ── MODE GRID (widget disembunyikan) ──────────────────────────────────────
   if (!widgetVisible) {
@@ -68,19 +71,21 @@ export function TrendingArticles({ widgetVisible = true }: TrendingArticlesProps
           </div>
 
           <div className="grid grid-cols-1 gap-6 sm:grid-cols-2">
-            {articles.map((article, idx) => (
+            {displayArticles.map((article, idx) => (
               <article
                 key={article.id}
                 onClick={() => router.push(`/article/${article.slug}`)}
                 className="group cursor-pointer overflow-hidden rounded-xl border border-border bg-card transition-all hover:border-primary/50"
               >
-                {/* Image — lebih tinggi karena 2 kolom */}
-                <div className="relative h-56 overflow-hidden bg-muted sm:h-64">
+                {/* Image — fixed aspect ratio mencegah CLS */}
+                <div className="relative aspect-[16/9] overflow-hidden bg-muted">
                   {article.featured_image_url ? (
                     <img
                       src={article.featured_image_url}
                       alt={article.title}
                       className="h-full w-full object-cover transition-transform duration-300 group-hover:scale-105"
+                      width={800}
+                      height={450}
                     />
                   ) : (
                     <div className="absolute inset-0 flex items-center justify-center text-muted-foreground">
@@ -89,7 +94,6 @@ export function TrendingArticles({ widgetVisible = true }: TrendingArticlesProps
                       </svg>
                     </div>
                   )}
-                  {/* Nomor urut */}
                   <div className="absolute left-4 top-4 flex items-center gap-2">
                     <span className="flex h-7 w-7 items-center justify-center rounded-full bg-black/60 text-xs font-bold text-white backdrop-blur-sm">
                       {idx + 1}
@@ -98,7 +102,6 @@ export function TrendingArticles({ widgetVisible = true }: TrendingArticlesProps
                       {article.categories?.name || "General"}
                     </span>
                   </div>
-                  {/* Gradient overlay bawah */}
                   <div className="absolute inset-x-0 bottom-0 h-20 bg-gradient-to-t from-black/60 to-transparent" />
                 </div>
 
@@ -135,7 +138,7 @@ export function TrendingArticles({ widgetVisible = true }: TrendingArticlesProps
     )
   }
 
-  // ── MODE HORIZONTAL SCROLL (widget aktif — tampilan semula) ───────────────
+  // ── MODE HORIZONTAL SCROLL (widget aktif) ─────────────────────────────────
   return (
     <section id="trending-section" className="bg-background py-12">
       <div className="mx-auto max-w-7xl px-4">
@@ -171,18 +174,21 @@ export function TrendingArticles({ widgetVisible = true }: TrendingArticlesProps
           className="hide-scrollbar flex gap-6 overflow-x-auto pb-4"
           style={{ WebkitOverflowScrolling: "touch" }}
         >
-          {articles.map((article) => (
+          {displayArticles.map((article) => (
             <article
               key={article.id}
               onClick={() => router.push(`/article/${article.slug}`)}
               className="group min-w-[300px] flex-shrink-0 cursor-pointer overflow-hidden rounded-xl border border-border bg-card transition-all hover:border-primary/50 sm:min-w-[380px] md:min-w-[420px]"
             >
-              <div className="relative h-52 overflow-hidden bg-muted sm:h-56">
+              {/* Fixed aspect ratio — tidak ada CLS */}
+              <div className="relative aspect-[16/9] overflow-hidden bg-muted">
                 {article.featured_image_url ? (
                   <img
                     src={article.featured_image_url}
                     alt={article.title}
                     className="h-full w-full object-cover transition-transform duration-300 group-hover:scale-105"
+                    width={800}
+                    height={450}
                   />
                 ) : (
                   <div className="absolute inset-0 flex items-center justify-center text-muted-foreground">

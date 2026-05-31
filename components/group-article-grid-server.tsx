@@ -33,30 +33,38 @@ function timeAgoServer(dateStr: string): string {
 async function fetchGroupArticles(groupKey: string): Promise<Article[]> {
   const supabaseUrl = process.env.NEXT_PUBLIC_SUPABASE_URL!
   const supabaseKey = process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY!
-  const slugs = GROUP_SLUGS[groupKey] ?? []
+
+  // Support group key (europe, asia, dll) maupun single category slug (liga1, transfer, dll)
+  const slugs = GROUP_SLUGS[groupKey] ?? [groupKey]
   if (slugs.length === 0) return []
 
-  // Fetch category IDs
-  const catsRes = await fetch(
-    `${supabaseUrl}/rest/v1/categories?slug=in.(${slugs.join(",")})&select=id`,
-    {
-      headers: { apikey: supabaseKey, Authorization: `Bearer ${supabaseKey}` },
-      next: { revalidate: 3600 },
-    }
-  )
-  const cats: { id: string }[] = await catsRes.json()
-  if (!cats.length) return []
+  try {
+    // Fetch category IDs
+    const catsRes = await fetch(
+      `${supabaseUrl}/rest/v1/categories?slug=in.(${slugs.join(",")})&select=id`,
+      {
+        headers: { apikey: supabaseKey, Authorization: `Bearer ${supabaseKey}` },
+        next: { revalidate: 3600 },
+      }
+    )
+    if (!catsRes.ok) return []
+    const cats: { id: string }[] = await catsRes.json()
+    if (!cats.length) return []
 
-  const catIds = cats.map((c) => c.id).join(",")
+    const catIds = cats.map((c) => c.id).join(",")
 
-  const articlesRes = await fetch(
-    `${supabaseUrl}/rest/v1/articles?status=eq.published&category_id=in.(${catIds})&select=id,title,slug,excerpt,featured_image_url,published_at,created_at,categories(name,slug)&order=published_at.desc&limit=6`,
-    {
-      headers: { apikey: supabaseKey, Authorization: `Bearer ${supabaseKey}` },
-      next: { revalidate: 3600 },
-    }
-  )
-  return articlesRes.json()
+    const articlesRes = await fetch(
+      `${supabaseUrl}/rest/v1/articles?status=eq.published&category_id=in.(${catIds})&select=id,title,slug,excerpt,featured_image_url,published_at,created_at,categories(name,slug)&order=published_at.desc&limit=9`,
+      {
+        headers: { apikey: supabaseKey, Authorization: `Bearer ${supabaseKey}` },
+        next: { revalidate: 3600 },
+      }
+    )
+    if (!articlesRes.ok) return []
+    return articlesRes.json()
+  } catch {
+    return []
+  }
 }
 
 interface Props {

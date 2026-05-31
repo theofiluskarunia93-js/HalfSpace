@@ -223,7 +223,9 @@ function ArticleSchema({ article }: { article: Article }) {
     "@type": "NewsArticle",
     "headline": article.title,
     "description": article.excerpt ?? "",
-    "image": article.featured_image_url ? [article.featured_image_url] : [],
+    "image": article.featured_image_url
+      ? [{ "@type": "ImageObject", "url": article.featured_image_url, "width": 1200, "height": 630 }]
+      : [],
     "datePublished": article.published_at || article.created_at,
     "dateModified": article.updated_at || article.created_at,
     "author": {
@@ -237,6 +239,8 @@ function ArticleSchema({ article }: { article: Article }) {
       "logo": {
         "@type": "ImageObject",
         "url": `${BASE_URL}/logo.png`,
+        "width": 200,
+        "height": 60,
       },
     },
     "mainEntityOfPage": {

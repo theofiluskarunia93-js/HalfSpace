@@ -1,6 +1,9 @@
+// Server Component — tidak ada "use client".
+// Data artikel di-fetch di server saat build/revalidate, bukan di browser.
+// Googlebot mendapat konten penuh, bukan shell kosong.
 import { NavbarStandalone } from "@/components/navbar-standalone"
 import { FooterStandalone } from "@/components/footer-standalone"
-import { ArticleGrid } from "@/components/article-grid"
+import { GroupArticleGridServer } from "@/components/group-article-grid-server"
 
 interface LeaguePageProps {
   title: string
@@ -9,7 +12,7 @@ interface LeaguePageProps {
   badgeLabel?: string
 }
 
-export function LeaguePage({ title, description, categorySlug, badgeLabel }: LeaguePageProps) {
+export async function LeaguePage({ title, description, categorySlug, badgeLabel }: LeaguePageProps) {
   return (
     <div className="min-h-screen bg-background">
       <NavbarStandalone />
@@ -31,8 +34,8 @@ export function LeaguePage({ title, description, categorySlug, badgeLabel }: Lea
           <p className="mt-4 max-w-2xl text-lg text-muted-foreground">{description}</p>
         </div>
 
-        {/* Articles */}
-        <ArticleGrid categorySlug={categorySlug} title={title} />
+        {/* Articles — server-fetched, ISR */}
+        <GroupArticleGridServer groupKey={categorySlug} title={title} />
       </main>
       <FooterStandalone />
     </div>

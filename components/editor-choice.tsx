@@ -1,8 +1,7 @@
 "use client"
 
-import React, { useEffect, useState } from "react"
+import React, { useState } from "react"
 import { Star } from "lucide-react"
-import { createClient } from "@/lib/supabase/client"
 import { useRouter } from "next/navigation"
 
 interface Article {
@@ -12,24 +11,14 @@ interface Article {
   categories: { name: string }[] | null
 }
 
-export function EditorChoice() {
-  const [articles, setArticles] = useState<Article[]>([])
-  const supabase = createClient()
-  const router = useRouter()
+interface EditorChoiceProps {
+  // Data dari server (app/page.tsx) — tidak perlu fetch ulang di client
+  initialArticles: Article[]
+}
 
-  useEffect(() => {
-    async function fetchEditorChoice() {
-      const { data } = await supabase
-        .from("articles")
-        .select("id, title, slug, categories(name)")
-        .eq("status", "published")
-        .eq("is_editor_choice", true)
-        .order("published_at", { ascending: false })
-        .limit(5)
-      if (data) setArticles(data as Article[])
-    }
-    fetchEditorChoice()
-  }, [])
+export function EditorChoice({ initialArticles }: EditorChoiceProps) {
+  const [articles] = useState<Article[]>(initialArticles)
+  const router = useRouter()
 
   if (articles.length === 0) return null
 

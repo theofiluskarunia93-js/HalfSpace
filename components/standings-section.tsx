@@ -292,7 +292,7 @@ function StandingsTable({
   }, [league])
 
   return (
-    <div className="overflow-hidden rounded-xl border border-border bg-secondary/30">
+    <div className="overflow-hidden rounded-xl border border-border bg-secondary/30 min-h-[480px]">
       <div className="flex flex-col gap-2 border-b border-border bg-secondary/50 px-3 py-3 sm:px-4">
         <div className="flex items-center justify-between">
           <h3 className="font-semibold text-foreground text-sm sm:text-base">League Table</h3>
@@ -329,7 +329,7 @@ function StandingsTable({
           </thead>
           <tbody>
             {isLoading ? (
-              <SkeletonRows count={6} />
+              <SkeletonRows count={10} />
             ) : (
               rows.slice(0, 10).map((row) => (
                 <tr
@@ -442,7 +442,7 @@ function TopScorers({
   }, [league])
 
   return (
-    <div className="overflow-hidden rounded-xl border border-border bg-secondary/30">
+    <div className="overflow-hidden rounded-xl border border-border bg-secondary/30 min-h-[510px]">
       <div className="flex flex-col gap-2 border-b border-border bg-secondary/50 px-3 py-3 sm:px-4">
         <div className="flex items-center justify-between">
           <h3 className="font-semibold text-foreground text-sm sm:text-base">Top Scorers</h3>
@@ -468,7 +468,7 @@ function TopScorers({
 
       <div className="divide-y divide-border/50">
         {isLoading ? (
-          <SkeletonScorers count={6} />
+          <SkeletonScorers count={8} />
         ) : (
           scorers.slice(0, 8).map((scorer) => (
             <div
