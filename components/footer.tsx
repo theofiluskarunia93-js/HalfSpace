@@ -1,7 +1,7 @@
 "use client"
 
 import { useRouter } from "next/navigation"
-import { PublicPage } from "@/app/page"
+import { PublicPage } from "@/types/pages"
 import { Instagram } from "lucide-react"
 
 interface FooterProps {

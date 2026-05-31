@@ -3,7 +3,7 @@
 import { useState, useEffect, useCallback } from "react"
 import Image from "next/image"
 import { useRouter } from "next/navigation"
-import { PublicPage } from "@/app/page"
+import { PublicPage } from "@/types/pages"
 import { createClient } from "@/lib/supabase/client"
 import { trackArticleView } from "@/lib/supabase/tracking"
 import { GroupArticleGrid } from "@/components/group-article-grid"

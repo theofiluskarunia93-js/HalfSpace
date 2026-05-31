@@ -63,6 +63,47 @@ export const metadata: Metadata = {
   },
 }
 
+// ─── JSON-LD: WebSite + Organization schema ─────────────────────────────────
+// Memberitahu Google: nama situs, URL, social profiles, dan sitelinks searchbox.
+const websiteSchema = {
+  "@context": "https://schema.org",
+  "@type": "WebSite",
+  name: "HalfSpace",
+  url: BASE_URL,
+  description: "Your ultimate destination for sports news, live scores, and league standings.",
+  inLanguage: "id-ID",
+  potentialAction: {
+    "@type": "SearchAction",
+    target: {
+      "@type": "EntryPoint",
+      urlTemplate: `${BASE_URL}/search?q={search_term_string}`,
+    },
+    "query-input": "required name=search_term_string",
+  },
+}
+
+const organizationSchema = {
+  "@context": "https://schema.org",
+  "@type": "Organization",
+  name: "HalfSpace",
+  url: BASE_URL,
+  logo: {
+    "@type": "ImageObject",
+    url: `${BASE_URL}/og-default.jpg`,
+    width: 1200,
+    height: 630,
+  },
+  sameAs: [
+    "https://twitter.com/halfspaceid",
+    "https://instagram.com/halfspaceid",
+  ],
+  contactPoint: {
+    "@type": "ContactPoint",
+    contactType: "editorial",
+    email: "redaksi@halfspace.id",
+  },
+}
+
 export default function RootLayout({
   children,
 }: Readonly<{
@@ -70,6 +111,16 @@ export default function RootLayout({
 }>) {
   return (
     <html lang="id" className="dark bg-background">
+      <head>
+        <script
+          type="application/ld+json"
+          dangerouslySetInnerHTML={{ __html: JSON.stringify(websiteSchema) }}
+        />
+        <script
+          type="application/ld+json"
+          dangerouslySetInnerHTML={{ __html: JSON.stringify(organizationSchema) }}
+        />
+      </head>
       <body className={`${inter.variable} ${oswald.variable} font-sans antialiased`}>
         {children}
         {process.env.NODE_ENV === 'production' && <Analytics />}

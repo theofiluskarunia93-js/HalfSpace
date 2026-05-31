@@ -4,12 +4,15 @@ import Link from "next/link"
 import { ChevronLeft, Tag } from "lucide-react"
 import { NavbarStandalone } from "@/components/navbar-standalone"
 import { FooterStandalone } from "@/components/footer-standalone"
+import type { Metadata } from "next"
+
+export const revalidate = 3600
 
 interface Props {
   params: { slug: string }
 }
 
-export async function generateMetadata({ params }: Props) {
+export async function generateMetadata({ params }: Props): Promise<Metadata> {
   const supabase = await createClient()
   const { data: tag } = await supabase
     .from("tags")
@@ -17,9 +20,39 @@ export async function generateMetadata({ params }: Props) {
     .eq("slug", params.slug)
     .single()
 
+  const BASE_URL = process.env.NEXT_PUBLIC_BASE_URL ?? "https://halfspace.id"
+  const title = tag ? `#${tag.name} — Artikel | HalfSpace` : "Tag | HalfSpace"
+  const description = tag
+    ? `Kumpulan artikel bertag ${tag.name} di HalfSpace — berita olahraga terkini.`
+    : "Jelajahi artikel berdasarkan tag di HalfSpace."
+
   return {
-    title: tag ? `#${tag.name} — Artikel` : "Tag",
-    description: tag ? `Semua artikel bertag ${tag.name}` : "",
+    title,
+    description,
+    alternates: {
+      canonical: `${BASE_URL}/tag/${params.slug}`,
+    },
+    openGraph: {
+      title,
+      description,
+      type: "website",
+      url: `${BASE_URL}/tag/${params.slug}`,
+      siteName: "HalfSpace",
+      images: [
+        {
+          url: `${BASE_URL}/og-default.jpg`,
+          width: 1200,
+          height: 630,
+          alt: "HalfSpace",
+        },
+      ],
+    },
+    twitter: {
+      card: "summary_large_image",
+      title,
+      description,
+      images: [`${BASE_URL}/og-default.jpg`],
+    },
   }
 }
 
@@ -34,7 +67,6 @@ export default async function TagPage({ params }: Props) {
 
   if (!tag) notFound()
 
-  // Get published articles with this tag — filter status di sisi DB
   const { data: articleTags } = await supabase
     .from("article_tags")
     .select("articles!inner(id, title, slug, excerpt, featured_image_url, author, views, status, published_at, created_at, categories(name, slug))")

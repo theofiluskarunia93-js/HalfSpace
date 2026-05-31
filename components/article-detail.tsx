@@ -854,11 +854,27 @@ function CommentSection({ articleId }: { articleId: string }) {
 // ─── Main Component ────────────────────────────────────────────────────────
 interface ArticleDetailProps {
   articleId: string
+  /** Data artikel dari server (SSR). Jika ada, skip loading state awal. */
+  initialData?: {
+    id: string
+    title: string
+    slug: string
+    excerpt: string | null
+    content: string | null
+    featured_image_url: string | null
+    featured_image_alt: string | null
+    author: string
+    views: number
+    published_at: string
+    created_at: string
+    updated_at: string | null
+    categories: { name: string; slug: string } | null
+  } | null
 }
 
-export function ArticleDetail({ articleId }: ArticleDetailProps) {
-  const [article, setArticle] = useState<Article | null>(null)
-  const [isLoading, setIsLoading] = useState(true)
+export function ArticleDetail({ articleId, initialData }: ArticleDetailProps) {
+  const [article, setArticle] = useState<Article | null>(initialData as Article | null ?? null)
+  const [isLoading, setIsLoading] = useState(!initialData)
   const [toc, setToc] = useState<TocItem[]>([])
   const [processedContent, setProcessedContent] = useState("")
   // rawContent: konten asli dari DB, dipakai untuk ArticleBody agar
@@ -990,6 +1006,20 @@ export function ArticleDetail({ articleId }: ArticleDetailProps) {
   ].join(" ")
 
   useEffect(() => {
+    // Jika initialData sudah dikirim dari server, proses kontennya tanpa fetch ulang
+    if (initialData) {
+      if (initialData.content) {
+        const cleanedContent = cleanLegacyBadgeContent(initialData.content)
+        setRawContent(cleanedContent)
+        const html = contentToHtml(cleanedContent)
+        const injected = injectHeadingIds(html)
+        setProcessedContent(injected)
+        setToc(extractToc(injected))
+      }
+      trackArticleView(articleId).catch(() => {})
+      return
+    }
+
     async function fetchArticle() {
       let { data } = await supabase
         .from("articles")

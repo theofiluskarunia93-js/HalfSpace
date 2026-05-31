@@ -1,7 +1,7 @@
 "use client"
 
 import { useState, useEffect } from "react"
-import { PublicPage } from "@/app/page"
+import { PublicPage } from "@/types/pages"
 import { Navbar } from "./navbar"
 import { HeroSection } from "./hero-section"
 import { LiveScores } from "./live-scores"
