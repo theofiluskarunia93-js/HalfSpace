@@ -4,10 +4,7 @@ import { useState, useEffect, useRef, useCallback } from "react"
 import { RefreshCw, WifiOff, Clock, ChevronDown, ChevronLeft, ChevronRight, AlertCircle } from "lucide-react"
 
 // ─── Interval refresh ─────────────────────────────────────────────────────
-// Hanya fetch setiap 15 menit jika ada pertandingan live/upcoming
-// Jika tidak ada pertandingan sama sekali, tidak perlu fetch ulang (data tersimpan lokal)
 const REFRESH_WITH_MATCHES_MS = 15 * 60 * 1000  // 15 menit jika ada pertandingan
-const NO_REFRESH_WHEN_EMPTY = true               // jika kosong, stop polling
 
 // ─── Status config ─────────────────────────────────────────────────────────
 const STATUS_CFG: Record<string, { label: string; live: boolean; cls: string }> = {
@@ -32,20 +29,17 @@ const STATUS_CFG: Record<string, { label: string; live: boolean; cls: string }> 
 
 // ─── Liga yang tersedia untuk dropdown filter ─────────────────────────────
 const LEAGUES = [
-  { id: 39,  slug: "premier-league", name: "Premier League",    flag: "🏴󠁧󠁢󠁥󠁮󠁧󠁿" },
-  { id: 140, slug: "la-liga",        name: "La Liga",           flag: "🇪🇸" },
-  { id: 135, slug: "serie-a",        name: "Serie A",           flag: "🇮🇹" },
-  { id: 78,  slug: "bundesliga",     name: "Bundesliga",        flag: "🇩🇪" },
-  { id: 61,  slug: "ligue-1",        name: "Ligue 1",           flag: "🇫🇷" },
-  { id: 2,   slug: "champions-league", name: "Champions League", flag: "🏆" },
-  { id: 3,   slug: "europa-league",  name: "Europa League",     flag: "🌍" },
+  { id: 39,  slug: "premier-league",   name: "Premier League",    flag: "🏴󠁧󠁢󠁥󠁮󠁧󠁿" },
+  { id: 140, slug: "la-liga",          name: "La Liga",           flag: "🇪🇸" },
+  { id: 135, slug: "serie-a",          name: "Serie A",           flag: "🇮🇹" },
+  { id: 78,  slug: "bundesliga",       name: "Bundesliga",        flag: "🇩🇪" },
+  { id: 61,  slug: "ligue-1",          name: "Ligue 1",           flag: "🇫🇷" },
+  { id: 2,   slug: "champions-league", name: "Champions League",  flag: "🏆" },
+  { id: 3,   slug: "europa-league",    name: "Europa League",     flag: "🌍" },
 ]
 
-// ─── Storage key untuk cache lokal ────────────────────────────────────────
+// ─── Storage key untuk cache lokal (per-liga) ─────────────────────────────
 const CACHE_KEY = (leagueSlug: string) => `livescores_cache_${leagueSlug}`
-// Sync dengan server-side cache TTL:
-// - Tidak ada pertandingan → 24 jam (server hanya fetch 1x sehari ke API-Football)
-// - Ada pertandingan live/akan datang → 15 menit
 const CACHE_TTL_EMPTY_MS  = 24 * 60 * 60 * 1000   // 24 jam jika tidak ada pertandingan
 const CACHE_TTL_ACTIVE_MS = 15 * 60 * 1000          // 15 menit jika ada pertandingan
 
@@ -54,8 +48,8 @@ const DUMMY_FIXTURES: Fixture[] = [
   {
     fixture: { id: 9001, date: new Date(Date.now() + 2 * 3600_000).toISOString(), status: { short: "NS", elapsed: null } },
     teams: {
-      home: { id: 40, name: "Liverpool", logo: "https://media.api-sports.io/football/teams/40.png" },
-      away: { id: 42, name: "Arsenal", logo: "https://media.api-sports.io/football/teams/42.png" },
+      home: { id: 40, name: "Liverpool",       logo: "https://media.api-sports.io/football/teams/40.png" },
+      away: { id: 42, name: "Arsenal",          logo: "https://media.api-sports.io/football/teams/42.png" },
     },
     goals: { home: null, away: null },
   },
@@ -63,14 +57,14 @@ const DUMMY_FIXTURES: Fixture[] = [
     fixture: { id: 9002, date: new Date(Date.now() + 3 * 3600_000).toISOString(), status: { short: "NS", elapsed: null } },
     teams: {
       home: { id: 50, name: "Manchester City", logo: "https://media.api-sports.io/football/teams/50.png" },
-      away: { id: 66, name: "Aston Villa", logo: "https://media.api-sports.io/football/teams/66.png" },
+      away: { id: 66, name: "Aston Villa",     logo: "https://media.api-sports.io/football/teams/66.png" },
     },
     goals: { home: null, away: null },
   },
   {
     fixture: { id: 9003, date: new Date(Date.now() + 4 * 3600_000).toISOString(), status: { short: "NS", elapsed: null } },
     teams: {
-      home: { id: 47, name: "Tottenham", logo: "https://media.api-sports.io/football/teams/47.png" },
+      home: { id: 47, name: "Tottenham",         logo: "https://media.api-sports.io/football/teams/47.png" },
       away: { id: 33, name: "Manchester United", logo: "https://media.api-sports.io/football/teams/33.png" },
     },
     goals: { home: null, away: null },
@@ -78,8 +72,8 @@ const DUMMY_FIXTURES: Fixture[] = [
   {
     fixture: { id: 9004, date: new Date(Date.now() + 5 * 3600_000).toISOString(), status: { short: "NS", elapsed: null } },
     teams: {
-      home: { id: 49, name: "Chelsea", logo: "https://media.api-sports.io/football/teams/49.png" },
-      away: { id: 51, name: "Brighton", logo: "https://media.api-sports.io/football/teams/51.png" },
+      home: { id: 49, name: "Chelsea",   logo: "https://media.api-sports.io/football/teams/49.png" },
+      away: { id: 51, name: "Brighton",  logo: "https://media.api-sports.io/football/teams/51.png" },
     },
     goals: { home: null, away: null },
   },
@@ -87,7 +81,7 @@ const DUMMY_FIXTURES: Fixture[] = [
     fixture: { id: 9005, date: new Date(Date.now() + 6 * 3600_000).toISOString(), status: { short: "NS", elapsed: null } },
     teams: {
       home: { id: 34, name: "Newcastle", logo: "https://media.api-sports.io/football/teams/34.png" },
-      away: { id: 48, name: "West Ham", logo: "https://media.api-sports.io/football/teams/48.png" },
+      away: { id: 48, name: "West Ham",  logo: "https://media.api-sports.io/football/teams/48.png" },
     },
     goals: { home: null, away: null },
   },
@@ -107,9 +101,11 @@ interface Fixture {
   goals: { home: number | null; away: number | null }
 }
 
+// FIX: ApiResponse sekarang menggunakan fixtures: Fixture[] (flat array)
+// sesuai dengan apa yang dikembalikan route.ts yang sudah diperbaiki
 interface ApiResponse {
   mode: "live" | "schedule"
-  fixtures: Fixture[]
+  fixtures: Fixture[]   // ← bukan groups: [...] lagi
   fetchedAt: string
   isDummy?: boolean
 }
@@ -130,7 +126,7 @@ function readCache(leagueSlug: string): CachedData | null {
     if (!parsed?.cachedAt || !parsed?.data) return null
     const age = Date.now() - parsed.cachedAt
     const ttl = parsed.hasMatches ? CACHE_TTL_ACTIVE_MS : CACHE_TTL_EMPTY_MS
-    if (age > ttl) return null // expired
+    if (age > ttl) return null
     return parsed
   } catch {
     return null
@@ -160,17 +156,16 @@ function formatWIB(dateStr: string): string {
 function formatDateLabel(dateStr: string): string {
   const d = new Date(dateStr)
   const now = new Date()
-  const todayStr = now.toLocaleDateString("id-ID", { timeZone: "Asia/Jakarta" })
-  const matchStr = d.toLocaleDateString("id-ID", { timeZone: "Asia/Jakarta" })
+  const todayStr     = now.toLocaleDateString("id-ID", { timeZone: "Asia/Jakarta" })
+  const matchStr     = d.toLocaleDateString("id-ID",  { timeZone: "Asia/Jakarta" })
   const tomorrowDate = new Date(now)
   tomorrowDate.setDate(tomorrowDate.getDate() + 1)
-  const tomorrowStr = tomorrowDate.toLocaleDateString("id-ID", { timeZone: "Asia/Jakarta" })
-  if (matchStr === todayStr) return "Hari ini"
-  if (matchStr === tomorrowStr) return "Besok"
+  const tomorrowStr  = tomorrowDate.toLocaleDateString("id-ID", { timeZone: "Asia/Jakarta" })
+  if (matchStr === todayStr)     return "Hari ini"
+  if (matchStr === tomorrowStr)  return "Besok"
   return d.toLocaleDateString("id-ID", { day: "numeric", month: "short", timeZone: "Asia/Jakarta" })
 }
 
-// ─── Deteksi apakah error adalah API limit ─────────────────────────────────
 function isRateLimitError(err: string): boolean {
   const lower = err.toLowerCase()
   return (
@@ -302,7 +297,7 @@ function MatchStrip({
   isDummy?: boolean
 }) {
   const scrollRef = useRef<HTMLDivElement>(null)
-  const [canLeft, setCanLeft] = useState(false)
+  const [canLeft, setCanLeft]   = useState(false)
   const [canRight, setCanRight] = useState(true)
 
   const updateArrows = () => {
@@ -451,10 +446,10 @@ function DummyBanner() {
 // ─── Main Component ────────────────────────────────────────────────────────
 export function LiveScores() {
   const [selectedLeague, setSelectedLeague] = useState("premier-league")
-  const [data, setData] = useState<ApiResponse | null>(null)
+  const [data, setData]           = useState<ApiResponse | null>(null)
   const [isLoading, setIsLoading] = useState(true)
   const [isRefreshing, setIsRefreshing] = useState(false)
-  const [isDummy, setIsDummy] = useState(false)
+  const [isDummy, setIsDummy]     = useState(false)
   const [fetchedAt, setFetchedAt] = useState<Date | null>(null)
   const intervalRef = useRef<NodeJS.Timeout | null>(null)
 
@@ -462,7 +457,6 @@ export function LiveScores() {
     // Cek cache lokal dulu
     const cached = readCache(selectedLeague)
     if (cached && !silent) {
-      // Pakai data dari cache, tidak perlu hit API
       setData(cached.data)
       setIsDummy(cached.data.isDummy ?? false)
       setFetchedAt(new Date(cached.cachedAt))
@@ -474,17 +468,16 @@ export function LiveScores() {
     else setIsRefreshing(true)
 
     try {
+      // FIX: kirim leagueId yang benar ke API route yang sudah diperbaiki
       const leagueObj = LEAGUES.find((l) => l.slug === selectedLeague)
-      const leagueId = leagueObj?.id ?? 39
+      const leagueId  = leagueObj?.id ?? 39
 
-      const res = await fetch(`/api/live-scores?league=${leagueId}`, { cache: "no-store" })
+      const res  = await fetch(`/api/live-scores?league=${leagueId}`, { cache: "no-store" })
       const json = await res.json()
 
-      // Cek apakah error kuota API
       if (!res.ok) {
         const errMsg = json.error ?? `HTTP ${res.status}`
         if (isRateLimitError(errMsg)) {
-          // Fallback ke dummy data
           const dummyResponse: ApiResponse = {
             mode: "schedule",
             fixtures: DUMMY_FIXTURES,
@@ -494,22 +487,32 @@ export function LiveScores() {
           setData(dummyResponse)
           setIsDummy(true)
           setFetchedAt(new Date())
-          // Simpan dummy ke cache dengan TTL pendek (jangan override cache valid)
           writeCache(selectedLeague, dummyResponse, true)
           return
         }
         throw new Error(errMsg)
       }
 
-      const hasMatches = (json.fixtures?.length ?? 0) > 0
-      setData(json)
+      // FIX: API sekarang return { fixtures: [...] } langsung (flat array)
+      // Tidak perlu transform dari groups lagi
+      const fixtures: Fixture[] = json.fixtures ?? []
+      const hasMatches = fixtures.length > 0
+
+      const normalized: ApiResponse = {
+        mode: json.mode ?? "schedule",
+        fixtures,
+        fetchedAt: json.fetchedAt ?? new Date().toISOString(),
+        isDummy: false,
+      }
+
+      setData(normalized)
       setIsDummy(false)
       setFetchedAt(new Date())
-      writeCache(selectedLeague, json, hasMatches)
+      writeCache(selectedLeague, normalized, hasMatches)
+
     } catch (e: any) {
       const errMsg = e.message ?? "Gagal memuat data"
       if (isRateLimitError(errMsg)) {
-        // Fallback dummy jika belum ada data
         if (!data) {
           const dummyResponse: ApiResponse = {
             mode: "schedule",
@@ -522,7 +525,7 @@ export function LiveScores() {
           setFetchedAt(new Date())
         }
       }
-      // Jika sudah ada data sebelumnya, biarkan (tetap tampilkan data lama)
+      // Jika sudah ada data sebelumnya, biarkan tampil data lama
     } finally {
       setIsLoading(false)
       setIsRefreshing(false)
@@ -537,30 +540,30 @@ export function LiveScores() {
     fetchData()
   }, [selectedLeague])
 
-  // Setup auto-refresh berdasarkan kondisi
+  // Setup auto-refresh berdasarkan kondisi data
   useEffect(() => {
     if (intervalRef.current) clearInterval(intervalRef.current)
 
-    const hasMatches = (data?.fixtures?.length ?? 0) > 0
+    // FIX: gunakan data?.fixtures (bukan data?.groups) untuk cek hasMatches
+    const hasMatches  = (data?.fixtures?.length ?? 0) > 0
     const isDummyMode = data?.isDummy ?? false
 
-    // Jika tidak ada pertandingan atau mode dummy, stop polling
     if (!hasMatches || isDummyMode) return
 
-    // Hanya refresh setiap 15 menit jika ada pertandingan real
     intervalRef.current = setInterval(() => fetchData(true), REFRESH_WITH_MATCHES_MS)
     return () => { if (intervalRef.current) clearInterval(intervalRef.current) }
   }, [data, fetchData])
 
   const isLiveMode = data?.mode === "live"
-  const fixtures = data?.fixtures ?? []
-  const hasLive = fixtures.some((f) => STATUS_CFG[f.fixture.status.short]?.live)
 
-  // Hitung next refresh
+  // FIX: baca fixtures langsung dari data.fixtures (sudah flat)
+  const fixtures = data?.fixtures ?? []
+  const hasLive  = fixtures.some((f) => STATUS_CFG[f.fixture.status.short]?.live)
+
   const getNextRefreshLabel = () => {
     const hasMatches = fixtures.length > 0 && !isDummy
     if (!hasMatches) return null
-    return `Auto-refresh 15 mnt`
+    return "Auto-refresh 15 mnt"
   }
 
   return (
@@ -577,7 +580,6 @@ export function LiveScores() {
               {isLiveMode ? "Live Scores" : "Jadwal Pertandingan"}
             </h2>
 
-            {/* Mode badges */}
             {isLiveMode && (
               <span className="flex items-center gap-1.5 rounded-full bg-primary/15 px-2.5 py-0.5 text-xs font-bold text-primary">
                 <span className="h-1.5 w-1.5 animate-pulse rounded-full bg-primary" />
@@ -599,21 +601,16 @@ export function LiveScores() {
           </div>
 
           <div className="flex items-center gap-2 ml-auto">
-            {/* Next refresh info */}
             {getNextRefreshLabel() && (
               <span className="hidden text-xs text-muted-foreground sm:block">
                 {getNextRefreshLabel()}
               </span>
             )}
-
-            {/* Update time */}
             {fetchedAt && (
               <span className="hidden text-xs text-muted-foreground sm:block">
                 Update {fetchedAt.toLocaleTimeString("id-ID", { hour: "2-digit", minute: "2-digit" })}
               </span>
             )}
-
-            {/* Refresh button */}
             <button
               onClick={() => fetchData(true)}
               disabled={isRefreshing || isLoading}
@@ -622,8 +619,6 @@ export function LiveScores() {
             >
               <RefreshCw className={`h-3.5 w-3.5 ${isRefreshing ? "animate-spin" : ""}`} />
             </button>
-
-            {/* ── Dropdown filter liga ── */}
             <LeagueDropdown value={selectedLeague} onChange={setSelectedLeague} />
           </div>
         </div>

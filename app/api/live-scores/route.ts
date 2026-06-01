@@ -3,30 +3,27 @@ import { createClient } from "@supabase/supabase-js"
 
 // ─── Liga yang dipantau ────────────────────────────────────────────────────
 const WATCHED_LEAGUES = [
-  { id: 39,   name: "Premier League"    },
-  { id: 140,  name: "La Liga"           },
-  { id: 78,   name: "Bundesliga"        },
-  { id: 135,  name: "Serie A"           },
-  { id: 61,   name: "Ligue 1"           },
-  { id: 2,    name: "Champions League"  },
-  { id: 1,    name: "World Cup"         },
-  { id: 4,    name: "Euro"              },
-  { id: 9,    name: "Copa America"      },
-  { id: 12,   name: "AFCON"             },
-  { id: 17,   name: "AFC Asian Cup"     },
-  { id: 142,  name: "AFF Cup"           },
+  { id: 39,  name: "Premier League"    },
+  { id: 140, name: "La Liga"           },
+  { id: 78,  name: "Bundesliga"        },
+  { id: 135, name: "Serie A"           },
+  { id: 61,  name: "Ligue 1"           },
+  { id: 2,   name: "Champions League"  },
+  { id: 3,   name: "Europa League"     }, // ← FIX: ditambahkan, ada di dropdown komponen
+  { id: 1,   name: "World Cup"         },
+  { id: 4,   name: "Euro"              },
+  { id: 9,   name: "Copa America"      },
+  { id: 12,  name: "AFCON"             },
+  { id: 17,  name: "AFC Asian Cup"     },
+  { id: 142, name: "AFF Cup"           },
 ]
 
-const LEAGUE_IDS = WATCHED_LEAGUES.map((l) => l.id)
+const ALL_LEAGUE_IDS = WATCHED_LEAGUES.map((l) => l.id)
 
 // ─── Cache TTL ─────────────────────────────────────────────────────────────
-// Jika ada pertandingan live → fetch setiap 15 menit
-// Jika tidak ada pertandingan sama sekali → fetch 1x sehari (24 jam)
-const CACHE_TTL_LIVE_MS     = 15 * 60 * 1000        // 15 menit saat ada live
-const CACHE_TTL_SCHEDULE_MS = 24 * 60 * 60 * 1000   // 24 jam (1x sehari) saat tidak ada live
-
-const CACHE_KEY_LIVE     = "livescores_live"
-const CACHE_KEY_SCHEDULE = "livescores_schedule"
+// Live match → 15 menit | Tidak ada pertandingan → 24 jam
+const CACHE_TTL_LIVE_MS     = 15 * 60 * 1000
+const CACHE_TTL_SCHEDULE_MS = 24 * 60 * 60 * 1000
 
 // ─── Supabase ──────────────────────────────────────────────────────────────
 function getSupabase() {
@@ -53,43 +50,18 @@ async function apiFetch(path: string) {
   return json.response as any[]
 }
 
-// ─── Fetch live matches ────────────────────────────────────────────────────
-async function fetchLive() {
+// ─── Fetch live matches untuk satu liga ───────────────────────────────────
+async function fetchLiveForLeague(leagueId: number) {
   const response = await apiFetch("/fixtures?live=all")
-  return response.filter((f: any) => LEAGUE_IDS.includes(f.league.id))
+  // Filter hanya liga yang diminta
+  return response.filter((f: any) => f.league.id === leagueId)
 }
 
-// ─── Fetch jadwal hari ini saja (bukan +24jam) ────────────────────────────
-// Karena sudah 24jam cache, cukup ambil hari ini saja
-async function fetchSchedule() {
-  const now = new Date()
-  const toDate = (d: Date) => d.toISOString().split("T")[0]
-  const todayRes = await apiFetch(`/fixtures?date=${toDate(now)}`)
-  return todayRes.filter((f: any) => LEAGUE_IDS.includes(f.league.id))
-}
-
-// ─── Group fixtures by league ──────────────────────────────────────────────
-function groupByLeague(fixtures: any[]) {
-  const map = new Map<number, any>()
-
-  for (const f of fixtures) {
-    const lid = f.league.id
-    if (!map.has(lid)) {
-      map.set(lid, {
-        leagueId:   lid,
-        leagueName: f.league.name,
-        leagueLogo: f.league.logo,
-        fixtures:   [],
-      })
-    }
-    map.get(lid).fixtures.push(f)
-  }
-
-  const ordered: any[] = []
-  for (const wl of WATCHED_LEAGUES) {
-    if (map.has(wl.id)) ordered.push(map.get(wl.id))
-  }
-  return ordered
+// ─── Fetch jadwal hari ini untuk satu liga ────────────────────────────────
+async function fetchScheduleForLeague(leagueId: number) {
+  const today = new Date().toISOString().split("T")[0]
+  const response = await apiFetch(`/fixtures?date=${today}&league=${leagueId}`)
+  return response
 }
 
 // ─── Supabase cache helpers ────────────────────────────────────────────────
@@ -113,72 +85,108 @@ async function setCache(supabase: any, key: string, payload: any) {
       { onConflict: "cache_key" }
     )
   } catch {
-    // Cache write gagal — tidak masalah
+    // Cache write gagal — tidak masalah, lanjut saja
   }
 }
 
 // ─── Main handler ──────────────────────────────────────────────────────────
-export async function GET() {
+// FIX: Terima request parameter dan destructure URL untuk baca ?league=
+export async function GET(request: Request) {
+  const { searchParams } = new URL(request.url)
+  const leagueId = parseInt(searchParams.get("league") ?? "39", 10)
+
+  // Validasi leagueId — harus ada di daftar yang diizinkan
+  const isValidLeague = ALL_LEAGUE_IDS.includes(leagueId)
+  const resolvedLeagueId = isValidLeague ? leagueId : 39
+
+  // Cache key per-liga sehingga tiap liga punya cache sendiri
+  const cacheKeyLive     = `livescores_live_${resolvedLeagueId}`
+  const cacheKeySchedule = `livescores_schedule_${resolvedLeagueId}`
+
   const supabase = getSupabase()
 
-  // ── 1. Cek cache live di Supabase (TTL: 15 menit) ─────────────────────
+  // ── 1. Cek cache live per-liga (TTL: 15 menit) ────────────────────────
   if (supabase) {
-    const cached = await getCache(supabase, CACHE_KEY_LIVE)
+    const cached = await getCache(supabase, cacheKeyLive)
     if (cached) {
       const ageMs = Date.now() - new Date(cached.fetched_at).getTime()
       if (ageMs < CACHE_TTL_LIVE_MS) {
-        return NextResponse.json({ ...cached.payload, fromCache: true, fetchedAt: cached.fetched_at })
+        return NextResponse.json({
+          ...cached.payload,
+          fromCache: true,
+          fetchedAt: cached.fetched_at,
+        })
       }
     }
   }
 
   // ── 2. Fetch live dari API-Football ───────────────────────────────────
   try {
-    const liveFixtures = await fetchLive()
+    const liveFixtures = await fetchLiveForLeague(resolvedLeagueId)
 
     if (liveFixtures.length > 0) {
-      // Ada live → simpan ke Supabase, cache 15 menit
-      const groups = groupByLeague(liveFixtures)
-      const payload = { mode: "live", groups }
+      // FIX: return flat { fixtures: [...] } bukan { groups: [...] }
+      // Komponen live-scores.tsx membaca data?.fixtures
+      const payload = { mode: "live" as const, fixtures: liveFixtures }
 
-      if (supabase) await setCache(supabase, CACHE_KEY_LIVE, payload)
+      if (supabase) await setCache(supabase, cacheKeyLive, payload)
 
-      return NextResponse.json({ ...payload, fromCache: false, fetchedAt: new Date().toISOString() })
+      return NextResponse.json({
+        ...payload,
+        fromCache: false,
+        fetchedAt: new Date().toISOString(),
+      })
     }
 
-    // ── 3. Tidak ada live → hapus cache live yang expired ─────────────
-    // Cek cache jadwal (TTL: 24 jam — hanya fetch 1x sehari)
+    // ── 3. Tidak ada live → cek cache jadwal ──────────────────────────
     if (supabase) {
-      const cached = await getCache(supabase, CACHE_KEY_SCHEDULE)
+      const cached = await getCache(supabase, cacheKeySchedule)
       if (cached) {
         const ageMs = Date.now() - new Date(cached.fetched_at).getTime()
         if (ageMs < CACHE_TTL_SCHEDULE_MS) {
-          // Masih dalam 24 jam → kembalikan dari Supabase, TIDAK fetch API
-          return NextResponse.json({ ...cached.payload, fromCache: true, fetchedAt: cached.fetched_at })
+          return NextResponse.json({
+            ...cached.payload,
+            fromCache: true,
+            fetchedAt: cached.fetched_at,
+          })
         }
       }
     }
 
-    // ── 4. Cache expired atau tidak ada → fetch jadwal hari ini ───────
-    const scheduleFixtures = await fetchSchedule()
-    const groups = groupByLeague(scheduleFixtures)
-    const payload = { mode: "schedule", groups }
+    // ── 4. Cache expired → fetch jadwal hari ini ──────────────────────
+    const scheduleFixtures = await fetchScheduleForLeague(resolvedLeagueId)
 
-    // Simpan ke Supabase — berlaku 24 jam
-    if (supabase) await setCache(supabase, CACHE_KEY_SCHEDULE, payload)
+    // FIX: return flat { fixtures: [...] } bukan { groups: [...] }
+    const payload = { mode: "schedule" as const, fixtures: scheduleFixtures }
 
-    return NextResponse.json({ ...payload, fromCache: false, fetchedAt: new Date().toISOString() })
+    if (supabase) await setCache(supabase, cacheKeySchedule, payload)
+
+    return NextResponse.json({
+      ...payload,
+      fromCache: false,
+      fetchedAt: new Date().toISOString(),
+    })
 
   } catch (err: any) {
-    // ── 5. API gagal → coba kembalikan cache lama meskipun expired ────
+    // ── 5. API gagal → coba kembalikan stale cache ────────────────────
     if (supabase) {
-      const staleLive = await getCache(supabase, CACHE_KEY_LIVE)
+      const staleLive = await getCache(supabase, cacheKeyLive)
       if (staleLive) {
-        return NextResponse.json({ ...staleLive.payload, fromCache: true, stale: true, fetchedAt: staleLive.fetched_at })
+        return NextResponse.json({
+          ...staleLive.payload,
+          fromCache: true,
+          stale: true,
+          fetchedAt: staleLive.fetched_at,
+        })
       }
-      const staleSchedule = await getCache(supabase, CACHE_KEY_SCHEDULE)
+      const staleSchedule = await getCache(supabase, cacheKeySchedule)
       if (staleSchedule) {
-        return NextResponse.json({ ...staleSchedule.payload, fromCache: true, stale: true, fetchedAt: staleSchedule.fetched_at })
+        return NextResponse.json({
+          ...staleSchedule.payload,
+          fromCache: true,
+          stale: true,
+          fetchedAt: staleSchedule.fetched_at,
+        })
       }
     }
 
