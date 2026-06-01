@@ -18,6 +18,12 @@ import type { MatchRow, StandingRow } from "./WidgetCards"
 import type { WidgetType } from "./useWidgetModal"
 
 // ── Types ─────────────────────────────────────────────────────────────────────
+// EditableMatchRow: score_home/away bisa string (dari input user) atau number|null (dari DB)
+type EditableMatchRow = Omit<MatchRow, "score_home" | "score_away"> & {
+  score_home: string | number | null
+  score_away: string | number | null
+  _isNew?: boolean
+}
 
 interface WidgetEditModalProps {
   widgetId: string | null
@@ -75,7 +81,7 @@ function JadwalEditor({
 }: {
   widgetId: string; onClose: () => void; onSaved?: () => void
 }) {
-  const [rows, setRows] = useState<(MatchRow & { _isNew?: boolean })[]>([])
+  const [rows, setRows] = useState<EditableMatchRow[]>([])
   const [loading, setLoading] = useState(true)
   const [saving, setSaving] = useState(false)
   const [error, setError] = useState<string | null>(null)
@@ -94,7 +100,7 @@ function JadwalEditor({
       })
   }, [widgetId])
 
-  function updateRow(index: number, field: keyof MatchRow, value: string) {
+  function updateRow(index: number, field: keyof EditableMatchRow, value: string) {
     setRows((prev) => {
       const copy = [...prev]
       copy[index] = { ...copy[index], [field]: value }
@@ -142,8 +148,8 @@ function JadwalEditor({
           away_team: row.away_team,
           match_date: row.match_date || null,
           match_time: row.match_time || null,
-          score_home: row.score_home != null && row.score_home !== "" ? Number(row.score_home) : null,
-          score_away: row.score_away != null && row.score_away !== "" ? Number(row.score_away) : null,
+          score_home: row.score_home != null && String(row.score_home) !== "" ? Number(row.score_home) : null,
+          score_away: row.score_away != null && String(row.score_away) !== "" ? Number(row.score_away) : null,
           status: (row as any).status ?? "scheduled",
           stadium: (row as any).stadium || null,
         }

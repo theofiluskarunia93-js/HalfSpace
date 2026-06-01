@@ -23,7 +23,7 @@ interface Article {
   views: number
   published_at: string
   created_at: string
-  categories: { name: string; slug: string } | null
+  categories: { name: string; slug: string }[] | null
 }
 
 // ─── Schema Markup ─────────────────────────────────────────────────────────
@@ -108,9 +108,9 @@ function ArticleCard({ article, onView }: { article: Article; onView: (id: strin
       </div>
 
       <div className="p-4">
-        {article.categories && (
+        {article.categories?.[0] && (
           <span className="mb-2 inline-block rounded bg-primary/15 px-2 py-0.5 text-xs font-semibold text-primary">
-            {article.categories.name}
+            {article.categories[0].name}
           </span>
         )}
         <h3 className="mb-2 font-semibold text-foreground transition-colors group-hover:text-primary line-clamp-2 text-sm leading-snug">
@@ -188,7 +188,7 @@ export function AuthorProfilePage() {
       .order("published_at", { ascending: false })
       .range(from, to)
 
-    const fetched = (data as Article[]) || []
+    const fetched = (data ?? []) as Article[]
     if (reset) {
       setArticles(fetched)
       const views = fetched.reduce((sum, a) => sum + (a.views || 0), 0)
