@@ -27,7 +27,8 @@ const PAGE_TO_ROUTE: Partial<Record<PublicPage, string>> = {
   "liga1": "/liga1",
   "transfer": "/transfer",
   "about": "/about-us",
-  "contact": "/about-us",
+  "contact": "/contact-us",
+  "privacy": "/privacy-policy",
 }
 
 interface NavbarProps {

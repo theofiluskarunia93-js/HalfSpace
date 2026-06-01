@@ -35,6 +35,8 @@ export function FooterStandalone() {
     "More": [
       { label: "Transfer", href: "/transfer" },
       { label: "About Us", href: "/about-us" },
+      { label: "Contact Us", href: "/contact-us" },
+      { label: "Privacy Policy", href: "/privacy-policy" },
     ],
   }
 

@@ -25,7 +25,8 @@ const PAGE_TO_ROUTE: Partial<Record<PublicPage, string>> = {
   "liga1": "/liga1",
   "transfer": "/transfer",
   "about": "/about-us",
-  "contact": "/about-us",
+  "contact": "/contact-us",
+  "privacy": "/privacy-policy",
 }
 
 function TikTokIcon({ className }: { className?: string }) {
@@ -69,6 +70,8 @@ export function Footer({ onGoToAdmin, onPageChange }: FooterProps) {
     "More": [
       { label: "Transfer", page: "transfer" as PublicPage },
       { label: "About Us", page: "about" as PublicPage },
+      { label: "Contact Us", page: "contact" as PublicPage },
+      { label: "Privacy Policy", page: "privacy" as PublicPage },
     ],
   }
 

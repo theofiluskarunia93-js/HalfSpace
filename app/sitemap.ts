@@ -101,6 +101,16 @@ const STATIC_ROUTES: MetadataRoute.Sitemap = [
     priority: 0.4,
   },
   {
+    url: `${BASE_URL}/contact-us`,
+    changeFrequency: "monthly",
+    priority: 0.4,
+  },
+  {
+    url: `${BASE_URL}/privacy-policy`,
+    changeFrequency: "yearly",
+    priority: 0.3,
+  },
+  {
     url: `${BASE_URL}/search`,
     changeFrequency: "monthly",
     priority: 0.3,

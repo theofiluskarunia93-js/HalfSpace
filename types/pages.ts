@@ -26,3 +26,4 @@ export type PublicPage =
   | "transfer"
   | "about"
   | "contact"
+  | "privacy"

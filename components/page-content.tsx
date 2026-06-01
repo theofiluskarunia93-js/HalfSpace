@@ -116,6 +116,7 @@ const pageData: Record<PublicPage, { title: string; description: string; categor
   transfer: { title: "Transfer News", description: "Latest transfer rumors and confirmed deals.", categorySlug: "transfer" },
   about: { title: "About Us", description: "HalfSpace is your ultimate sports destination." },
   contact: { title: "Contact Us", description: "Get in touch with the HalfSpace team." },
+  privacy: { title: "Privacy Policy", description: "How HalfSpace handles your data." },
 }
 
 function ArticleCard({ article, onView }: { article: any; onView: (id: string, slug: string) => void }) {
