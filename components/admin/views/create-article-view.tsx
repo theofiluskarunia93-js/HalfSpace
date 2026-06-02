@@ -14,6 +14,7 @@ import {
   Bold, Italic, List, ListOrdered, Link2, Quote,
   Code2, Minus, Heading1, Heading2, Heading3,
   Undo2, Redo2, Table as TableIcon, Star,
+  Pilcrow, MessageSquareQuote,
 } from "lucide-react"
 import { Button } from "@/components/ui/button"
 import { Input } from "@/components/ui/input"
@@ -172,6 +173,98 @@ function resolveShortcodesForSave(html: string): string {
     else el.replaceWith(p)
   })
 
+  return doc.body.innerHTML
+}
+
+// ─── Sanitasi HTML artikel — whitelist tag & attribute ───────────────────────
+// Dijalankan SETELAH resolveShortcodesForSave agar shortcode sudah jadi teks
+// bersih dan badge custom sudah hilang. Hanya tag + attribute yang dipakai
+// konten artikel yang diizinkan — script, iframe, on* event diblokir total.
+function sanitizeArticleHtml(html: string): string {
+  if (typeof window === "undefined") return html
+  const parser = new DOMParser()
+  const doc = parser.parseFromString(html, "text/html")
+
+  // Tag yang sama sekali tidak boleh ada
+  const BLOCKED_TAGS = ["script","iframe","object","embed","form","input",
+    "button","select","textarea","base","link","meta","style","svg","math"]
+
+  // Tag yang diizinkan untuk konten artikel
+  const ALLOWED_TAGS = new Set([
+    "p","br","hr","h1","h2","h3","h4","h5","h6",
+    "strong","b","em","i","u","s","del","mark","sup","sub","small","code","pre",
+    "ul","ol","li","blockquote","a","img","figure","figcaption",
+    "table","thead","tbody","tfoot","tr","th","td","caption","colgroup","col",
+    "div","span","section","article","aside","header","footer","nav",
+  ])
+
+  // Attribute yang diizinkan per tag
+  const ALLOWED_ATTRS: Record<string, string[]> = {
+    "*":          ["class","id"],
+    "a":          ["href","target","rel","title"],
+    "img":        ["src","alt","width","height","loading"],
+    "th":         ["colspan","rowspan","scope"],
+    "td":         ["colspan","rowspan"],
+    "col":        ["span"],
+    "colgroup":   ["span"],
+  }
+
+  // Class yang diizinkan (whitelist eksplisit untuk custom styling artikel)
+  const ALLOWED_CLASSES = new Set([
+    "section-label","pull-quote",
+    "card-table-block","card-table-card","card-table-field","card-table-label","card-table-value",
+    "card-design","card-design-card","card-design-field","card-design-label","card-design-value",
+    "modern-table",
+    "group-standings-block",
+    "gs-header","gs-header-icon","gs-header-title","gs-header-sub",
+    "gs-table-wrap","gs-table","gs-thead-row","gs-th","gs-th-rank",
+    "gs-tr","gs-td","gs-td-rank","gs-td-name","gs-td-stat",
+    "gs-legend","gs-legend-item","gs-legend-qualify","gs-legend-candidate",
+  ])
+
+  function cleanNode(node: Element) {
+    const tag = node.tagName.toLowerCase()
+
+    // Hapus tag terblokir beserta seluruh isinya
+    if (BLOCKED_TAGS.includes(tag)) { node.remove(); return }
+
+    // Ganti tag tidak dikenal dengan span (pertahankan kontennya)
+    if (!ALLOWED_TAGS.has(tag)) {
+      const span = doc.createElement("span")
+      span.innerHTML = node.innerHTML
+      node.replaceWith(span)
+      return
+    }
+
+    // Hapus semua attribute lalu pasang kembali yang diizinkan
+    const allowed = [...(ALLOWED_ATTRS["*"] || []), ...(ALLOWED_ATTRS[tag] || [])]
+    const attrNames = [...node.attributes].map(a => a.name)
+    attrNames.forEach(attr => {
+      // Blokir total event handler (onclick, onerror, dll)
+      if (/^on/i.test(attr)) { node.removeAttribute(attr); return }
+      // Blokir javascript: di href/src
+      if ((attr === "href" || attr === "src")) {
+        const val = node.getAttribute(attr) || ""
+        if (/^\s*javascript:/i.test(val)) { node.removeAttribute(attr); return }
+      }
+      if (!allowed.includes(attr)) { node.removeAttribute(attr) }
+    })
+
+    // Sanitasi class — hanya izinkan class dari whitelist
+    if (node.hasAttribute("class")) {
+      const cleaned = node.getAttribute("class")!
+        .split(/\s+/)
+        .filter(c => ALLOWED_CLASSES.has(c))
+        .join(" ")
+      if (cleaned) node.setAttribute("class", cleaned)
+      else node.removeAttribute("class")
+    }
+
+    // Rekursif ke child elements
+    ;[...node.children].forEach(cleanNode)
+  }
+
+  ;[...doc.body.children].forEach(cleanNode)
   return doc.body.innerHTML
 }
 
@@ -502,6 +595,20 @@ export function CreateArticleView({ onBack, articleId }: CreateArticleViewProps)
     editor.chain().focus().insertTable({ rows: 3, cols: 3, withHeaderRow: true }).run()
   }, [editor])
 
+  const handleInsertSectionLabel = useCallback(() => {
+    if (!editor) return
+    editor.chain().focus().insertContent(
+      '<p class="section-label">Label Bagian · Sub-label</p><h2>Judul Bagian</h2>'
+    ).run()
+  }, [editor])
+
+  const handleInsertPullQuote = useCallback(() => {
+    if (!editor) return
+    editor.chain().focus().insertContent(
+      '<blockquote class="pull-quote"><p>Tulis kutipan penting di sini.</p></blockquote>'
+    ).run()
+  }, [editor])
+
   // ── Widget insert callback ────────────────────────────────────────────────
   // Dipanggil oleh WidgetInserter setelah data tersimpan ke Supabase
   function handleWidgetInsert(shortcode: string, widgetId: string, widgetType: WidgetType) {
@@ -560,8 +667,10 @@ export function CreateArticleView({ onBack, articleId }: CreateArticleViewProps)
 
     const rawHtml = editor.getHTML()
 
-    // Konversi badge placeholder → shortcode teks untuk disimpan ke DB
-    const htmlContent = resolveShortcodesForSave(rawHtml)
+    // 1. Konversi badge placeholder → shortcode teks
+    const resolvedHtml = resolveShortcodesForSave(rawHtml)
+    // 2. Sanitasi whitelist — blokir script/iframe/on* event, izinkan tag artikel
+    const htmlContent = sanitizeArticleHtml(resolvedHtml)
 
     const now = new Date().toISOString()
     // Edit mode: pertahankan slug yang sudah ada agar URL tidak berubah.
@@ -761,6 +870,12 @@ export function CreateArticleView({ onBack, articleId }: CreateArticleViewProps)
                   <ToolbarSeparator />
                   <ToolbarButton onClick={() => editor?.chain().focus().toggleBlockquote().run()} active={editor?.isActive("blockquote")} title="Blockquote">
                     <Quote className="h-4 w-4" />
+                  </ToolbarButton>
+                  <ToolbarButton onClick={handleInsertSectionLabel} title="Section Label (label fase/babak)">
+                    <Pilcrow className="h-4 w-4" />
+                  </ToolbarButton>
+                  <ToolbarButton onClick={handleInsertPullQuote} title="Pull Quote (kutipan menonjol)">
+                    <MessageSquareQuote className="h-4 w-4" />
                   </ToolbarButton>
                   <ToolbarButton onClick={() => editor?.chain().focus().setHorizontalRule().run()} title="Garis Pemisah">
                     <Minus className="h-4 w-4" />
