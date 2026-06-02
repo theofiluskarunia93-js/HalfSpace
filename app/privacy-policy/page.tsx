@@ -7,7 +7,7 @@ const BASE_URL = process.env.NEXT_PUBLIC_BASE_URL ?? "https://halfspacesport.com
 
 // ─── Last updated date ────────────────────────────────────────────────────────
 // Update tanggal ini setiap kali ada perubahan material pada kebijakan
-const LAST_UPDATED = "1 Juni 2025"
+const LAST_UPDATED = "2 Juni 2026"
 
 export async function generateMetadata(): Promise<Metadata> {
   const title = "Privacy Policy | HalfSpace"
