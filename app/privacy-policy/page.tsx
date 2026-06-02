@@ -3,7 +3,7 @@ import { NavbarStandalone } from "@/components/navbar-standalone"
 import { FooterStandalone } from "@/components/footer-standalone"
 import { Shield, Eye, Cookie, Lock, UserCheck, RefreshCw, Mail } from "lucide-react"
 
-const BASE_URL = process.env.NEXT_PUBLIC_BASE_URL ?? "https://halfspace.id"
+const BASE_URL = process.env.NEXT_PUBLIC_BASE_URL ?? "https://halfspacesport.com"
 
 // ─── Last updated date ────────────────────────────────────────────────────────
 // Update tanggal ini setiap kali ada perubahan material pada kebijakan
@@ -130,7 +130,7 @@ export default function PrivacyPolicyPage() {
             </p>
             <p className="mt-4 text-base leading-relaxed text-muted-foreground">
               Privasi Anda penting bagi kami. Dokumen ini menjelaskan secara jelas dan
-              transparan bagaimana HalfSpace (<strong className="text-foreground">halfspace.id</strong>)
+              transparan bagaimana HalfSpace (<strong className="text-foreground">halfspacesport.com</strong>)
               mengumpulkan, menggunakan, dan menjaga keamanan data Anda. Mohon baca
               dengan seksama sebelum menggunakan layanan kami.
             </p>
@@ -161,17 +161,17 @@ export default function PrivacyPolicyPage() {
           <Section id="who-we-are" icon={Shield} title="1. Siapa Kami">
             <p>
               HalfSpace adalah platform media olahraga digital yang beroperasi di bawah
-              domain <strong className="text-foreground">halfspace.id</strong>. Kami
+              domain <strong className="text-foreground">halfspacesport.com</strong>. Kami
               menyediakan berita, analisis, skor langsung, dan klasemen liga sepak bola
               dari seluruh dunia.
             </p>
             <p>
               Untuk pertanyaan terkait privasi, Anda dapat menghubungi kami di:{" "}
               <a
-                href="mailto:privacy@halfspace.id"
+                href="mailto:privacy@halfspacesport.com"
                 className="font-medium text-primary hover:underline"
               >
-                privacy@halfspace.id
+                privacy@halfspacesport.com
               </a>
             </p>
           </Section>
@@ -306,10 +306,10 @@ export default function PrivacyPolicyPage() {
               menduga terjadi pelanggaran keamanan terkait data Anda, segera hubungi
               kami di{" "}
               <a
-                href="mailto:privacy@halfspace.id"
+                href="mailto:privacy@halfspacesport.com"
                 className="font-medium text-primary hover:underline"
               >
-                privacy@halfspace.id
+                privacy@halfspacesport.com
               </a>
               .
             </p>
@@ -341,10 +341,10 @@ export default function PrivacyPolicyPage() {
             <p>
               Untuk menggunakan hak-hak di atas, kirimkan permintaan ke{" "}
               <a
-                href="mailto:privacy@halfspace.id"
+                href="mailto:privacy@halfspacesport.com"
                 className="font-medium text-primary hover:underline"
               >
-                privacy@halfspace.id
+                privacy@halfspacesport.com
               </a>{" "}
               dengan subjek <em>"Data Request"</em>. Kami akan merespons dalam 14 hari
               kerja.
@@ -404,10 +404,10 @@ export default function PrivacyPolicyPage() {
             <p>
               📧{" "}
               <a
-                href="mailto:privacy@halfspace.id"
+                href="mailto:privacy@halfspacesport.com"
                 className="font-medium text-primary hover:underline"
               >
-                privacy@halfspace.id
+                privacy@halfspacesport.com
               </a>
             </p>
             <p>

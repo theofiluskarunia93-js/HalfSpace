@@ -3,7 +3,7 @@ import { NavbarStandalone } from "@/components/navbar-standalone"
 import { FooterStandalone } from "@/components/footer-standalone"
 import { Mail, Briefcase, MessageSquare, Clock, ChevronRight } from "lucide-react"
 
-const BASE_URL = process.env.NEXT_PUBLIC_BASE_URL ?? "https://halfspace.id"
+const BASE_URL = process.env.NEXT_PUBLIC_BASE_URL ?? "https://halfspacesport.com"
 
 export async function generateMetadata(): Promise<Metadata> {
   const title = "Contact Us | HalfSpace"
@@ -54,13 +54,13 @@ const contactPageSchema = {
       {
         "@type": "ContactPoint",
         contactType: "business partnerships",
-        email: "partnership@halfspace.id",
+        email: "partnership@halfspacesport.com",
         availableLanguage: ["Indonesian", "English"],
       },
       {
         "@type": "ContactPoint",
         contactType: "editorial",
-        email: "redaksi@halfspace.id",
+        email: "redaksi@halfspacesport.com",
         availableLanguage: ["Indonesian"],
       },
     ],
@@ -73,21 +73,21 @@ const partnershipTypes = [
     icon: Briefcase,
     title: "Kemitraan Bisnis",
     desc: "Peluang sponsorship, brand activation, dan kolaborasi komersial jangka panjang bersama platform media olahraga tumbuh-cepat.",
-    email: "partnership@halfspace.id",
+    email: "partnership@halfspacesport.com",
     tag: "Partnership",
   },
   {
     icon: MessageSquare,
     title: "Kolaborasi Konten",
     desc: "Kesempatan co-branding, native advertising, guest article, dan produksi konten bersama untuk menjangkau audiens pecinta olahraga.",
-    email: "content@halfspace.id",
+    email: "content@halfspacesport.com",
     tag: "Content",
   },
   {
     icon: Mail,
     title: "Hubungi Redaksi",
     desc: "Tips berita, koreksi editorial, atau pertanyaan seputar liputan. Tim redaksi kami siap merespons dalam 1×24 jam kerja.",
-    email: "redaksi@halfspace.id",
+    email: "redaksi@halfspacesport.com",
     tag: "Editorial",
   },
 ]
@@ -188,7 +188,7 @@ export default function ContactUsPage() {
             </p>
             <ul className="space-y-3">
               {[
-                "Brand atau lembaga yang relevan dengan ekosistem olahraga — sportswear, teknologi, gaming, betting (terdaftar resmi), media, atau pendidikan.",
+                "Brand atau lembaga yang relevan dengan ekosistem olahraga — sportswear, teknologi, gaming, media, atau pendidikan.",
                 "Mitra yang menghargai editorial independence dan tidak mengintervensi arah konten.",
                 "Kolaborasi berbasis nilai jangka panjang, bukan sekadar transaksional.",
                 "Organisasi atau individu dengan track record dan reputasi yang dapat diverifikasi.",
@@ -245,12 +245,12 @@ export default function ContactUsPage() {
               akan meneruskan ke departemen yang tepat.
             </p>
             <a
-              href="mailto:hello@halfspace.id"
+              href="mailto:hello@halfspacesport.com"
               className="inline-flex items-center gap-2 rounded-lg bg-primary px-6 py-3 text-sm font-bold text-primary-foreground transition-opacity hover:opacity-90"
               style={{ fontFamily: "var(--font-oswald)", letterSpacing: "0.03em" }}
             >
               <Mail className="h-4 w-4" />
-              hello@halfspace.id
+              hello@halfspacesport.com
             </a>
           </section>
 
