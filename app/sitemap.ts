@@ -1,7 +1,7 @@
 import type { MetadataRoute } from "next"
 import { createClient } from "@supabase/supabase-js"
 
-const BASE_URL = process.env.NEXT_PUBLIC_SITE_URL ?? "https://halfspace.id"
+const BASE_URL = process.env.NEXT_PUBLIC_SITE_URL ?? "https://halfspacesport.com"
 
 // Halaman statis yang selalu ada
 const STATIC_ROUTES: MetadataRoute.Sitemap = [
