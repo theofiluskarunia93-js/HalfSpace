@@ -165,7 +165,7 @@ export function JadwalCard({ widgetId, isAdmin, onEdit }: JadwalCardProps) {
                       : "border border-white/10 bg-white/5 text-gray-300 hover:border-[#39FF14]/40 hover:text-white"
                   }`}
                 >
-                  Grup {g}
+                  {g}
                 </button>
               ))}
             </div>
@@ -192,7 +192,7 @@ function MatchItem({ match: m }: { match: MatchRow }) {
       {/* Top: Badge + Date */}
       <div className="mb-3 flex items-center justify-between">
         <span className="rounded-md bg-[#39FF14] px-2.5 py-0.5 text-[10px] font-black uppercase tracking-widest text-black">
-          Grup {m.group_label}
+          {m.group_label}
         </span>
         {m.match_date && (
           <span className="text-[11px] text-gray-400">{formatDate(m.match_date)}</span>
@@ -324,7 +324,7 @@ export function KlasemenCard({ widgetId, isAdmin, onEdit }: KlasemenCardProps) {
                       : "border border-white/10 bg-white/5 text-gray-300 hover:border-[#39FF14]/40 hover:text-white"
                   }`}
                 >
-                  Grup {g}
+                  {g}
                 </button>
               ))}
             </div>

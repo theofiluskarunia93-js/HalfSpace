@@ -284,10 +284,17 @@ function JadwalForm({
         {groups.map((g) => (
           <button key={g} onClick={() => setActiveGroup(g)}
             className={`rounded-md px-3 py-1 text-[11px] font-bold uppercase tracking-wider transition-all ${activeGroup === g ? "bg-[#39FF14] text-black" : "border border-white/10 bg-white/5 text-zinc-400 hover:text-white"}`}>
-            Grup {g}
+            {g}
           </button>
         ))}
-        <button onClick={() => { const n = String.fromCharCode(65 + groups.length); setActiveGroup(n); setRows((p) => [...p, makeMatch(n)]) }}
+        <button onClick={() => {
+            const name = window.prompt("Nama tab grup baru:", "")
+            if (!name || !name.trim()) return
+            const trimmed = name.trim()
+            if (groups.includes(trimmed)) { setActiveGroup(trimmed); return }
+            setActiveGroup(trimmed)
+            setRows((p) => [...p, makeMatch(trimmed)])
+          }}
           className="flex items-center gap-1 rounded-md border border-dashed border-[#39FF14]/30 px-2 py-1 text-[11px] text-[#39FF14]/60 transition hover:border-[#39FF14]/60 hover:text-[#39FF14]">
           <Plus size={11} /> Grup
         </button>
@@ -406,10 +413,17 @@ function KlasemenForm({
         {groups.map((g) => (
           <button key={g} onClick={() => setActiveGroup(g)}
             className={`rounded-md px-3 py-1 text-[11px] font-bold uppercase tracking-wider transition-all ${activeGroup === g ? "bg-[#39FF14] text-black" : "border border-white/10 bg-white/5 text-zinc-400 hover:text-white"}`}>
-            Grup {g}
+            {g}
           </button>
         ))}
-        <button onClick={() => { const n = String.fromCharCode(65 + groups.length); setActiveGroup(n); setRows((p) => [...p, makeStanding(n, 1)]) }}
+        <button onClick={() => {
+            const name = window.prompt("Nama tab grup baru:", "")
+            if (!name || !name.trim()) return
+            const trimmed = name.trim()
+            if (groups.includes(trimmed)) { setActiveGroup(trimmed); return }
+            setActiveGroup(trimmed)
+            setRows((p) => [...p, makeStanding(trimmed, 1)])
+          }}
           className="flex items-center gap-1 rounded-md border border-dashed border-[#39FF14]/30 px-2 py-1 text-[11px] text-[#39FF14]/60 transition hover:border-[#39FF14]/60 hover:text-[#39FF14]">
           <Plus size={11} /> Grup
         </button>
