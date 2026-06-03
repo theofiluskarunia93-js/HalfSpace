@@ -2,6 +2,9 @@
 
 import { useState, useEffect, useRef, useCallback } from "react"
 import { useEditor, EditorContent } from "@tiptap/react"
+import { Extension } from "@tiptap/core"
+import Blockquote from "@tiptap/extension-blockquote"
+import Paragraph from "@tiptap/extension-paragraph"
 import { StarterKit } from "@tiptap/starter-kit"
 import { Image as TiptapImage } from "@tiptap/extension-image"
 import { Link as TiptapLink } from "@tiptap/extension-link"
@@ -11,10 +14,10 @@ import { TableHeader } from "@tiptap/extension-table-header"
 import { TableCell } from "@tiptap/extension-table-cell"
 import {
   ArrowLeft, Save, Image as ImageIcon, X, Plus, Eye,
-  Bold, Italic, List, ListOrdered, Link2, Quote,
+  Bold, Italic, List, ListOrdered, Link2,
   Code2, Minus, Heading1, Heading2, Heading3,
   Undo2, Redo2, Table as TableIcon, Star,
-  Pilcrow, MessageSquareQuote, ChevronDown, Clock,
+  Pilcrow, MessageSquareQuote,
 } from "lucide-react"
 import { Button } from "@/components/ui/button"
 import { Input } from "@/components/ui/input"
@@ -176,6 +179,36 @@ function resolveShortcodesForSave(html: string): string {
   return doc.body.innerHTML
 }
 
+// ─── Custom Blockquote — preserve class="pull-quote" ─────────────────────────
+// StarterKit Blockquote default tidak menyimpan attribute class.
+// Extension ini override parseHTML & renderHTML agar class pull-quote tetap ada.
+const CustomBlockquote = Blockquote.extend({
+  addAttributes() {
+    return {
+      class: {
+        default: null,
+        parseHTML: (el) => el.getAttribute("class") || null,
+        renderHTML: (attrs) => attrs.class ? { class: attrs.class } : {},
+      },
+    }
+  },
+})
+
+// ─── Custom Paragraph — preserve class="section-label" ──────────────────────
+// StarterKit Paragraph tidak menyimpan attribute class sama sekali.
+// Extension ini membuatnya bisa menyimpan class agar section-label tetap ada.
+const CustomParagraph = Paragraph.extend({
+  addAttributes() {
+    return {
+      class: {
+        default: null,
+        parseHTML: (el) => el.getAttribute("class") || null,
+        renderHTML: (attrs) => attrs.class ? { class: attrs.class } : {},
+      },
+    }
+  },
+})
+
 // ─── Sanitasi HTML artikel — whitelist tag & attribute ───────────────────────
 // Dijalankan SETELAH resolveShortcodesForSave agar shortcode sudah jadi teks
 // bersih dan badge custom sudah hilang. Hanya tag + attribute yang dipakai
@@ -326,25 +359,6 @@ export function CreateArticleView({ onBack, articleId }: CreateArticleViewProps)
   const [editorTab,      setEditorTab]      = useState<"write" | "preview">("write")
   const [previewContent, setPreviewContent] = useState("")
 
-  // ── Publish dropdown ─────────────────────────────────────────────────────
-  const [publishMenuOpen,  setPublishMenuOpen]  = useState(false)
-  const [scheduleDate,     setScheduleDate]     = useState("")   // "YYYY-MM-DD"
-  const [scheduleTime,     setScheduleTime]     = useState("08:00")
-  const [scheduleMode,     setScheduleMode]     = useState(false) // true = sedang isi jadwal
-  const publishMenuRef = useRef<HTMLDivElement>(null)
-
-  // Tutup dropdown saat klik di luar
-  useEffect(() => {
-    function handleOutside(e: MouseEvent) {
-      if (publishMenuRef.current && !publishMenuRef.current.contains(e.target as Node)) {
-        setPublishMenuOpen(false)
-        setScheduleMode(false)
-      }
-    }
-    if (publishMenuOpen) document.addEventListener("mousedown", handleOutside)
-    return () => document.removeEventListener("mousedown", handleOutside)
-  }, [publishMenuOpen])
-
   // ── Link Dialog ──────────────────────────────────────────────────────────────
   const [linkDialogOpen, setLinkDialogOpen] = useState(false)
   const [linkText,       setLinkText]       = useState("")
@@ -387,7 +401,9 @@ export function CreateArticleView({ onBack, articleId }: CreateArticleViewProps)
   // ── TipTap editor ─────────────────────────────────────────────────────────
   const editor = useEditor({
     extensions: [
-      StarterKit.configure({ codeBlock: false }),
+      StarterKit.configure({ codeBlock: false, blockquote: false, paragraph: false }),
+      CustomBlockquote,
+      CustomParagraph,
       TiptapImage,
       TiptapLink.configure({ openOnClick: false, HTMLAttributes: { target: "_blank", rel: "noopener noreferrer" } }),
       Table.configure({ resizable: true }),
@@ -412,6 +428,11 @@ export function CreateArticleView({ onBack, articleId }: CreateArticleViewProps)
           "prose-img:rounded-lg",
           // Widget shortcode badge styles
           "[&_.widget-shortcode-badge]:my-4 [&_.widget-shortcode-badge]:select-none",
+          // Section label styling di dalam editor
+          "[&_p.section-label]:text-[#39FF14] [&_p.section-label]:text-[0.68rem] [&_p.section-label]:font-bold [&_p.section-label]:uppercase [&_p.section-label]:tracking-[0.14em] [&_p.section-label]:mt-6 [&_p.section-label]:mb-0",
+          // Pull quote styling di dalam editor
+          "[&_blockquote.pull-quote]:border-l-[3px] [&_blockquote.pull-quote]:border-[#39FF14] [&_blockquote.pull-quote]:bg-[rgba(57,255,20,0.04)] [&_blockquote.pull-quote]:rounded-r-md [&_blockquote.pull-quote]:px-6 [&_blockquote.pull-quote]:py-3 [&_blockquote.pull-quote]:my-4 [&_blockquote.pull-quote]:not-italic",
+          "[&_blockquote.pull-quote_p]:font-bold [&_blockquote.pull-quote_p]:italic [&_blockquote.pull-quote_p]:text-foreground [&_blockquote.pull-quote_p]:text-[1.1rem] [&_blockquote.pull-quote_p]:not-italic",
         ].join(" "),
       },
       // Klik badge di editor → masuk mode edit widget di sidebar
@@ -679,8 +700,7 @@ export function CreateArticleView({ onBack, articleId }: CreateArticleViewProps)
   }
 
   // ── Save article ──────────────────────────────────────────────────────────
-  // scheduledAt: ISO string jika publish terjadwal, undefined = publish sekarang / draft
-  const handleSave = async (publish: boolean, scheduledAt?: string) => {
+  const handleSave = async (publish: boolean) => {
     if (!title) { setMessage({ type: "error", text: "Judul artikel wajib diisi!" }); return }
     if (!editor) return
     setIsLoading(true); setMessage(null)
@@ -696,15 +716,6 @@ export function CreateArticleView({ onBack, articleId }: CreateArticleViewProps)
     // Edit mode: pertahankan slug yang sudah ada agar URL tidak berubah.
     // Create mode: generate slug baru dari title.
     const articleSlug = isEditMode && savedSlug ? savedSlug : generateSlug(title)
-
-    // Tentukan status & published_at
-    // - publish sekarang   → status "published", published_at = now
-    // - publish terjadwal  → status "scheduled",  published_at = scheduledAt
-    // - draft              → status "draft",       published_at = null
-    const isScheduled = publish && !!scheduledAt
-    const resolvedStatus = !publish ? "draft" : isScheduled ? "scheduled" : "published"
-    const resolvedPublishedAt = !publish ? null : isScheduled ? scheduledAt! : now
-
     const payload = {
       title,
       slug: articleSlug,
@@ -714,13 +725,8 @@ export function CreateArticleView({ onBack, articleId }: CreateArticleViewProps)
       featured_image_url: featuredImageUrl,
       meta_title: metaTitle || null,
       meta_description: metaDescription || null,
-      status: resolvedStatus,
-      published_at: resolvedPublishedAt,
-      // scheduled_at: waktu jadwal asli — dibaca pg_cron untuk menentukan kapan publish.
-      // Saat publish (langsung atau setelah dijadwalkan), kolom ini tetap menyimpan
-      // waktu jadwal asli sebagai referensi; published_at yang dipakai untuk sort/display.
-      // Null jika draft atau publish langsung.
-      scheduled_at: isScheduled ? scheduledAt! : null,
+      status: publish ? "published" : "draft",
+      published_at: publish ? now : null,
       updated_at: now,
       is_editor_choice: isEditorChoice,
     }
@@ -738,32 +744,13 @@ export function CreateArticleView({ onBack, articleId }: CreateArticleViewProps)
 
     if (savedArticleId) await syncTags(savedArticleId)
     setIsLoading(false)
-
-    let successText: string
-    if (!publish) {
-      successText = isEditMode ? "Draft diupdate!" : "Draft disimpan!"
-    } else if (isScheduled) {
-      const d = new Date(scheduledAt!)
-      const formatted = d.toLocaleString("id-ID", { dateStyle: "long", timeStyle: "short" })
-      successText = `Artikel dijadwalkan publish pada ${formatted}`
-    } else {
-      successText = isEditMode ? "Artikel diupdate & dipublish!" : "Artikel berhasil dipublish!"
-    }
-
-    setMessage({ type: "success", text: successText })
-    if (publish) setTimeout(onBack, 2000)
-  }
-
-  // ── Handler: confirm schedule publish ────────────────────────────────────
-  const handleSchedulePublish = () => {
-    if (!scheduleDate) {
-      setMessage({ type: "error", text: "Pilih tanggal publish terlebih dahulu." })
-      return
-    }
-    const iso = new Date(`${scheduleDate}T${scheduleTime}:00`).toISOString()
-    setPublishMenuOpen(false)
-    setScheduleMode(false)
-    handleSave(true, iso)
+    setMessage({
+      type: "success",
+      text: publish
+        ? isEditMode ? "Artikel diupdate & dipublish!" : "Artikel berhasil dipublish!"
+        : isEditMode ? "Draft diupdate!" : "Draft disimpan!",
+    })
+    if (publish) setTimeout(onBack, 1500)
   }
 
   if (isFetching) {
@@ -794,127 +781,14 @@ export function CreateArticleView({ onBack, articleId }: CreateArticleViewProps)
           >
             {isLoading ? "Menyimpan..." : isEditMode ? "Update Draft" : "Simpan Draft"}
           </Button>
-          {/* ── Split Publish Button ─────────────────────────────────── */}
-          <div ref={publishMenuRef} className="relative">
-            <div className="flex">
-              {/* Tombol utama: Publish Sekarang */}
-              <Button
-                onClick={() => { setPublishMenuOpen(false); setScheduleMode(false); handleSave(true) }}
-                disabled={isLoading}
-                className="rounded-r-none bg-primary text-primary-foreground hover:bg-primary/90 pr-3"
-              >
-                <Save className="mr-2 h-4 w-4" />
-                {isLoading ? "Menyimpan..." : isEditMode ? "Update & Publish" : "Publish"}
-              </Button>
-              {/* Tombol panah: buka dropdown */}
-              <button
-                type="button"
-                disabled={isLoading}
-                onClick={() => { setPublishMenuOpen((v) => !v); setScheduleMode(false) }}
-                className="flex h-9 w-8 items-center justify-center rounded-l-none rounded-r-md border-l border-primary-foreground/20 bg-primary text-primary-foreground hover:bg-primary/90 disabled:opacity-50 transition-colors"
-                aria-label="Opsi publish"
-              >
-                <ChevronDown className={`h-4 w-4 transition-transform ${publishMenuOpen ? "rotate-180" : ""}`} />
-              </button>
-            </div>
-
-            {/* Dropdown */}
-            {publishMenuOpen && (
-              <div className="absolute right-0 top-full z-50 mt-1 w-72 overflow-hidden rounded-xl border border-border bg-card shadow-2xl">
-                {!scheduleMode ? (
-                  <>
-                    {/* Publish Sekarang */}
-                    <button
-                      type="button"
-                      onClick={() => { setPublishMenuOpen(false); handleSave(true) }}
-                      className="flex w-full items-center gap-3 px-4 py-3 text-left text-sm text-foreground transition-colors hover:bg-secondary"
-                    >
-                      <span className="flex h-8 w-8 items-center justify-center rounded-lg bg-primary/15 text-primary">
-                        <Save className="h-4 w-4" />
-                      </span>
-                      <div>
-                        <p className="font-semibold">Publish Sekarang</p>
-                        <p className="text-xs text-muted-foreground">Artikel langsung tayang</p>
-                      </div>
-                    </button>
-
-                    <div className="mx-3 border-t border-border/60" />
-
-                    {/* Jadwalkan */}
-                    <button
-                      type="button"
-                      onClick={() => setScheduleMode(true)}
-                      className="flex w-full items-center gap-3 px-4 py-3 text-left text-sm text-foreground transition-colors hover:bg-secondary"
-                    >
-                      <span className="flex h-8 w-8 items-center justify-center rounded-lg bg-primary/15 text-primary">
-                        <Clock className="h-4 w-4" />
-                      </span>
-                      <div>
-                        <p className="font-semibold">Jadwalkan Publish</p>
-                        <p className="text-xs text-muted-foreground">Pilih tanggal &amp; jam tayang</p>
-                      </div>
-                    </button>
-                  </>
-                ) : (
-                  /* Panel jadwal */
-                  <div className="p-4 space-y-4">
-                    <div className="flex items-center gap-2">
-                      <Clock className="h-4 w-4 text-primary" />
-                      <p className="text-sm font-semibold text-foreground">Jadwalkan Publish</p>
-                    </div>
-
-                    <div className="space-y-3">
-                      <div>
-                        <label className="mb-1 block text-xs font-medium text-muted-foreground">Tanggal</label>
-                        <input
-                          type="date"
-                          value={scheduleDate}
-                          min={new Date().toISOString().split("T")[0]}
-                          onChange={(e) => setScheduleDate(e.target.value)}
-                          className="w-full rounded-lg border border-border bg-secondary/50 px-3 py-2 text-sm text-foreground focus:border-primary focus:outline-none focus:ring-1 focus:ring-primary/30"
-                        />
-                      </div>
-                      <div>
-                        <label className="mb-1 block text-xs font-medium text-muted-foreground">Jam</label>
-                        <input
-                          type="time"
-                          value={scheduleTime}
-                          onChange={(e) => setScheduleTime(e.target.value)}
-                          className="w-full rounded-lg border border-border bg-secondary/50 px-3 py-2 text-sm text-foreground focus:border-primary focus:outline-none focus:ring-1 focus:ring-primary/30"
-                        />
-                      </div>
-                    </div>
-
-                    {scheduleDate && (
-                      <p className="rounded-lg bg-primary/10 px-3 py-2 text-xs text-primary">
-                        Artikel akan tayang: <span className="font-semibold">
-                          {new Date(`${scheduleDate}T${scheduleTime}:00`).toLocaleString("id-ID", { dateStyle: "full", timeStyle: "short" })}
-                        </span>
-                      </p>
-                    )}
-
-                    <div className="flex gap-2">
-                      <button
-                        type="button"
-                        onClick={() => setScheduleMode(false)}
-                        className="flex-1 rounded-lg border border-border py-2 text-sm text-foreground hover:bg-secondary transition-colors"
-                      >
-                        Kembali
-                      </button>
-                      <button
-                        type="button"
-                        onClick={handleSchedulePublish}
-                        disabled={!scheduleDate}
-                        className="flex-1 rounded-lg bg-primary py-2 text-sm font-semibold text-black hover:bg-primary/90 disabled:opacity-40 transition-colors"
-                      >
-                        Konfirmasi
-                      </button>
-                    </div>
-                  </div>
-                )}
-              </div>
-            )}
-          </div>
+          <Button
+            onClick={() => handleSave(true)}
+            disabled={isLoading}
+            className="bg-primary text-primary-foreground hover:bg-primary/90"
+          >
+            <Save className="mr-2 h-4 w-4" />
+            {isLoading ? "Menyimpan..." : isEditMode ? "Update & Publish" : "Publish"}
+          </Button>
         </div>
       </div>
 
@@ -1034,13 +908,10 @@ export function CreateArticleView({ onBack, articleId }: CreateArticleViewProps)
                     <ListOrdered className="h-4 w-4" />
                   </ToolbarButton>
                   <ToolbarSeparator />
-                  <ToolbarButton onClick={() => editor?.chain().focus().toggleBlockquote().run()} active={editor?.isActive("blockquote")} title="Blockquote">
-                    <Quote className="h-4 w-4" />
-                  </ToolbarButton>
-                  <ToolbarButton onClick={handleInsertSectionLabel} title="Section Label (label fase/babak)">
+                  <ToolbarButton onClick={handleInsertSectionLabel} active={false} title="Section Label — label fase/babak di atas heading">
                     <Pilcrow className="h-4 w-4" />
                   </ToolbarButton>
-                  <ToolbarButton onClick={handleInsertPullQuote} title="Pull Quote (kutipan menonjol)">
+                  <ToolbarButton onClick={handleInsertPullQuote} active={editor?.isActive("blockquote", { class: "pull-quote" })} title="Pull Quote — kutipan menonjol Neon Green">
                     <MessageSquareQuote className="h-4 w-4" />
                   </ToolbarButton>
                   <ToolbarButton onClick={() => editor?.chain().focus().setHorizontalRule().run()} title="Garis Pemisah">
