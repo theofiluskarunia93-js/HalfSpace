@@ -9,6 +9,8 @@ import { UsersView } from "./views/users-view"
 import { SettingsView } from "./views/settings-view"
 import { CreateArticleView } from "./views/create-article-view"
 import { CommentsView } from "./views/comments-view"
+import { Menu } from "lucide-react"
+import { Button } from "@/components/ui/button"
 
 export type CMSView = "dashboard" | "posts" | "analytics" | "comments" | "users" | "settings" | "create-article" | "edit-article"
 
@@ -20,6 +22,7 @@ interface CMSDashboardProps {
 export function CMSDashboard({ onLogout, onGoToPublic }: CMSDashboardProps) {
   const [currentView, setCurrentView] = useState<CMSView>("dashboard")
   const [isSidebarCollapsed, setIsSidebarCollapsed] = useState(false)
+  const [isMobileSidebarOpen, setIsMobileSidebarOpen] = useState(false)
   const [editArticleId, setEditArticleId] = useState<string | null>(null)
 
   const handleCreateArticle = () => {
@@ -68,8 +71,34 @@ export function CMSDashboard({ onLogout, onGoToPublic }: CMSDashboardProps) {
         onGoToPublic={onGoToPublic}
         isCollapsed={isSidebarCollapsed}
         onToggleCollapse={() => setIsSidebarCollapsed(!isSidebarCollapsed)}
+        isMobileOpen={isMobileSidebarOpen}
+        onMobileClose={() => setIsMobileSidebarOpen(false)}
       />
-      <main className={`flex-1 transition-all ${isSidebarCollapsed ? "ml-16" : "ml-64"}`}>
+
+      <main
+        className={`flex-1 min-w-0 transition-all duration-300 ${
+          isSidebarCollapsed ? "md:ml-16" : "md:ml-64"
+        }`}
+      >
+        {/* Mobile top bar dengan hamburger */}
+        <div className="flex h-14 items-center gap-3 border-b border-border bg-card px-4 md:hidden">
+          <Button
+            variant="ghost"
+            size="icon"
+            onClick={() => setIsMobileSidebarOpen(true)}
+            className="h-9 w-9 text-muted-foreground hover:text-foreground"
+            aria-label="Buka menu"
+          >
+            <Menu className="h-5 w-5" />
+          </Button>
+          <h1
+            className="text-lg font-bold text-primary"
+            style={{ fontFamily: "var(--font-oswald)" }}
+          >
+            HalfSpace CMS
+          </h1>
+        </div>
+
         {renderView()}
       </main>
     </div>

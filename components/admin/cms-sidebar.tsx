@@ -12,6 +12,7 @@ import {
   ChevronLeft,
   ChevronRight,
   MessageSquare,
+  X,
 } from "lucide-react"
 import { Button } from "@/components/ui/button"
 
@@ -22,6 +23,9 @@ interface CMSSidebarProps {
   onGoToPublic: () => void
   isCollapsed: boolean
   onToggleCollapse: () => void
+  // Mobile drawer state (dikelola dari cms-dashboard)
+  isMobileOpen: boolean
+  onMobileClose: () => void
 }
 
 const menuItems = [
@@ -33,50 +37,70 @@ const menuItems = [
   { id: "settings" as CMSView, label: "Settings", icon: Settings },
 ]
 
-export function CMSSidebar({
+function SidebarContent({
   currentView,
   onViewChange,
   onLogout,
   onGoToPublic,
   isCollapsed,
   onToggleCollapse,
-}: CMSSidebarProps) {
+  onMobileClose,
+  isMobile = false,
+}: CMSSidebarProps & { isMobile?: boolean }) {
+  const handleItemClick = (view: CMSView) => {
+    onViewChange(view)
+    if (isMobile) onMobileClose()
+  }
+
   return (
-    <aside
-      className={`fixed left-0 top-0 z-40 flex h-screen flex-col border-r border-border bg-card transition-all ${
-        isCollapsed ? "w-16" : "w-64"
-      }`}
-    >
+    <div className="flex h-full flex-col">
       {/* Logo */}
       <div className="flex h-16 items-center justify-between border-b border-border px-4">
-        {!isCollapsed && (
-          <h1 
+        {(!isCollapsed || isMobile) && (
+          <h1
             className="text-xl font-bold text-primary"
-            style={{ fontFamily: 'var(--font-oswald)' }}
+            style={{ fontFamily: "var(--font-oswald)" }}
           >
             HalfSpace CMS
           </h1>
         )}
-        <Button
-          variant="ghost"
-          size="icon"
-          onClick={onToggleCollapse}
-          className="h-8 w-8 text-muted-foreground hover:text-foreground"
-        >
-          {isCollapsed ? <ChevronRight className="h-4 w-4" /> : <ChevronLeft className="h-4 w-4" />}
-        </Button>
+        {isMobile ? (
+          <Button
+            variant="ghost"
+            size="icon"
+            onClick={onMobileClose}
+            className="h-8 w-8 text-muted-foreground hover:text-foreground"
+          >
+            <X className="h-4 w-4" />
+          </Button>
+        ) : (
+          <Button
+            variant="ghost"
+            size="icon"
+            onClick={onToggleCollapse}
+            className="h-8 w-8 text-muted-foreground hover:text-foreground"
+          >
+            {isCollapsed ? (
+              <ChevronRight className="h-4 w-4" />
+            ) : (
+              <ChevronLeft className="h-4 w-4" />
+            )}
+          </Button>
+        )}
       </div>
 
       {/* Navigation */}
       <nav className="flex-1 space-y-1 overflow-y-auto p-2">
         {menuItems.map((item) => {
           const Icon = item.icon
-          const isActive = currentView === item.id || (currentView === "create-article" && item.id === "posts")
-          
+          const isActive =
+            currentView === item.id ||
+            (currentView === "create-article" && item.id === "posts")
+
           return (
             <button
               key={item.id}
-              onClick={() => onViewChange(item.id)}
+              onClick={() => handleItemClick(item.id)}
               className={`flex w-full items-center gap-3 rounded-lg px-3 py-2.5 text-sm font-medium transition-colors ${
                 isActive
                   ? "bg-primary/10 text-primary"
@@ -84,7 +108,7 @@ export function CMSSidebar({
               }`}
             >
               <Icon className="h-5 w-5 flex-shrink-0" />
-              {!isCollapsed && <span>{item.label}</span>}
+              {(!isCollapsed || isMobile) && <span>{item.label}</span>}
             </button>
           )
         })}
@@ -93,20 +117,55 @@ export function CMSSidebar({
       {/* Bottom Actions */}
       <div className="border-t border-border p-2">
         <button
-          onClick={onGoToPublic}
+          onClick={() => { onGoToPublic(); if (isMobile) onMobileClose() }}
           className="flex w-full items-center gap-3 rounded-lg px-3 py-2.5 text-sm font-medium text-muted-foreground transition-colors hover:bg-secondary hover:text-foreground"
         >
           <Globe className="h-5 w-5 flex-shrink-0" />
-          {!isCollapsed && <span>View Website</span>}
+          {(!isCollapsed || isMobile) && <span>View Website</span>}
         </button>
         <button
           onClick={onLogout}
           className="flex w-full items-center gap-3 rounded-lg px-3 py-2.5 text-sm font-medium text-destructive transition-colors hover:bg-destructive/10"
         >
           <LogOut className="h-5 w-5 flex-shrink-0" />
-          {!isCollapsed && <span>Logout</span>}
+          {(!isCollapsed || isMobile) && <span>Logout</span>}
         </button>
       </div>
-    </aside>
+    </div>
+  )
+}
+
+export function CMSSidebar(props: CMSSidebarProps) {
+  const { isCollapsed, isMobileOpen, onMobileClose } = props
+
+  return (
+    <>
+      {/* ── Desktop sidebar (md ke atas) ── */}
+      <aside
+        className={`fixed left-0 top-0 z-40 hidden h-screen flex-col border-r border-border bg-card transition-all duration-300 md:flex ${
+          isCollapsed ? "w-16" : "w-64"
+        }`}
+      >
+        <SidebarContent {...props} isMobile={false} />
+      </aside>
+
+      {/* ── Mobile overlay backdrop ── */}
+      {isMobileOpen && (
+        <div
+          className="fixed inset-0 z-40 bg-background/80 backdrop-blur-sm md:hidden"
+          onClick={onMobileClose}
+          aria-hidden="true"
+        />
+      )}
+
+      {/* ── Mobile drawer (di bawah md) ── */}
+      <aside
+        className={`fixed left-0 top-0 z-50 flex h-screen w-72 flex-col border-r border-border bg-card transition-transform duration-300 md:hidden ${
+          isMobileOpen ? "translate-x-0" : "-translate-x-full"
+        }`}
+      >
+        <SidebarContent {...props} isMobile={true} />
+      </aside>
+    </>
   )
 }

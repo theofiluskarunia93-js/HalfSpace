@@ -1,4 +1,4 @@
-import type { Metadata } from 'next'
+import type { Metadata, Viewport } from 'next'
 import { Inter, Oswald } from 'next/font/google'
 import { Analytics } from '@vercel/analytics/next'
 import './globals.css'
@@ -13,7 +13,7 @@ const oswald = Oswald({
   variable: '--font-oswald',
 })
 
-const BASE_URL = process.env.NEXT_PUBLIC_BASE_URL ?? 'https://halfspacesport.com'
+const BASE_URL = process.env.NEXT_PUBLIC_BASE_URL ?? 'https://halfspace.id'
 
 export const metadata: Metadata = {
   metadataBase: new URL(BASE_URL),
@@ -41,8 +41,8 @@ export const metadata: Metadata = {
   },
   twitter: {
     card: 'summary_large_image',
-    site: '@halfspacesport',
-    creator: '@halfspacesport',
+    site: '@halfspaceid',
+    creator: '@halfspaceid',
     title: 'HalfSpace - Home to Sport Enthusiast',
     description: 'Your ultimate destination for sports news, live scores, and league standings.',
     images: [`${BASE_URL}/og-default.jpg`],
@@ -61,6 +61,15 @@ export const metadata: Metadata = {
   alternates: {
     canonical: BASE_URL,
   },
+}
+
+export const viewport: Viewport = {
+  width: 'device-width',
+  initialScale: 1,
+  maximumScale: 5,
+  themeColor: [
+    { media: '(prefers-color-scheme: dark)', color: '#09090b' },
+  ],
 }
 
 // ─── JSON-LD: WebSite + Organization schema ─────────────────────────────────
@@ -94,13 +103,13 @@ const organizationSchema = {
     height: 630,
   },
   sameAs: [
-    "https://twitter.com/halfspacesport",
-    "https://instagram.com/halfspacesport",
+    "https://twitter.com/halfspaceid",
+    "https://instagram.com/halfspaceid",
   ],
   contactPoint: {
     "@type": "ContactPoint",
     contactType: "editorial",
-    email: "redaksi@halfspacesport.com",
+    email: "redaksi@halfspace.id",
   },
 }
 

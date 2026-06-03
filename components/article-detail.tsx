@@ -215,7 +215,7 @@ function formatDateTime(dateStr: string): string {
 
 // ─── Schema Markup ─────────────────────────────────────────────────────────
 // BASE_URL diambil dari env agar SSR tidak menghasilkan field kosong
-const BASE_URL = process.env.NEXT_PUBLIC_BASE_URL ?? "https://halfspacesport.com"
+const BASE_URL = process.env.NEXT_PUBLIC_BASE_URL ?? "https://halfspace.id"
 
 function ArticleSchema({ article }: { article: Article }) {
   const articleUrl = `${BASE_URL}/article/${article.slug}`
@@ -1083,7 +1083,7 @@ export function ArticleDetail({ articleId, initialData }: ArticleDetailProps) {
               <p className="mt-2 text-muted-foreground">Artikel ini mungkin telah dihapus atau URL tidak valid.</p>
             </div>
           ) : (
-            <div className="flex gap-8 lg:items-start">
+            <div className="flex flex-col gap-8 lg:flex-row lg:items-start">
 
               {/* ── Main Article Column ── */}
               <article
