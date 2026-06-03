@@ -142,14 +142,21 @@ export function JadwalCard({ widgetId, isAdmin, onEdit }: JadwalCardProps) {
         <p className="py-8 text-center text-sm text-gray-500">Belum ada jadwal.</p>
       ) : (
         <>
-          {/* Group tabs */}
+          {/* Group tabs — horizontal scroll */}
           {groups.length > 1 && (
-            <div className="flex flex-wrap gap-2 border-b border-white/10 bg-[#13151c] px-5 py-3">
+            <div
+              className="flex gap-2 border-b border-white/10 bg-[#13151c] px-5 py-3 overflow-x-auto"
+              style={{
+                WebkitOverflowScrolling: "touch",
+                scrollbarWidth: "none",
+                msOverflowStyle: "none",
+              }}
+            >
               {groups.map((g) => (
                 <button
                   key={g}
                   onClick={() => setActiveGroup(g)}
-                  className={`rounded-lg px-4 py-1.5 text-xs font-bold uppercase tracking-wider transition-all ${
+                  className={`shrink-0 rounded-lg px-4 py-1.5 text-xs font-bold uppercase tracking-wider transition-all ${
                     activeGroup === g
                       ? "bg-[#39FF14] text-black"
                       : "border border-white/10 bg-white/5 text-gray-300 hover:border-[#39FF14]/40 hover:text-white"
@@ -294,14 +301,21 @@ export function KlasemenCard({ widgetId, isAdmin, onEdit }: KlasemenCardProps) {
         <p className="py-8 text-center text-sm text-gray-500">Belum ada data klasemen.</p>
       ) : (
         <>
-          {/* Group tabs */}
+          {/* Group tabs — horizontal scroll */}
           {groups.length > 1 && (
-            <div className="flex flex-wrap gap-2 border-b border-white/10 bg-[#13151c] px-5 py-3">
+            <div
+              className="flex gap-2 border-b border-white/10 bg-[#13151c] px-5 py-3 overflow-x-auto"
+              style={{
+                WebkitOverflowScrolling: "touch",
+                scrollbarWidth: "none",
+                msOverflowStyle: "none",
+              }}
+            >
               {groups.map((g) => (
                 <button
                   key={g}
                   onClick={() => setActiveGroup(g)}
-                  className={`rounded-lg px-4 py-1.5 text-xs font-bold uppercase tracking-wider transition-all ${
+                  className={`shrink-0 rounded-lg px-4 py-1.5 text-xs font-bold uppercase tracking-wider transition-all ${
                     activeGroup === g
                       ? "bg-[#39FF14] text-black"
                       : "border border-white/10 bg-white/5 text-gray-300 hover:border-[#39FF14]/40 hover:text-white"
@@ -498,12 +512,19 @@ export function TransferCard({ widgetId, isAdmin, onEdit }: TransferCardProps) {
         <p className="py-8 text-center text-sm text-gray-500">Belum ada data transfer.</p>
       ) : (
         <>
-          {/* League tabs */}
+          {/* League tabs — horizontal scroll */}
           {leagues.length > 0 && (
-            <div className="flex flex-wrap gap-2 border-b border-white/10 bg-[#13151c] px-5 py-3">
+            <div
+              className="flex gap-2 border-b border-white/10 bg-[#13151c] px-5 py-3 overflow-x-auto"
+              style={{
+                WebkitOverflowScrolling: "touch",
+                scrollbarWidth: "none",
+                msOverflowStyle: "none",
+              }}
+            >
               <button
                 onClick={() => setActiveLeague(null)}
-                className={`rounded-lg px-4 py-1.5 text-xs font-bold uppercase tracking-wider transition-all ${
+                className={`shrink-0 rounded-lg px-4 py-1.5 text-xs font-bold uppercase tracking-wider transition-all ${
                   activeLeague === null
                     ? "bg-[#39FF14] text-black"
                     : "border border-white/10 bg-white/5 text-gray-300 hover:border-[#39FF14]/40 hover:text-white"
@@ -515,7 +536,7 @@ export function TransferCard({ widgetId, isAdmin, onEdit }: TransferCardProps) {
                 <button
                   key={l}
                   onClick={() => setActiveLeague(l)}
-                  className={`rounded-lg px-4 py-1.5 text-xs font-bold uppercase tracking-wider transition-all ${
+                  className={`shrink-0 rounded-lg px-4 py-1.5 text-xs font-bold uppercase tracking-wider transition-all ${
                     activeLeague === l
                       ? "bg-[#39FF14] text-black"
                       : "border border-white/10 bg-white/5 text-gray-300 hover:border-[#39FF14]/40 hover:text-white"
