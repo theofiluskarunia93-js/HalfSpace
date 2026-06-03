@@ -1197,7 +1197,7 @@ export function ArticleDetail({ articleId, initialData }: ArticleDetailProps) {
                 )}
 
                 <ArticleBody
-                  content={rawContent || processedContent || article.content || ""}
+                  content={hasWidgetPlaceholder(rawContent) ? rawContent : (processedContent || rawContent || article.content || "")}
                   isAdmin={false}
                   className={contentClassName}
                 />
