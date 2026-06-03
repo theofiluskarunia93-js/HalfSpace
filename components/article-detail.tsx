@@ -215,7 +215,7 @@ function formatDateTime(dateStr: string): string {
 
 // ─── Schema Markup ─────────────────────────────────────────────────────────
 // BASE_URL diambil dari env agar SSR tidak menghasilkan field kosong
-const BASE_URL = process.env.NEXT_PUBLIC_BASE_URL ?? "https://halfspace.id"
+const BASE_URL = process.env.NEXT_PUBLIC_BASE_URL ?? "https://halfspacesport.com"
 
 function ArticleSchema({ article }: { article: Article }) {
   const articleUrl = `${BASE_URL}/article/${article.slug}`

@@ -61,7 +61,7 @@ export async function generateMetadata({ params }: Props): Promise<Metadata> {
     const data = await fetchArticleBySlug(slug)
     if (!data) return { title: "Artikel Tidak Ditemukan | HalfSpace" }
 
-    const BASE_URL = process.env.NEXT_PUBLIC_BASE_URL ?? "https://halfspace.id"
+    const BASE_URL = process.env.NEXT_PUBLIC_BASE_URL ?? "https://halfspacesport.com"
     const title = `${data.title} | HalfSpace`
     const description = data.excerpt ?? "Baca artikel terbaru dari HalfSpace."
     const image = data.featured_image_url ?? undefined

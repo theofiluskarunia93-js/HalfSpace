@@ -7,7 +7,7 @@ import { GroupArticleGridServer } from "@/components/group-article-grid-server"
 export const revalidate = 3600
 
 export async function generateMetadata(): Promise<Metadata> {
-  const BASE_URL = process.env.NEXT_PUBLIC_BASE_URL ?? "https://halfspace.id"
+  const BASE_URL = process.env.NEXT_PUBLIC_BASE_URL ?? "https://halfspacesport.com"
   const title = "Asia | HalfSpace"
   const description = "Latest news from Asian football."
   return {

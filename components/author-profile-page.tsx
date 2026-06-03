@@ -41,8 +41,8 @@ function AuthorSchema() {
     "description":
       "Tim jurnalis dan editor HalfSpace yang berdedikasi menghadirkan berita sepak bola terpercaya, mendalam, dan aktual untuk para penggemar di seluruh Indonesia.",
     "sameAs": [
-      "https://instagram.com/halfspace.id",
-      "https://tiktok.com/@halfspace.id",
+      "https://instagram.com/halfspacesport.com",
+      "https://tiktok.com/@halfspacesport.com",
     ],
   }
   return (
@@ -286,24 +286,24 @@ export function AuthorProfilePage() {
                 {/* Social */}
                 <div className="mt-4 flex items-center justify-center gap-3 sm:justify-start">
                   <a
-                    href="https://instagram.com/halfspace.id"
+                    href="https://instagram.com/halfspacesport.com"
                     target="_blank"
                     rel="noopener noreferrer"
                     aria-label="Instagram HalfSpace"
                     className="flex items-center gap-1.5 rounded-lg border border-border px-3 py-1.5 text-xs font-medium text-muted-foreground transition-colors hover:border-pink-500 hover:text-pink-500"
                   >
                     <Instagram className="h-3.5 w-3.5" aria-hidden="true" />
-                    @halfspace.id
+                    @halfspacesport.com
                   </a>
                   <a
-                    href="https://tiktok.com/@halfspace.id"
+                    href="https://tiktok.com/@halfspacesport.com"
                     target="_blank"
                     rel="noopener noreferrer"
                     aria-label="TikTok HalfSpace"
                     className="flex items-center gap-1.5 rounded-lg border border-border px-3 py-1.5 text-xs font-medium text-muted-foreground transition-colors hover:border-primary hover:text-primary"
                   >
                     <TikTokIcon className="h-3.5 w-3.5" />
-                    @halfspace.id
+                    @halfspacesport.com
                   </a>
                 </div>
               </div>

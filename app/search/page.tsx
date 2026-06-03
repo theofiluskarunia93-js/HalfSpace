@@ -9,7 +9,7 @@ import { NavbarStandalone } from "@/components/navbar-standalone"
 import { FooterStandalone } from "@/components/footer-standalone"
 import { SearchClient } from "@/components/search-client"
 
-const BASE_URL = process.env.NEXT_PUBLIC_BASE_URL ?? "https://halfspace.id"
+const BASE_URL = process.env.NEXT_PUBLIC_BASE_URL ?? "https://halfspacesport.com"
 
 interface Props {
   searchParams: Promise<{ q?: string }>

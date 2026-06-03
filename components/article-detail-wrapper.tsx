@@ -7,7 +7,7 @@
 
 import { ArticleDetail } from "@/components/article-detail"
 
-const BASE_URL = process.env.NEXT_PUBLIC_BASE_URL ?? "https://halfspace.id"
+const BASE_URL = process.env.NEXT_PUBLIC_BASE_URL ?? "https://halfspacesport.com"
 
 interface Props {
   articleId: string

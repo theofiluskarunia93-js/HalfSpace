@@ -3,7 +3,7 @@ import { NavbarStandalone } from "@/components/navbar-standalone"
 import { FooterStandalone } from "@/components/footer-standalone"
 
 export async function generateMetadata(): Promise<Metadata> {
-  const BASE_URL = process.env.NEXT_PUBLIC_BASE_URL ?? "https://halfspace.id"
+  const BASE_URL = process.env.NEXT_PUBLIC_BASE_URL ?? "https://halfspacesport.com"
   const title = "About Us | HalfSpace"
   const description = "Mengenal HalfSpace, media olahraga untuk para pencinta sepak bola."
 

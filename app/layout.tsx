@@ -13,7 +13,7 @@ const oswald = Oswald({
   variable: '--font-oswald',
 })
 
-const BASE_URL = process.env.NEXT_PUBLIC_BASE_URL ?? 'https://halfspace.id'
+const BASE_URL = process.env.NEXT_PUBLIC_BASE_URL ?? 'https://halfspacesport.com'
 
 export const metadata: Metadata = {
   metadataBase: new URL(BASE_URL),
@@ -41,8 +41,8 @@ export const metadata: Metadata = {
   },
   twitter: {
     card: 'summary_large_image',
-    site: '@halfspaceid',
-    creator: '@halfspaceid',
+    site: '@halfspacesport',
+    creator: '@halfspacesport',
     title: 'HalfSpace - Home to Sport Enthusiast',
     description: 'Your ultimate destination for sports news, live scores, and league standings.',
     images: [`${BASE_URL}/og-default.jpg`],
@@ -94,13 +94,13 @@ const organizationSchema = {
     height: 630,
   },
   sameAs: [
-    "https://twitter.com/halfspaceid",
-    "https://instagram.com/halfspaceid",
+    "https://twitter.com/halfspacesport",
+    "https://instagram.com/halfspacesport",
   ],
   contactPoint: {
     "@type": "ContactPoint",
     contactType: "editorial",
-    email: "redaksi@halfspace.id",
+    email: "redaksi@halfspacesport.com",
   },
 }
 

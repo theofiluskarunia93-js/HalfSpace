@@ -2,7 +2,7 @@ import type { Metadata } from "next"
 import { LeaguePage } from "@/components/league-page"
 
 export async function generateMetadata(): Promise<Metadata> {
-  const BASE_URL = process.env.NEXT_PUBLIC_BASE_URL ?? "https://halfspace.id"
+  const BASE_URL = process.env.NEXT_PUBLIC_BASE_URL ?? "https://halfspacesport.com"
   const title = "Transfer News | HalfSpace"
   const description = "Rumor dan berita transfer pemain terkini dari seluruh dunia."
 

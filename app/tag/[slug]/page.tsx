@@ -20,7 +20,7 @@ export async function generateMetadata({ params }: Props): Promise<Metadata> {
     .eq("slug", params.slug)
     .single()
 
-  const BASE_URL = process.env.NEXT_PUBLIC_BASE_URL ?? "https://halfspace.id"
+  const BASE_URL = process.env.NEXT_PUBLIC_BASE_URL ?? "https://halfspacesport.com"
   const title = tag ? `#${tag.name} — Artikel | HalfSpace` : "Tag | HalfSpace"
   const description = tag
     ? `Kumpulan artikel bertag ${tag.name} di HalfSpace — berita olahraga terkini.`

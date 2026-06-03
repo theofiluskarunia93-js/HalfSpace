@@ -2,7 +2,7 @@ import type { Metadata } from "next"
 import { LeaguePage } from "@/components/league-page"
 
 export async function generateMetadata(): Promise<Metadata> {
-  const BASE_URL = process.env.NEXT_PUBLIC_BASE_URL ?? "https://halfspace.id"
+  const BASE_URL = process.env.NEXT_PUBLIC_BASE_URL ?? "https://halfspacesport.com"
   const title = "UEFA Champions League | HalfSpace"
   const description = "Berita, analisis, dan update terbaru UEFA Champions League."
 
