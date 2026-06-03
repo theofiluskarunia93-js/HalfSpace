@@ -61,13 +61,13 @@ export function NavbarStandalone() {
         <div className="flex h-16 items-center">
 
           {/* Logo */}
-          <div className="w-[120px] md:w-[200px]">
+          <div className="flex-1 md:flex-none md:w-auto">
             <button onClick={() => navigate("/")} className="flex items-center">
               {logoUrl ? (
-                <Image src={logoUrl} alt="Logo" width={200} height={32} className="h-8 w-auto object-contain" />
+                <Image src={logoUrl} alt="Logo" width={240} height={56} className="h-12 md:h-14 w-auto object-contain max-w-[180px] md:max-w-[240px]" />
               ) : (
                 <span
-                  className="text-2xl font-bold tracking-tight text-primary neon-glow-subtle"
+                  className="text-3xl md:text-4xl font-bold tracking-tight text-primary neon-glow-subtle"
                   style={{ fontFamily: "var(--font-oswald)" }}
                 >
                   HalfSpace
@@ -87,7 +87,7 @@ export function NavbarStandalone() {
                 className="neon-nav-icon flex items-center gap-1 text-foreground transition-colors"
                 aria-label="Menu"
               >
-                {openDropdown === "categories" ? <X className="h-5 w-5" /> : <Menu className="h-5 w-5" />}
+                {openDropdown === "categories" ? <X className="h-7 w-7" /> : <Menu className="h-7 w-7" />}
               </button>
 
               {openDropdown === "categories" && (
@@ -177,8 +177,8 @@ export function NavbarStandalone() {
 
           {/* Mobile hamburger */}
           <div className="flex w-[120px] justify-end md:hidden">
-            <Button variant="ghost" size="icon" className="neon-nav-icon text-foreground" onClick={() => setIsMenuOpen(!isMenuOpen)}>
-              {isMenuOpen ? <X className="h-5 w-5" /> : <Menu className="h-5 w-5" />}
+            <Button variant="ghost" size="icon" className="neon-nav-icon text-foreground h-10 w-10" onClick={() => setIsMenuOpen(!isMenuOpen)}>
+              {isMenuOpen ? <X className="h-7 w-7" /> : <Menu className="h-7 w-7" />}
             </Button>
           </div>
 

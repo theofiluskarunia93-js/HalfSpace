@@ -260,7 +260,7 @@ export function Navbar({ currentPage, onPageChange, onScrollToSection }: NavbarP
               className="neon-nav-icon flex items-center text-foreground transition-colors"
               aria-label="Cari artikel"
             >
-              <Search className="h-5 w-5" />
+              <Search className="h-7 w-7" />
             </button>
             <div className="relative">
               <button
@@ -268,7 +268,7 @@ export function Navbar({ currentPage, onPageChange, onScrollToSection }: NavbarP
                 className="neon-nav-icon flex items-center gap-1 text-foreground transition-colors"
                 aria-label="Menu"
               >
-                {openDropdown === "categories" ? <X className="h-5 w-5" /> : <Menu className="h-5 w-5" />}
+                {openDropdown === "categories" ? <X className="h-7 w-7" /> : <Menu className="h-7 w-7" />}
               </button>
 
               {openDropdown === "categories" && (
@@ -349,11 +349,11 @@ export function Navbar({ currentPage, onPageChange, onScrollToSection }: NavbarP
 
           {/* Mobile: search + hamburger */}
           <div className="flex w-[120px] items-center justify-end gap-1 md:hidden">
-            <Button variant="ghost" size="icon" className="neon-nav-icon text-foreground" onClick={() => setSearchOpen(true)}>
-              <Search className="h-5 w-5" />
+            <Button variant="ghost" size="icon" className="neon-nav-icon text-foreground h-10 w-10" onClick={() => setSearchOpen(true)}>
+              <Search className="h-7 w-7" />
             </Button>
-            <Button variant="ghost" size="icon" className="neon-nav-icon text-foreground" onClick={() => setIsMenuOpen(!isMenuOpen)}>
-              {isMenuOpen ? <X className="h-5 w-5" /> : <Menu className="h-5 w-5" />}
+            <Button variant="ghost" size="icon" className="neon-nav-icon text-foreground h-10 w-10" onClick={() => setIsMenuOpen(!isMenuOpen)}>
+              {isMenuOpen ? <X className="h-7 w-7" /> : <Menu className="h-7 w-7" />}
             </Button>
           </div>
 
