@@ -51,6 +51,18 @@ function sanitizeBadgeContent(content: string): string {
   return doc.body.innerHTML
 }
 
+// ─── Inject heading IDs ────────────────────────────────────────────────────
+// Memastikan setiap <h1>–<h3> punya id="heading-N" agar TOC bisa scroll ke sana.
+// Heading yang sudah punya id (mis. dari DB) dibiarkan apa adanya.
+function injectHeadingIds(html: string): string {
+  let i = 0
+  return html.replace(/<h([1-3])([^>]*)>/gi, (match, level, attrs) => {
+    if (/id=/i.test(attrs)) return match
+    const id = `heading-${i++}`
+    return `<h${level}${attrs} id="${id}">`
+  })
+}
+
 export function ArticleBody({
   content,
   isAdmin = false,
@@ -80,18 +92,22 @@ export function ArticleBody({
 
   const containsWidget = hasWidgetShortcode(safeContent)
 
+  // Selalu inject heading IDs agar TOC bisa scroll ke heading yang benar,
+  // termasuk untuk artikel yang mengandung widget shortcode (rawContent path).
+  const renderedContent = injectHeadingIds(safeContent)
+
   return (
     <>
       <div className={`prose prose-invert max-w-none ${className}`}>
         {containsWidget ? (
-          parseWidgetContent(safeContent, {
+          parseWidgetContent(renderedContent, {
             isAdmin,
             // onEdit hanya diteruskan untuk admin — di halaman publik undefined
             onEdit: isAdmin ? handleEdit : undefined,
             refreshKey,
           })
         ) : (
-          <span dangerouslySetInnerHTML={{ __html: safeContent }} />
+          <span dangerouslySetInnerHTML={{ __html: renderedContent }} />
         )}
       </div>
 
