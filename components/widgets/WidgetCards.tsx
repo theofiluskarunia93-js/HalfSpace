@@ -59,8 +59,11 @@ function formatDate(dateStr: string): string {
 }
 
 function formatTime(timeStr: string): string {
-  // timeStr is "HH:MM" — convert to "HH.MM WIB"
-  return timeStr.replace(":", ".") + " WIB"
+  // timeStr bisa "HH:MM" atau "HH:MM:SS" — ambil hanya jam & menit
+  const parts = timeStr.split(":")
+  const hh = parts[0] ?? "00"
+  const mm = parts[1] ?? "00"
+  return hh + "." + mm + " WIB"
 }
 
 function LoadingState() {
@@ -399,6 +402,20 @@ export function KlasemenCard({ widgetId, isAdmin, onEdit }: KlasemenCardProps) {
               <span className="h-2.5 w-2.5 rounded-full bg-yellow-500/70" />
               <span className="text-[10px] text-gray-500">Kandidat Peringkat 3</span>
             </div>
+          </div>
+          {/* Keterangan kolom */}
+          <div className="flex flex-wrap gap-x-4 gap-y-1 border-t border-white/5 px-5 py-2.5">
+            {[
+              ["M", "Main"],
+              ["W", "Menang"],
+              ["S", "Imbang"],
+              ["K", "Kalah"],
+              ["PTS", "Poin"],
+            ].map(([key, val]) => (
+              <span key={key} className="text-[10px] text-gray-600">
+                <span className="font-bold text-gray-400">{key}</span> = {val}
+              </span>
+            ))}
           </div>
         </>
       )}
