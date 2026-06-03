@@ -392,7 +392,12 @@ function TableOfContents({ items }: { items: TocItem[] }) {
               href={`#${item.id}`}
               onClick={(e) => {
                 e.preventDefault()
-                document.getElementById(item.id)?.scrollIntoView({ behavior: "smooth", block: "start" })
+                const el = document.getElementById(item.id)
+                if (el) {
+                  const navbarHeight = 80 // sticky navbar ~64px + extra padding
+                  const top = el.getBoundingClientRect().top + window.scrollY - navbarHeight
+                  window.scrollTo({ top, behavior: "smooth" })
+                }
                 setActiveId(item.id)
               }}
               className={`flex items-start gap-2 rounded-lg px-2 py-1.5 text-sm transition-colors ${
