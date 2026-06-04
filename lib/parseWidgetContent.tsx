@@ -77,7 +77,7 @@ export function parseWidgetContent(
             key,
             widgetId,
             isAdmin,
-            onEdit: onEdit as ((id: string, type: WidgetType) => void) | undefined,
+            onEdit: isAdmin && onEdit ? (id: string) => onEdit(id, "jadwal") : undefined,
             refreshKey,
           })
         )
@@ -89,7 +89,7 @@ export function parseWidgetContent(
             key,
             widgetId,
             isAdmin,
-            onEdit: onEdit as ((id: string, type: WidgetType) => void) | undefined,
+            onEdit: isAdmin && onEdit ? (id: string) => onEdit(id, "klasemen") : undefined,
             refreshKey,
           })
         )
@@ -101,7 +101,7 @@ export function parseWidgetContent(
             key,
             widgetId,
             isAdmin,
-            onEdit: onEdit as ((id: string, type: WidgetType) => void) | undefined,
+            onEdit: isAdmin && onEdit ? (id: string) => onEdit(id, "transfer") : undefined,
             refreshKey,
           })
         )
@@ -113,7 +113,7 @@ export function parseWidgetContent(
             key,
             widgetId,
             isAdmin,
-            onEdit: onEdit as ((id: string, type: WidgetType) => void) | undefined,
+            onEdit: isAdmin && onEdit ? (id: string) => onEdit(id, "peluang") : undefined,
             refreshKey,
           })
         )
@@ -125,7 +125,7 @@ export function parseWidgetContent(
             key,
             widgetId,
             isAdmin,
-            onEdit: onEdit as ((id: string, type: WidgetType) => void) | undefined,
+            onEdit: isAdmin && onEdit ? (id: string) => onEdit(id, "analisa_taktis") : undefined,
             refreshKey,
           })
         )
