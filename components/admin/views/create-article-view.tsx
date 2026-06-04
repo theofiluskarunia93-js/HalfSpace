@@ -355,6 +355,7 @@ export function CreateArticleView({ onBack, articleId }: CreateArticleViewProps)
   const [isFetching,      setIsFetching]      = useState(isEditMode)
   const [message,         setMessage]         = useState<{ type: "success" | "error"; text: string } | null>(null)
   const [isEditorChoice,  setIsEditorChoice]  = useState(false)
+  const [scheduledAt,     setScheduledAt]     = useState<string>("")   // ISO string dari datetime-local input
 
   // ── Editor tab ──────────────────────────────────────────────────────────────
   const [editorTab,      setEditorTab]      = useState<"write" | "preview">("write")
@@ -496,6 +497,15 @@ export function CreateArticleView({ onBack, articleId }: CreateArticleViewProps)
         setMetaTitle(data.meta_title || "")
         setMetaDescription(data.meta_description || "")
         setIsEditorChoice(data.is_editor_choice || false)
+
+        // Load scheduled publish time if exists
+        if (data.scheduled_at) {
+          // Convert ISO string to local datetime-local format: "YYYY-MM-DDTHH:mm"
+          const d = new Date(data.scheduled_at)
+          const pad = (n: number) => String(n).padStart(2, "0")
+          const local = `${d.getFullYear()}-${pad(d.getMonth()+1)}-${pad(d.getDate())}T${pad(d.getHours())}:${pad(d.getMinutes())}`
+          setScheduledAt(local)
+        }
 
         // Konten sudah berupa shortcode teks: [match_data id="..."] dll
         // Kita konversi ke badge placeholder agar tampil visual di editor.
@@ -701,9 +711,17 @@ export function CreateArticleView({ onBack, articleId }: CreateArticleViewProps)
   }
 
   // ── Save article ──────────────────────────────────────────────────────────
-  const handleSave = async (publish: boolean) => {
+  const handleSave = async (publish: boolean, schedule = false) => {
     if (!title) { setMessage({ type: "error", text: "Judul artikel wajib diisi!" }); return }
     if (!editor) return
+
+    // Validasi scheduled publish
+    if (schedule) {
+      if (!scheduledAt) { setMessage({ type: "error", text: "Pilih tanggal & waktu jadwal terlebih dahulu!" }); return }
+      const schedDate = new Date(scheduledAt)
+      if (schedDate <= new Date()) { setMessage({ type: "error", text: "Waktu jadwal harus di masa depan!" }); return }
+    }
+
     setIsLoading(true); setMessage(null)
 
     const rawHtml = editor.getHTML()
@@ -714,9 +732,27 @@ export function CreateArticleView({ onBack, articleId }: CreateArticleViewProps)
     const htmlContent = sanitizeArticleHtml(resolvedHtml)
 
     const now = new Date().toISOString()
-    // Edit mode: pertahankan slug yang sudah ada agar URL tidak berubah.
-    // Create mode: generate slug baru dari title.
     const articleSlug = isEditMode && savedSlug ? savedSlug : generateSlug(title)
+
+    // Tentukan status & published_at berdasarkan mode simpan
+    let status: string
+    let published_at: string | null
+    let scheduled_at: string | null = null
+
+    if (schedule) {
+      status = "scheduled"
+      published_at = null
+      scheduled_at = new Date(scheduledAt).toISOString()
+    } else if (publish) {
+      status = "published"
+      published_at = now
+      scheduled_at = null
+    } else {
+      status = "draft"
+      published_at = null
+      scheduled_at = null
+    }
+
     const payload = {
       title,
       slug: articleSlug,
@@ -726,8 +762,9 @@ export function CreateArticleView({ onBack, articleId }: CreateArticleViewProps)
       featured_image_url: featuredImageUrl,
       meta_title: metaTitle || null,
       meta_description: metaDescription || null,
-      status: publish ? "published" : "draft",
-      published_at: publish ? now : null,
+      status,
+      published_at,
+      scheduled_at,
       updated_at: now,
       is_editor_choice: isEditorChoice,
     }
@@ -747,11 +784,13 @@ export function CreateArticleView({ onBack, articleId }: CreateArticleViewProps)
     setIsLoading(false)
     setMessage({
       type: "success",
-      text: publish
-        ? isEditMode ? "Artikel diupdate & dipublish!" : "Artikel berhasil dipublish!"
-        : isEditMode ? "Draft diupdate!" : "Draft disimpan!",
+      text: schedule
+        ? `Artikel dijadwalkan terbit pada ${new Date(scheduledAt).toLocaleString("id-ID", { dateStyle: "long", timeStyle: "short" })}!`
+        : publish
+          ? isEditMode ? "Artikel diupdate & dipublish!" : "Artikel berhasil dipublish!"
+          : isEditMode ? "Draft diupdate!" : "Draft disimpan!",
     })
-    if (publish) setTimeout(onBack, 1500)
+    if (publish && !schedule) setTimeout(onBack, 1500)
   }
 
   if (isFetching) {
@@ -1109,6 +1148,58 @@ export function CreateArticleView({ onBack, articleId }: CreateArticleViewProps)
               <button onClick={() => { setFeaturedImagePreview(null); setFeaturedImageUrl(null) }} className="mt-2 text-xs text-destructive hover:underline">
                 Hapus gambar
               </button>
+            )}
+          </div>
+
+          {/* Schedule Publish */}
+          <div className="rounded-xl border border-border bg-card p-5">
+            <div className="flex items-center gap-2 mb-3">
+              <svg className="h-4 w-4 text-primary" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
+                <path strokeLinecap="round" strokeLinejoin="round" d="M8 7V3m8 4V3m-9 8h10M5 21h14a2 2 0 002-2V7a2 2 0 00-2-2H5a2 2 0 00-2 2v12a2 2 0 002 2z" />
+              </svg>
+              <h3 className="text-sm font-semibold text-foreground">Jadwal Terbit</h3>
+            </div>
+            <p className="mb-3 text-xs text-muted-foreground leading-relaxed">
+              Atur waktu artikel terbit otomatis. Kosongkan jika ingin publish langsung.
+            </p>
+            <input
+              type="datetime-local"
+              value={scheduledAt}
+              onChange={(e) => setScheduledAt(e.target.value)}
+              min={(() => {
+                const now = new Date(Date.now() + 60_000)
+                const pad = (n: number) => String(n).padStart(2, "0")
+                return `${now.getFullYear()}-${pad(now.getMonth()+1)}-${pad(now.getDate())}T${pad(now.getHours())}:${pad(now.getMinutes())}`
+              })()}
+              className={[
+                "w-full rounded-md border px-3 py-2 text-sm bg-secondary/50 text-foreground",
+                "focus:border-primary focus:outline-none focus:ring-1 focus:ring-primary/30 transition-colors",
+                scheduledAt ? "border-primary/50" : "border-border",
+              ].join(" ")}
+            />
+            {scheduledAt && (
+              <div className="mt-3 space-y-2">
+                <p className="text-xs text-primary/80">
+                  🕐 Terjadwal: {new Date(scheduledAt).toLocaleString("id-ID", { dateStyle: "long", timeStyle: "short" })}
+                </p>
+                <div className="flex gap-2">
+                  <button
+                    type="button"
+                    onClick={() => handleSave(false, true)}
+                    disabled={isLoading}
+                    className="flex-1 rounded-lg border border-primary/50 bg-primary/10 px-3 py-2 text-xs font-semibold text-primary hover:bg-primary/20 transition-colors disabled:opacity-40"
+                  >
+                    {isLoading ? "Menyimpan..." : "Simpan Jadwal"}
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => setScheduledAt("")}
+                    className="rounded-lg border border-border px-3 py-2 text-xs text-muted-foreground hover:text-foreground transition-colors"
+                  >
+                    Batal
+                  </button>
+                </div>
+              </div>
             )}
           </div>
 
