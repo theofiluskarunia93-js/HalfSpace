@@ -39,12 +39,14 @@ interface JadwalCardProps {
   widgetId: string
   isAdmin?: boolean
   onEdit?: (widgetId: string) => void
+  refreshKey?: number
 }
 
 interface KlasemenCardProps {
   widgetId: string
   isAdmin?: boolean
   onEdit?: (widgetId: string) => void
+  refreshKey?: number
 }
 
 // ── Helpers ───────────────────────────────────────────────────────────────────
@@ -448,6 +450,7 @@ interface TransferCardProps {
   widgetId: string
   isAdmin?: boolean
   onEdit?: (widgetId: string) => void
+  refreshKey?: number
 }
 
 export function TransferCard({ widgetId, isAdmin, onEdit }: TransferCardProps) {
@@ -698,6 +701,7 @@ interface PeluangCardProps {
   widgetId: string
   isAdmin?: boolean
   onEdit?: (widgetId: string) => void
+  refreshKey?: number
 }
 
 export function PeluangCard({ widgetId, isAdmin, onEdit }: PeluangCardProps) {
@@ -921,6 +925,7 @@ interface AnalisaTaktisCardProps {
   widgetId: string
   isAdmin?: boolean
   onEdit?: (widgetId: string) => void
+  refreshKey?: number
 }
 
 export function AnalisaTaktisCard({ widgetId, isAdmin, onEdit }: AnalisaTaktisCardProps) {
