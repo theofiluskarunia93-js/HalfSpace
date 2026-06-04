@@ -119,7 +119,7 @@ export function JadwalCard({ widgetId, isAdmin, onEdit }: JadwalCardProps) {
   const filtered = activeGroup ? matches.filter((m) => m.group_label === activeGroup) : matches
 
   return (
-    <div className="not-prose my-6 overflow-hidden rounded-2xl border border-white/10 bg-[#0f1117] shadow-lg min-h-[220px]">
+    <div className="not-prose my-6 rounded-2xl border border-white/10 bg-[#0f1117] shadow-lg min-h-[220px] overflow-visible">
       {/* Header */}
       <div className="flex items-center justify-between border-b border-white/10 bg-[#13151c] px-5 py-3.5">
         <div className="flex items-center gap-2.5">
@@ -275,7 +275,7 @@ export function KlasemenCard({ widgetId, isAdmin, onEdit }: KlasemenCardProps) {
     })
 
   return (
-    <div className="not-prose my-6 overflow-hidden rounded-2xl border border-white/10 bg-[#0f1117] shadow-lg min-h-[220px]">
+    <div className="not-prose my-6 rounded-2xl border border-white/10 bg-[#0f1117] shadow-lg min-h-[220px] overflow-visible">
       {/* Header */}
       <div className="flex items-center justify-between border-b border-white/10 bg-[#13151c] px-5 py-3.5">
         <div className="flex items-center gap-2.5">
@@ -503,7 +503,7 @@ export function TransferCard({ widgetId, isAdmin, onEdit }: TransferCardProps) {
   }
 
   return (
-    <div className="not-prose my-6 overflow-hidden rounded-2xl border border-white/10 bg-[#0f1117] shadow-lg min-h-[220px]">
+    <div className="not-prose my-6 rounded-2xl border border-white/10 bg-[#0f1117] shadow-lg min-h-[220px] overflow-visible">
       {/* Header */}
       <div className="flex items-center justify-between border-b border-white/10 bg-[#13151c] px-5 py-3.5">
         <div className="flex items-center gap-2.5">
@@ -746,7 +746,7 @@ export function PeluangCard({ widgetId, isAdmin, onEdit }: PeluangCardProps) {
   }
 
   return (
-    <div className="not-prose my-6 overflow-hidden rounded-2xl border border-white/10 bg-[#0f1117] shadow-lg min-h-[220px]">
+    <div className="not-prose my-6 rounded-2xl border border-white/10 bg-[#0f1117] shadow-lg min-h-[220px] overflow-visible">
       {/* Header */}
       <div className="flex items-center justify-between border-b border-white/10 bg-[#13151c] px-5 py-3.5">
         <div className="flex items-center gap-2.5">
@@ -990,7 +990,7 @@ export function AnalisaTaktisCard({ widgetId, isAdmin, onEdit }: AnalisaTaktisCa
       5: ["LW", "CF", "ST", "CF", "RW"],
     }
 
-    const allLines: number[] = [lines[lines.length - 1], ...lines.slice(0, -1).reverse(), gk]
+    const allLines = [lines[lines.length - 1], ...lines.slice(0, -1).reverse(), [gk]]
     const lineConfigs = allLines.map((count, lineIdx) => {
       const isGK = lineIdx === allLines.length - 1
       const isFwd = lineIdx === 0
@@ -1041,21 +1041,25 @@ export function AnalisaTaktisCard({ widgetId, isAdmin, onEdit }: AnalisaTaktisCa
           {lineConfigs.map((line, lineIdx) => {
             const y = 8 + (lineIdx + 1) * lineSpacing * 1.15
             const isGK = lineIdx === lineConfigs.length - 1
-            return line.labels.map((label, posIdx) => {
-              const x = line.count === 1 ? 50 : 10 + (posIdx / (line.count - 1)) * 80
-              return (
-                <g key={`${lineIdx}-${posIdx}`}>
-                  <circle
-                    cx={x} cy={y} r="4"
-                    fill="#39FF14"
-                    filter={isGK ? "url(#at-glow)" : undefined}
-                  />
-                  <text x={x} y={y + 2.5} textAnchor="middle" fontSize="3.5" fontWeight="900" fill="#000">
-                    {label}
-                  </text>
-                </g>
-              )
-            })
+            return (
+              <React.Fragment key={`line-${lineIdx}`}>
+                {line.labels.map((label, posIdx) => {
+                  const x = line.count === 1 ? 50 : 10 + (posIdx / (line.count - 1)) * 80
+                  return (
+                    <g key={`${lineIdx}-${posIdx}`}>
+                      <circle
+                        cx={x} cy={y} r="4"
+                        fill="#39FF14"
+                        filter={isGK ? "url(#at-glow)" : undefined}
+                      />
+                      <text x={x} y={y + 2.5} textAnchor="middle" fontSize="3.5" fontWeight="900" fill="#000">
+                        {label}
+                      </text>
+                    </g>
+                  )
+                })}
+              </React.Fragment>
+            )
           })}
         </svg>
       </div>
@@ -1070,7 +1074,7 @@ export function AnalisaTaktisCard({ widgetId, isAdmin, onEdit }: AnalisaTaktisCa
   const hiddenCount = data ? data.main_weapons.length - 3 : 0
 
   return (
-    <div className="not-prose my-6 overflow-hidden rounded-2xl border border-white/10 bg-[#0f1117] shadow-lg min-h-[220px]">
+    <div className="not-prose my-6 rounded-2xl border border-white/10 bg-[#0f1117] shadow-lg min-h-[220px] overflow-visible">
       {/* Header */}
       <div className="flex items-center justify-between border-b border-white/10 bg-[#13151c] px-5 py-3.5">
         <div className="flex items-center gap-2.5">
@@ -1131,7 +1135,7 @@ export function AnalisaTaktisCard({ widgetId, isAdmin, onEdit }: AnalisaTaktisCa
                 </div>
                 <div className="flex items-center gap-3.5">
                   <span
-                    className="text-[36px] font-black text-[#39FF14]"
+                    className="text-[24px] sm:text-[32px] font-black text-[#39FF14] whitespace-nowrap"
                     style={{ textShadow: "0 0 20px rgba(57,255,20,0.5), 0 0 40px rgba(57,255,20,0.2)" }}
                   >
                     {data.formation}
