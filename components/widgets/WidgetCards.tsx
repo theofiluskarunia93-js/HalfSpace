@@ -990,7 +990,7 @@ export function AnalisaTaktisCard({ widgetId, isAdmin, onEdit }: AnalisaTaktisCa
       5: ["LW", "CF", "ST", "CF", "RW"],
     }
 
-    const allLines = [lines[lines.length - 1], ...lines.slice(0, -1).reverse(), [gk]]
+    const allLines: number[] = [lines[lines.length - 1], ...lines.slice(0, -1).reverse(), gk]
     const lineConfigs = allLines.map((count, lineIdx) => {
       const isGK = lineIdx === allLines.length - 1
       const isFwd = lineIdx === 0
