@@ -1,5 +1,5 @@
 import React from "react"
-import { JadwalCard, KlasemenCard, TransferCard, PeluangCard } from "@/components/widgets/WidgetCards"
+import { JadwalCard, KlasemenCard, TransferCard, PeluangCard, AnalisaTaktisCard } from "@/components/widgets/WidgetCards"
 import type { WidgetType } from "@/components/widgets/useWidgetModal"
 
 /**
@@ -10,10 +10,11 @@ import type { WidgetType } from "@/components/widgets/useWidgetModal"
  *   [klasemen_data id="<uuid>"]
  *   [transfer_data id="<uuid>"]
  *   [peluang_data id="<uuid>"]
+ *   [analisa_taktis_data id="<uuid>"]
  */
 
 const SHORTCODE_RE =
-  /(?:<p[^>]*>)?\s*\[(match_data|klasemen_data|transfer_data|peluang_data)\s+id="([a-fA-F0-9-]{36})"\]\s*(?:<\/p>)?/g
+  /(?:<p[^>]*>)?\s*\[(match_data|klasemen_data|transfer_data|peluang_data|analisa_taktis_data)\s+id="([a-fA-F0-9-]{36})"\]\s*(?:<\/p>)?/g
 
 interface ParseOptions {
   isAdmin?: boolean
@@ -54,9 +55,10 @@ export function parseWidgetContent(
     }
 
     const widgetType: WidgetType =
-      rawType === "match_data"    ? "jadwal"   :
-      rawType === "klasemen_data" ? "klasemen" :
-      rawType === "transfer_data" ? "transfer" :
+      rawType === "match_data"          ? "jadwal"          :
+      rawType === "klasemen_data"       ? "klasemen"        :
+      rawType === "transfer_data"       ? "transfer"        :
+      rawType === "analisa_taktis_data" ? "analisa_taktis"  :
       "peluang"
 
     if (widgetType === "jadwal") {
@@ -84,6 +86,15 @@ export function parseWidgetContent(
           widgetId={widgetId}
           isAdmin={isAdmin}
           onEdit={onEdit ? (id) => onEdit(id, "transfer") : undefined}
+        />
+      )
+    } else if (widgetType === "analisa_taktis") {
+      nodes.push(
+        <AnalisaTaktisCard
+          key={`analisa_taktis-${widgetId}-${refreshKey}`}
+          widgetId={widgetId}
+          isAdmin={isAdmin}
+          onEdit={onEdit ? (id) => onEdit(id, "analisa_taktis") : undefined}
         />
       )
     } else {
@@ -116,5 +127,5 @@ export function parseWidgetContent(
 }
 
 export function hasWidgetShortcode(content: string): boolean {
-  return /\[(match_data|klasemen_data|transfer_data|peluang_data)\s+id="[a-fA-F0-9-]{36}"\]/.test(content)
+  return /\[(match_data|klasemen_data|transfer_data|peluang_data|analisa_taktis_data)\s+id="[a-fA-F0-9-]{36}"\]/.test(content)
 }

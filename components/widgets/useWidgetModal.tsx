@@ -2,7 +2,7 @@
 
 import { useState } from "react"
 
-export type WidgetType = "jadwal" | "klasemen" | "transfer" | "peluang"
+export type WidgetType = "jadwal" | "klasemen" | "transfer" | "peluang" | "analisa_taktis"
 
 export function useWidgetModal() {
   const [modalWidgetId, setModalWidgetId] = useState<string | null>(null)

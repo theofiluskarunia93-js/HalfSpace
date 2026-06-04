@@ -411,7 +411,14 @@ export function WidgetEditModal({ widgetId, widgetType, onClose, onSaved }: Widg
 
   if (!widgetId || !widgetType) return null
 
-  const title = widgetType === "jadwal" ? "Edit Jadwal Pertandingan" : "Edit Klasemen Grup"
+  const titleMap: Record<string, string> = {
+    jadwal:         "Edit Jadwal Pertandingan",
+    klasemen:       "Edit Klasemen Grup",
+    transfer:       "Edit Transfer Pemain",
+    peluang:        "Edit Peluang Juara",
+    analisa_taktis: "Edit Analisa Taktis",
+  }
+  const title = titleMap[widgetType] ?? "Edit Widget"
 
   return (
     <div
@@ -440,8 +447,12 @@ export function WidgetEditModal({ widgetId, widgetType, onClose, onSaved }: Widg
         <div className="px-6 py-5">
           {widgetType === "jadwal" ? (
             <JadwalEditor widgetId={widgetId} onClose={onClose} onSaved={onSaved} />
-          ) : (
+          ) : widgetType === "klasemen" ? (
             <KlasemenEditor widgetId={widgetId} onClose={onClose} onSaved={onSaved} />
+          ) : (
+            <div className="py-8 text-center">
+              <p className="text-sm text-gray-400">Gunakan panel <span className="font-bold text-[#39FF14]">Widget Inserter</span> di editor untuk mengedit widget ini.</p>
+            </div>
           )}
         </div>
       </div>

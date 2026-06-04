@@ -9,12 +9,12 @@ import { useState, useEffect } from "react"
 import { createClient } from "@/lib/supabase/client"
 import {
   Plus, X, Save, Loader2, TableIcon, Trophy, ChevronDown, ChevronUp, Pencil,
-  ArrowRightLeft, Star,
+  ArrowRightLeft, Star, Brain,
 } from "lucide-react"
 
 // ── Types ─────────────────────────────────────────────────────────────────────
 
-export type WidgetType = "jadwal" | "klasemen" | "transfer" | "peluang"
+export type WidgetType = "jadwal" | "klasemen" | "transfer" | "peluang" | "analisa_taktis"
 
 interface ActiveWidget {
   widgetId: string
@@ -114,6 +114,24 @@ function makeTransfer(league = "Premier League"): TransferEntry {
     to_club: "", league_dest: league,
     transfer_value: "", is_free: false,
     status: "confirmed", transfer_date: "",
+  }
+}
+
+interface AnalisaTaktisEntry {
+  team_name: string
+  coach_name: string
+  formation: string
+  play_style: string
+  main_weapons: string // newline-separated
+}
+
+function makeAnalisaTaktis(): AnalisaTaktisEntry {
+  return {
+    team_name: "",
+    coach_name: "",
+    formation: "",
+    play_style: "",
+    main_weapons: "",
   }
 }
 
@@ -760,6 +778,144 @@ function PeluangForm({
   )
 }
 
+// ── Analisa Taktis Widget ──────────────────────────────────────────────────────
+
+function AnalisaTaktisForm({
+  onInsert, editWidgetId, onResetEdit,
+}: {
+  onInsert: (shortcode: string, widgetId: string) => void
+  editWidgetId?: string | null
+  onResetEdit?: () => void
+}) {
+  const [entry, setEntry] = useState<AnalisaTaktisEntry>(makeAnalisaTaktis())
+  const [loading, setLoading] = useState(false)
+  const [saving, setSaving] = useState(false)
+  const [error, setError] = useState<string | null>(null)
+  const supabase = createClient()
+
+  useEffect(() => {
+    if (!editWidgetId) { setEntry(makeAnalisaTaktis()); return }
+    setLoading(true)
+    supabase.from("widget_analisa_taktis").select("*").eq("widget_id", editWidgetId).limit(1)
+      .then(({ data, error }) => {
+        if (error) setError(error.message)
+        else if (data && data.length > 0) {
+          const r = data[0]
+          setEntry({
+            team_name: r.team_name ?? "",
+            coach_name: r.coach_name ?? "",
+            formation: r.formation ?? "",
+            play_style: r.play_style ?? "",
+            main_weapons: Array.isArray(r.main_weapons)
+              ? r.main_weapons.join("\n")
+              : (r.main_weapons ? JSON.parse(r.main_weapons).join("\n") : ""),
+          })
+        }
+        setLoading(false)
+      })
+  }, [editWidgetId])
+
+  function updateEntry(patch: Partial<AnalisaTaktisEntry>) {
+    setEntry((prev) => ({ ...prev, ...patch }))
+  }
+
+  async function handleSave() {
+    if (!entry.team_name.trim()) { setError("Nama Tim/Negara wajib diisi."); return }
+    if (!entry.formation.trim()) { setError("Formasi Utama wajib diisi."); return }
+    setSaving(true); setError(null)
+    try {
+      const widgetId = editWidgetId || crypto.randomUUID()
+      const weapons = entry.main_weapons.split("\n").map((s) => s.trim()).filter(Boolean)
+      await supabase.from("widget_analisa_taktis").delete().eq("widget_id", widgetId)
+      const { error: insertErr } = await supabase.from("widget_analisa_taktis").insert({
+        widget_id: widgetId,
+        team_name: entry.team_name.trim(),
+        coach_name: entry.coach_name.trim() || null,
+        formation: entry.formation.trim(),
+        play_style: entry.play_style.trim() || null,
+        main_weapons: JSON.stringify(weapons),
+      })
+      if (insertErr) throw insertErr
+      onInsert(`[analisa_taktis_data id="${widgetId}"]`, widgetId)
+      if (!editWidgetId) setEntry(makeAnalisaTaktis())
+      onResetEdit?.()
+    } catch (e: any) { setError(e.message) } finally { setSaving(false) }
+  }
+
+  if (loading) return <div className="flex justify-center py-8"><Loader2 size={18} className="animate-spin text-[#39FF14]" /></div>
+
+  return (
+    <div className="space-y-3">
+      {error && <p className="rounded-lg border border-red-500/30 bg-red-500/10 px-3 py-2 text-xs text-red-400">{error}</p>}
+      <p className="text-[10px] text-zinc-500">Isi informasi taktis tim. Senjata utama dipisah per baris (Enter).</p>
+      <div className="space-y-2">
+        <div className="grid grid-cols-2 gap-2">
+          <FField
+            label="Nama Tim / Negara"
+            value={entry.team_name}
+            onChange={(v) => updateEntry({ team_name: v })}
+            placeholder="Argentina"
+            className="col-span-2"
+          />
+          <FField
+            label="Nama Pelatih"
+            value={entry.coach_name}
+            onChange={(v) => updateEntry({ coach_name: v })}
+            placeholder="Lionel Scaloni"
+            className="col-span-2"
+          />
+          <FField
+            label="Formasi Utama"
+            value={entry.formation}
+            onChange={(v) => updateEntry({ formation: v })}
+            placeholder="4-3-3"
+          />
+          <div className="flex flex-col gap-1">
+            <label className="text-[10px] font-bold uppercase tracking-widest text-zinc-500">Contoh Formasi</label>
+            <div className="flex flex-wrap gap-1 pt-0.5">
+              {["4-3-3", "4-2-3-1", "4-4-2", "3-5-2", "3-4-3", "5-3-2"].map((f) => (
+                <button
+                  key={f}
+                  onClick={() => updateEntry({ formation: f })}
+                  className={`rounded px-2 py-1 text-[10px] font-bold transition-all ${
+                    entry.formation === f
+                      ? "bg-[#39FF14] text-black"
+                      : "border border-white/10 bg-white/5 text-zinc-400 hover:text-white"
+                  }`}
+                >
+                  {f}
+                </button>
+              ))}
+            </div>
+          </div>
+        </div>
+        <FTextarea
+          label="Gaya Bermain"
+          value={entry.play_style}
+          onChange={(v) => updateEntry({ play_style: v })}
+          placeholder={"Pressing tinggi dan intensif di sepertiga lapangan lawan, transisi cepat, build-up pendek dari belakang dengan memanfaatkan kreativitas lini tengah."}
+        />
+        <FTextarea
+          label="Senjata Utama (1 per baris)"
+          value={entry.main_weapons}
+          onChange={(v) => updateEntry({ main_weapons: v })}
+          placeholder={"Individual brilliance dari Messi dan De Paul\nSerangan balik yang lightning-fast lewat sisi kiri\nSet piece delivery dari Julian Alvarez"}
+        />
+      </div>
+      <div className="flex items-center justify-between gap-2 pt-1">
+        {editWidgetId && onResetEdit && (
+          <button onClick={onResetEdit} className="text-xs text-zinc-500 transition hover:text-white">Batal Edit</button>
+        )}
+        <button onClick={handleSave} disabled={saving}
+          className="ml-auto flex items-center gap-2 rounded-lg bg-[#39FF14] px-4 py-2 text-xs font-bold text-black transition hover:opacity-90 disabled:opacity-50">
+          {saving ? <Loader2 size={12} className="animate-spin" /> : <Save size={12} />}
+          {editWidgetId ? "Update & Sync" : "Simpan & Insert"}
+        </button>
+      </div>
+    </div>
+  )
+}
+
 // ── Main WidgetInserter ───────────────────────────────────────────────────────
 
 export function WidgetInserter({
@@ -773,6 +929,7 @@ export function WidgetInserter({
   const [klasemenOpen, setKlasemenOpen] = useState(false)
   const [transferOpen, setTransferOpen] = useState(false)
   const [peluangOpen,  setPeluangOpen]  = useState(false)
+  const [analisaOpen,  setAnalisaOpen]  = useState(false)
 
   const [insertedWidgets, setInsertedWidgets] = useState<ActiveWidget[]>(initialWidgets ?? [])
 
@@ -791,6 +948,7 @@ export function WidgetInserter({
     setKlasemenOpen(editWidgetType === "klasemen")
     setTransferOpen(editWidgetType === "transfer")
     setPeluangOpen(editWidgetType === "peluang")
+    setAnalisaOpen(editWidgetType === "analisa_taktis")
   }, [editWidgetType])
 
   const isEditing = !!editWidgetId
@@ -804,10 +962,11 @@ export function WidgetInserter({
   }
 
   const widgetMeta: Record<WidgetType, { icon: string; label: string }> = {
-    jadwal:   { icon: "📅", label: "Jadwal Pertandingan" },
-    klasemen: { icon: "🏆", label: "Klasemen Grup" },
-    transfer: { icon: "🔄", label: "Transfer Pemain" },
-    peluang:  { icon: "⭐", label: "Peluang Juara" },
+    jadwal:          { icon: "📅", label: "Jadwal Pertandingan" },
+    klasemen:        { icon: "🏆", label: "Klasemen Grup" },
+    transfer:        { icon: "🔄", label: "Transfer Pemain" },
+    peluang:         { icon: "⭐", label: "Peluang Juara" },
+    analisa_taktis:  { icon: "🧠", label: "Analisa Taktis" },
   }
 
   function SectionHeader({
@@ -954,6 +1113,26 @@ export function WidgetInserter({
             <PeluangForm
               onInsert={(shortcode, widgetId) => handleInsert(shortcode, widgetId, "peluang")}
               editWidgetId={isEditing && editWidgetType === "peluang" ? editWidgetId : null}
+              onResetEdit={onResetEdit}
+            />
+          </div>
+        )}
+      </div>
+
+      {/* ── Analisa Taktis Section ── */}
+      <div className={`overflow-hidden rounded-xl border transition-colors ${isEditing && editWidgetType === "analisa_taktis" ? "border-[#39FF14]/40" : "border-white/10"} bg-[#0d0d0d]`}>
+        <SectionHeader
+          icon={<Brain size={15} className="text-[#39FF14]" />}
+          label="Analisa Taktis"
+          open={analisaOpen}
+          onToggle={() => setAnalisaOpen((o) => !o)}
+          isActive={isEditing && editWidgetType === "analisa_taktis"}
+        />
+        {analisaOpen && (
+          <div className="border-t border-white/10 p-4">
+            <AnalisaTaktisForm
+              onInsert={(shortcode, widgetId) => handleInsert(shortcode, widgetId, "analisa_taktis")}
+              editWidgetId={isEditing && editWidgetType === "analisa_taktis" ? editWidgetId : null}
               onResetEdit={onResetEdit}
             />
           </div>

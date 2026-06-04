@@ -2,7 +2,7 @@
 
 import React, { useEffect, useState } from "react"
 import { createClient } from "@/lib/supabase/client"
-import { Pencil, CalendarDays, Trophy, Loader2, AlertCircle, Clock, MapPin } from "lucide-react"
+import { Pencil, CalendarDays, Trophy, Loader2, AlertCircle, Clock, MapPin, Brain } from "lucide-react"
 
 // ── Types ────────────────────────────────────────────────────────────────────
 
@@ -900,6 +900,307 @@ export function PeluangCard({ widgetId, isAdmin, onEdit }: PeluangCardProps) {
           <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" className="text-[#39FF14]/40 rotate-180"><path d="M5 12h14M12 5l7 7-7 7"/></svg>
         </div>
         </>
+      )}
+    </div>
+  )
+}
+
+// ── Analisa Taktis Card ────────────────────────────────────────────────────────
+
+export interface AnalisaTaktisRow {
+  id: string
+  widget_id: string
+  team_name: string
+  coach_name: string
+  formation: string
+  play_style: string
+  main_weapons: string[] // stored as JSON array in Supabase
+}
+
+interface AnalisaTaktisCardProps {
+  widgetId: string
+  isAdmin?: boolean
+  onEdit?: (widgetId: string) => void
+}
+
+export function AnalisaTaktisCard({ widgetId, isAdmin, onEdit }: AnalisaTaktisCardProps) {
+  const [data, setData] = useState<AnalisaTaktisRow | null>(null)
+  const [loading, setLoading] = useState(true)
+  const [error, setError] = useState<string | null>(null)
+  const [showAllWeapons, setShowAllWeapons] = useState(false)
+
+  useEffect(() => {
+    async function fetchData() {
+      try {
+        const supabase = createClient()
+        const { data: rows, error } = await supabase
+          .from("widget_analisa_taktis")
+          .select("*")
+          .eq("widget_id", widgetId)
+          .limit(1)
+        if (error) throw error
+        if (rows && rows.length > 0) {
+          const r = rows[0]
+          setData({
+            ...r,
+            main_weapons: Array.isArray(r.main_weapons)
+              ? r.main_weapons
+              : (r.main_weapons ? JSON.parse(r.main_weapons) : []),
+          })
+        }
+      } catch (e: any) {
+        setError(e.message ?? "Gagal memuat data analisa taktis.")
+      } finally {
+        setLoading(false)
+      }
+    }
+    fetchData()
+  }, [widgetId])
+
+  // Parse formation string like "4-3-3" into position groups
+  function parseFormation(formation: string): { gk: number; lines: number[] } {
+    const parts = formation.split("-").map(Number)
+    if (parts.length < 2 || parts.some(isNaN)) return { gk: 1, lines: [4, 3, 3] }
+    return { gk: 1, lines: parts }
+  }
+
+  function FormationViz({ formation }: { formation: string }) {
+    const { gk, lines } = parseFormation(formation)
+
+    // Positions map based on line count
+    const positionLabels: Record<number, string[]> = {
+      1: ["GK"],
+      2: ["CB", "CB"],
+      3: ["LB", "CB", "RB"],
+      4: ["LB", "CB", "CB", "RB"],
+      5: ["LWB", "CB", "CB", "CB", "RWB"],
+    }
+    const midLabels: Record<number, string[]> = {
+      1: ["CM"],
+      2: ["CM", "CM"],
+      3: ["CM", "CM", "CM"],
+      4: ["CM", "CM", "CM", "CM"],
+      5: ["CM", "CM", "CM", "CM", "CM"],
+    }
+    const fwdLabels: Record<number, string[]> = {
+      1: ["ST"],
+      2: ["ST", "ST"],
+      3: ["LW", "ST", "RW"],
+      4: ["LW", "CF", "CF", "RW"],
+      5: ["LW", "CF", "ST", "CF", "RW"],
+    }
+
+    const allLines = [lines[lines.length - 1], ...lines.slice(0, -1).reverse(), [gk]]
+    const lineConfigs = allLines.map((count, lineIdx) => {
+      const isGK = lineIdx === allLines.length - 1
+      const isFwd = lineIdx === 0
+      const isMid = lineIdx > 0 && !isGK && lines.length >= 3 && lineIdx < lines.length - 1
+      let labels: string[]
+      if (isGK) labels = ["GK"]
+      else if (isFwd) labels = fwdLabels[count] ?? Array(count).fill("FW")
+      else if (isMid && lineIdx === 1 && lines.length === 3) labels = midLabels[count] ?? Array(count).fill("MF")
+      else labels = positionLabels[count] ?? Array(count).fill("DF")
+      return { count, labels }
+    })
+
+    const totalLines = lineConfigs.length
+    const lineSpacing = 100 / (totalLines + 1)
+
+    return (
+      <div
+        style={{
+          position: "relative",
+          width: "100%",
+          borderRadius: "12px",
+          border: "1px solid rgba(57,255,20,0.2)",
+          overflow: "hidden",
+          background: "linear-gradient(180deg, #0a1a0a 0%, #0d2210 50%, #0a1a0a 100%)",
+        }}
+      >
+        <svg viewBox="0 0 100 130" style={{ width: "100%", display: "block" }}>
+          {/* Field markings */}
+          <rect x="4" y="4" width="92" height="122" fill="none" stroke="rgba(57,255,20,0.15)" strokeWidth="0.5" />
+          <line x1="4" y1="65" x2="96" y2="65" stroke="rgba(57,255,20,0.15)" strokeWidth="0.5" />
+          <circle cx="50" cy="65" r="12" fill="none" stroke="rgba(57,255,20,0.15)" strokeWidth="0.5" />
+          <circle cx="50" cy="65" r="1" fill="rgba(57,255,20,0.3)" />
+          <rect x="22" y="4" width="56" height="22" fill="none" stroke="rgba(57,255,20,0.12)" strokeWidth="0.5" />
+          <rect x="33" y="4" width="34" height="10" fill="none" stroke="rgba(57,255,20,0.12)" strokeWidth="0.5" />
+          <rect x="38" y="2" width="24" height="4" fill="rgba(57,255,20,0.08)" stroke="rgba(57,255,20,0.2)" strokeWidth="0.5" />
+          <rect x="22" y="104" width="56" height="22" fill="none" stroke="rgba(57,255,20,0.12)" strokeWidth="0.5" />
+          <rect x="33" y="116" width="34" height="10" fill="none" stroke="rgba(57,255,20,0.12)" strokeWidth="0.5" />
+          <rect x="38" y="124" width="24" height="4" fill="rgba(57,255,20,0.08)" stroke="rgba(57,255,20,0.2)" strokeWidth="0.5" />
+          <path d="M 33 26 A 12 12 0 0 1 67 26" fill="none" stroke="rgba(57,255,20,0.12)" strokeWidth="0.5" />
+          <path d="M 33 104 A 12 12 0 0 0 67 104" fill="none" stroke="rgba(57,255,20,0.12)" strokeWidth="0.5" />
+          <defs>
+            <filter id="at-glow">
+              <feGaussianBlur stdDeviation="1.5" result="coloredBlur" />
+              <feMerge><feMergeNode in="coloredBlur" /><feMergeNode in="SourceGraphic" /></feMerge>
+            </filter>
+          </defs>
+          {/* Players */}
+          {lineConfigs.map((line, lineIdx) => {
+            const y = 8 + (lineIdx + 1) * lineSpacing * 1.15
+            const isGK = lineIdx === lineConfigs.length - 1
+            return line.labels.map((label, posIdx) => {
+              const x = line.count === 1 ? 50 : 10 + (posIdx / (line.count - 1)) * 80
+              return (
+                <g key={`${lineIdx}-${posIdx}`}>
+                  <circle
+                    cx={x} cy={y} r="4"
+                    fill="#39FF14"
+                    filter={isGK ? "url(#at-glow)" : undefined}
+                  />
+                  <text x={x} y={y + 2.5} textAnchor="middle" fontSize="3.5" fontWeight="900" fill="#000">
+                    {label}
+                  </text>
+                </g>
+              )
+            })
+          })}
+        </svg>
+      </div>
+    )
+  }
+
+  const visibleWeapons = data
+    ? showAllWeapons
+      ? data.main_weapons
+      : data.main_weapons.slice(0, 3)
+    : []
+  const hiddenCount = data ? data.main_weapons.length - 3 : 0
+
+  return (
+    <div className="not-prose my-6 overflow-hidden rounded-2xl border border-white/10 bg-[#0f1117] shadow-lg min-h-[220px]">
+      {/* Header */}
+      <div className="flex items-center justify-between border-b border-white/10 bg-[#13151c] px-5 py-3.5">
+        <div className="flex items-center gap-2.5">
+          <Brain size={18} className="text-[#39FF14]" style={{ filter: "drop-shadow(0 0 6px rgba(57,255,20,0.7))" }} />
+          <span className="font-semibold text-white">Analisa Taktis</span>
+          <span className="rounded-full border border-[#39FF14]/25 bg-[#39FF14]/10 px-2.5 py-0.5 text-[10px] font-bold uppercase tracking-widest text-[#39FF14]">
+            Taktik
+          </span>
+        </div>
+        {isAdmin && onEdit && (
+          <button
+            onClick={() => onEdit(widgetId)}
+            className="flex items-center gap-1.5 rounded-lg border border-[#39FF14]/30 bg-[#39FF14]/10 px-3 py-1.5 text-xs font-medium text-[#39FF14] transition-all hover:bg-[#39FF14]/20 hover:border-[#39FF14]/60"
+          >
+            <Pencil size={12} />
+            Edit Widget
+          </button>
+        )}
+      </div>
+
+      {loading ? (
+        <div className="flex min-h-[140px] items-center justify-center gap-2 text-gray-400">
+          <Loader2 size={16} className="animate-spin text-[#39FF14]" />
+          <span className="text-sm">Memuat data...</span>
+        </div>
+      ) : error ? (
+        <div className="flex items-center justify-center gap-2 py-10 text-red-400">
+          <AlertCircle size={16} />
+          <span className="text-sm">{error}</span>
+        </div>
+      ) : !data ? (
+        <p className="py-8 text-center text-sm text-gray-500">Belum ada data analisa taktis.</p>
+      ) : (
+        <div className="p-5">
+          <div className="grid grid-cols-1 gap-5 sm:grid-cols-2">
+            {/* Left column */}
+            <div className="flex flex-col gap-3.5">
+              {/* Tim & Pelatih */}
+              <div className="rounded-xl border border-white/10 bg-[#181b24] p-4">
+                <div className="mb-2.5 flex items-center gap-2">
+                  <svg className="h-3.5 w-3.5 text-[#39FF14]" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}><path strokeLinecap="round" strokeLinejoin="round" d="M17 20h5v-2a3 3 0 00-5.356-1.857M17 20H7m10 0v-2c0-.656-.126-1.283-.356-1.857M7 20H2v-2a3 3 0 015.356-1.857M7 20v-2c0-.656.126-1.283.356-1.857m0 0a5.002 5.002 0 019.288 0" /></svg>
+                  <span className="text-[10px] font-bold uppercase tracking-widest text-gray-500">Tim &amp; Pelatih</span>
+                </div>
+                <p className="text-[22px] font-black leading-tight text-white" style={{ textShadow: "0 0 20px rgba(57,255,20,0.3)" }}>
+                  {data.team_name}
+                </p>
+                <div className="mt-2 flex items-center gap-2">
+                  <span className="text-xs text-gray-500">Pelatih:</span>
+                  <span className="text-[13px] font-semibold text-[#39FF14]">{data.coach_name}</span>
+                </div>
+              </div>
+
+              {/* Formasi */}
+              <div className="rounded-xl border border-[#39FF14]/20 bg-[#39FF14]/5 p-4">
+                <div className="mb-2.5 flex items-center gap-2">
+                  <svg className="h-3.5 w-3.5 text-[#39FF14]" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}><path strokeLinecap="round" strokeLinejoin="round" d="M9 12l2 2 4-4m5.618-4.016A11.955 11.955 0 0112 2.944a11.955 11.955 0 01-8.618 3.04A12.02 12.02 0 003 9c0 5.591 3.824 10.29 9 11.622 5.176-1.332 9-6.03 9-11.622 0-1.042-.133-2.052-.382-3.016z" /></svg>
+                  <span className="text-[10px] font-bold uppercase tracking-widest text-gray-500">Formasi Utama</span>
+                </div>
+                <div className="flex items-center gap-3.5">
+                  <span
+                    className="text-[36px] font-black text-[#39FF14]"
+                    style={{ textShadow: "0 0 20px rgba(57,255,20,0.5), 0 0 40px rgba(57,255,20,0.2)" }}
+                  >
+                    {data.formation}
+                  </span>
+                  <div className="h-10 w-px bg-[#39FF14]/20" />
+                  <span className="max-w-[140px] text-[11px] leading-relaxed text-gray-400">
+                    Formasi andalan yang digunakan di sebagian besar pertandingan
+                  </span>
+                </div>
+              </div>
+
+              {/* Gaya Bermain */}
+              <div className="rounded-xl border border-white/10 bg-[#181b24] p-4">
+                <div className="mb-2.5 flex items-center gap-2">
+                  <svg className="h-3.5 w-3.5 text-[#39FF14]" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}><path strokeLinecap="round" strokeLinejoin="round" d="M13 10V3L4 14h7v7l9-11h-7z" /></svg>
+                  <span className="text-[10px] font-bold uppercase tracking-widest text-gray-500">Gaya Bermain</span>
+                </div>
+                <p className="text-[13px] leading-relaxed text-gray-300">{data.play_style}</p>
+              </div>
+
+              {/* Senjata Utama */}
+              <div className="rounded-xl border border-white/10 bg-[#181b24] p-4">
+                <div className="mb-3 flex items-center gap-2">
+                  <svg className="h-3.5 w-3.5 text-[#39FF14]" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}><path strokeLinecap="round" strokeLinejoin="round" d="M13 10V3L4 14h7v7l9-11h-7z" /></svg>
+                  <span className="text-[10px] font-bold uppercase tracking-widest text-gray-500">Senjata Utama</span>
+                  <span className="rounded-full bg-[#39FF14]/15 px-2 py-0.5 text-[10px] font-bold text-[#39FF14]">
+                    {data.main_weapons.length}
+                  </span>
+                </div>
+                <ul className="flex flex-col gap-2">
+                  {visibleWeapons.map((w, i) => (
+                    <li key={i} className="flex items-start gap-2.5">
+                      <span
+                        className="flex h-5 w-5 shrink-0 items-center justify-center rounded-full text-[9px] font-black text-black"
+                        style={{ background: "#39FF14", boxShadow: "0 0 6px rgba(57,255,20,0.5)", marginTop: "1px" }}
+                      >
+                        {i + 1}
+                      </span>
+                      <span className="text-[13px] leading-snug text-gray-200">{w}</span>
+                    </li>
+                  ))}
+                </ul>
+                {hiddenCount > 0 && (
+                  <button
+                    onClick={() => setShowAllWeapons((v) => !v)}
+                    className="mt-2 bg-transparent border-none p-0 text-[11px] font-semibold text-[#39FF14]/70 cursor-pointer hover:text-[#39FF14] transition-colors"
+                  >
+                    {showAllWeapons ? "Sembunyikan" : `+${hiddenCount} lainnya`}
+                  </button>
+                )}
+              </div>
+            </div>
+
+            {/* Right column: Formation viz */}
+            <div className="flex flex-col gap-2.5">
+              <div className="flex items-center gap-2 px-1">
+                <span className="text-[10px] font-bold uppercase tracking-widest text-gray-500">Visualisasi Formasi</span>
+                <div className="h-px flex-1 bg-gradient-to-r from-[#39FF14]/20 to-transparent" />
+              </div>
+              <FormationViz formation={data.formation} />
+              <p className="text-center text-[11px] text-gray-600">
+                Posisi pemain dalam formasi {data.formation}
+              </p>
+            </div>
+          </div>
+
+          {/* Footer divider */}
+          <div className="mt-5 h-px bg-gradient-to-r from-transparent via-[#39FF14]/30 to-transparent" />
+        </div>
       )}
     </div>
   )
