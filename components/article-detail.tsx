@@ -61,7 +61,7 @@ function contentToHtml(content: string): string {
 
 // Deteksi apakah konten mengandung shortcode widget
 function hasWidgetPlaceholder(content: string): boolean {
-  return /\[(match_data|klasemen_data|transfer_data|peluang_data|analisa_taktis_data)\s+id="[a-fA-F0-9-]{36}"\]/.test(content)
+  return /\[(match_data|klasemen_data|transfer_data|peluang_data|analisa_taktis_data|perbandingan_tim_data|timeline_pertandingan_data)\s+id="[a-fA-F0-9-]{36}"\]/.test(content)
 }
 
 // Bersihkan badge HTML editor yang terlanjur tersimpan di DB.

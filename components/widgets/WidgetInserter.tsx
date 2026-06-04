@@ -2,1143 +2,404 @@
 
 /**
  * WidgetInserter.tsx
- * Mendukung 4 widget: jadwal, klasemen, transfer, peluang
+ *
+ * Panel sidebar di editor artikel untuk membuat / mengedit widget.
+ * Setiap WidgetType punya form input sendiri.
+ *
+ * WidgetType yang didukung:
+ *  jadwal | klasemen | transfer | peluang | analisa_taktis
+ *  perbandingan_tim | timeline_pertandingan   ← BARU
  */
 
 import { useState, useEffect } from "react"
 import { createClient } from "@/lib/supabase/client"
-import {
-  Plus, X, Save, Loader2, TableIcon, Trophy, ChevronDown, ChevronUp, Pencil,
-  ArrowRightLeft, Star, Brain,
-} from "lucide-react"
+import { v4 as uuidv4 } from "uuid"
 
-// ── Types ─────────────────────────────────────────────────────────────────────
+// ─── Type ─────────────────────────────────────────────────────────────────────
+export type WidgetType =
+  | "jadwal"
+  | "klasemen"
+  | "transfer"
+  | "peluang"
+  | "analisa_taktis"
+  | "perbandingan_tim"
+  | "timeline_pertandingan"
 
-export type WidgetType = "jadwal" | "klasemen" | "transfer" | "peluang" | "analisa_taktis"
-
-interface ActiveWidget {
-  widgetId: string
-  widgetType: WidgetType
+// ─── Shortcode map ────────────────────────────────────────────────────────────
+export const SHORTCODE_MAP: Record<WidgetType, string> = {
+  jadwal:                  "match_data",
+  klasemen:                "klasemen_data",
+  transfer:                "transfer_data",
+  peluang:                 "peluang_data",
+  analisa_taktis:          "analisa_taktis_data",
+  perbandingan_tim:        "perbandingan_tim_data",
+  timeline_pertandingan:   "timeline_pertandingan_data",
 }
 
-interface MatchEntry {
-  _localId: string
-  group_label: string
-  home_team: string
-  away_team: string
-  match_date: string
-  match_time: string
-  score_home: string
-  score_away: string
-  status: "scheduled" | "live" | "finished"
-  stadium: string
+export const TABLE_MAP: Record<WidgetType, string> = {
+  jadwal:                  "widget_jadwal",
+  klasemen:                "widget_klasemen",
+  transfer:                "widget_transfer",
+  peluang:                 "widget_peluang",
+  analisa_taktis:          "widget_analisa_taktis",
+  perbandingan_tim:        "widget_perbandingan_tim",
+  timeline_pertandingan:   "widget_timeline_pertandingan",
 }
 
-interface StandingEntry {
-  _localId: string
-  group_label: string
-  rank: number
-  team_name: string
-  played: number
-  won: number
-  drawn: number
-  lost: number
-  gf: number
-  ga: number
-  points: number
+export const WIDGET_META: Record<WidgetType, { icon: string; label: string }> = {
+  jadwal:                  { icon: "📅", label: "Jadwal Pertandingan" },
+  klasemen:                { icon: "🏆", label: "Klasemen Grup" },
+  transfer:                { icon: "🔄", label: "Transfer Pemain" },
+  peluang:                 { icon: "⭐", label: "Peluang Juara" },
+  analisa_taktis:          { icon: "🧠", label: "Analisa Taktis" },
+  perbandingan_tim:        { icon: "⚔️", label: "Perbandingan Tim" },
+  timeline_pertandingan:   { icon: "📋", label: "Timeline Pertandingan" },
 }
 
-interface TransferEntry {
-  _localId: string
-  league_label: string
-  player_name: string
-  player_initials: string
-  position: string
-  age: string
-  from_club: string
-  from_club_color: string
-  to_club: string
-  league_dest: string
-  transfer_value: number | ""
-  is_free: boolean
-  status: "confirmed" | "official" | "medical" | "rumor"
-  transfer_date: string
-}
-
-interface PeluangEntry {
-  _localId: string
-  rank: number
-  team_name: string
-  team_flag: string
-  category: string
-  win_pct: string
-  reasons_win: string   // newline-separated
-  reasons_lose: string  // newline-separated
-}
-
-interface WidgetInserterProps {
+// ─── Props ────────────────────────────────────────────────────────────────────
+interface Props {
   onInsert: (shortcode: string, widgetId: string, widgetType: WidgetType) => void
   editWidgetId?: string | null
   editWidgetType?: WidgetType | null
   onResetEdit?: () => void
-  initialWidgets?: ActiveWidget[]
+  initialWidgets?: { widgetId: string; widgetType: WidgetType }[]
 }
 
-// ── Helper factory functions ──────────────────────────────────────────────────
+// ─── Form: Perbandingan Tim ───────────────────────────────────────────────────
 
-function makeMatch(group = "A"): MatchEntry {
-  return {
-    _localId: crypto.randomUUID(),
-    group_label: group,
+interface FormResult { result: "W" | "D" | "L" }
+interface H2HMatch { date: string; home_team: string; away_team: string; home_score: number; away_score: number }
+interface StatItem { label: string; home_value: string; away_value: string; home_pct: number }
+
+function defaultFormResults(): FormResult[] {
+  return [{ result: "W" }, { result: "W" }, { result: "D" }, { result: "W" }, { result: "L" }]
+}
+
+function PerbandinganTimForm({ widgetId, onSaved }: { widgetId: string; onSaved: () => void }) {
+  const supabase = createClient()
+  const [saving, setSaving] = useState(false)
+  const [data, setData] = useState({
+    home_team: "", away_team: "", competition: "FRIENDLY",
+    home_rank: "#1", away_rank: "#2",
+    home_value: "€500M", away_value: "€500M",
+    home_form: defaultFormResults(),
+    away_form: defaultFormResults(),
+    home_coach: "", away_coach: "",
+    total_matches: 0, home_wins: 0, draws: 0, away_wins: 0,
+    h2h_matches: [] as H2HMatch[],
+    stats: [] as StatItem[],
+  })
+
+  useEffect(() => {
+    supabase.from("widget_perbandingan_tim").select("*").eq("id", widgetId).maybeSingle()
+      .then(({ data: row }) => { if (row) setData(row as any) })
+  }, [widgetId])
+
+  const save = async () => {
+    setSaving(true)
+    await supabase.from("widget_perbandingan_tim").upsert({ id: widgetId, ...data })
+    setSaving(false)
+    onSaved()
+  }
+
+  const F = (label: string, key: keyof typeof data, type = "text") => (
+    <div key={key}>
+      <label className="block text-xs text-muted-foreground mb-1">{label}</label>
+      <input type={type} value={String(data[key])}
+        onChange={e => setData(p => ({ ...p, [key]: type === "number" ? Number(e.target.value) : e.target.value }))}
+        className="w-full rounded border border-border bg-secondary/50 px-2.5 py-1.5 text-sm text-foreground focus:outline-none focus:border-primary" />
+    </div>
+  )
+
+  return (
+    <div className="space-y-3 text-sm">
+      <div className="grid grid-cols-2 gap-2">
+        {F("Tim Tuan Rumah", "home_team")}
+        {F("Tim Tamu", "away_team")}
+      </div>
+      {F("Kompetisi (badge)", "competition")}
+      <div className="grid grid-cols-2 gap-2">
+        {F("Ranking FIFA (Home)", "home_rank")}
+        {F("Ranking FIFA (Away)", "away_rank")}
+      </div>
+      <div className="grid grid-cols-2 gap-2">
+        {F("Nilai Skuad (Home)", "home_value")}
+        {F("Nilai Skuad (Away)", "away_value")}
+      </div>
+      <div className="grid grid-cols-2 gap-2">
+        {F("Pelatih (Home)", "home_coach")}
+        {F("Pelatih (Away)", "away_coach")}
+      </div>
+      <p className="text-xs text-muted-foreground pt-1">Form 5 laga, H2H, dan statistik diisi langsung via Supabase Table Editor atau bisa diperluas ke form di sini.</p>
+      <div className="grid grid-cols-3 gap-2">
+        {F("Total Laga H2H", "total_matches", "number")}
+        {F("Menang Home", "home_wins", "number")}
+        {F("Seri", "draws", "number")}
+      </div>
+      {F("Menang Away", "away_wins", "number")}
+      <button onClick={save} disabled={saving}
+        className="w-full rounded bg-primary py-2 text-xs font-bold text-black hover:bg-primary/90 disabled:opacity-40">
+        {saving ? "Menyimpan..." : "Simpan Widget"}
+      </button>
+    </div>
+  )
+}
+
+// ─── Form: Timeline Pertandingan ──────────────────────────────────────────────
+
+type EventType = "goal" | "yellow_card" | "red_card" | "substitution" | "var" | "penalty"
+type MatchStatus = "upcoming" | "live" | "finished"
+
+interface TimelineEvent { minute: string; type: EventType; player: string; team: "home" | "away"; score_after: string }
+
+function TimelineForm({ widgetId, onSaved }: { widgetId: string; onSaved: () => void }) {
+  const supabase = createClient()
+  const [saving, setSaving] = useState(false)
+  const [data, setData] = useState({
     home_team: "", away_team: "",
-    match_date: "", match_time: "",
-    score_home: "", score_away: "",
-    status: "scheduled", stadium: "",
-  }
-}
-
-function makeStanding(group = "A", rank = 1): StandingEntry {
-  return {
-    _localId: crypto.randomUUID(),
-    group_label: group, rank,
-    team_name: "", played: 0, won: 0, drawn: 0, lost: 0, gf: 0, ga: 0, points: 0,
-  }
-}
-
-function makeTransfer(league = "Premier League"): TransferEntry {
-  return {
-    _localId: crypto.randomUUID(),
-    league_label: league,
-    player_name: "", player_initials: "", position: "", age: "",
-    from_club: "", from_club_color: "#888888",
-    to_club: "", league_dest: league,
-    transfer_value: "", is_free: false,
-    status: "confirmed", transfer_date: "",
-  }
-}
-
-interface AnalisaTaktisEntry {
-  team_name: string
-  coach_name: string
-  formation: string
-  play_style: string
-  main_weapons: string // newline-separated
-}
-
-function makeAnalisaTaktis(): AnalisaTaktisEntry {
-  return {
-    team_name: "",
-    coach_name: "",
-    formation: "",
-    play_style: "",
-    main_weapons: "",
-  }
-}
-
-function makePeluang(): PeluangEntry {
-  return {
-    _localId: crypto.randomUUID(),
-    rank: 1, team_name: "", team_flag: "",
-    category: "FAVORIT UTAMA", win_pct: "",
-    reasons_win: "", reasons_lose: "",
-  }
-}
-
-// ── Shared input helpers ──────────────────────────────────────────────────────
-
-function FField({
-  label, value, onChange, type = "text", placeholder, className = "",
-}: {
-  label: string; value: string | number; onChange: (v: string) => void
-  type?: string; placeholder?: string; className?: string
-}) {
-  return (
-    <div className={`flex flex-col gap-1 ${className}`}>
-      <label className="text-[10px] font-bold uppercase tracking-widest text-zinc-500">{label}</label>
-      <input
-        type={type}
-        value={value}
-        onChange={(e) => onChange(e.target.value)}
-        placeholder={placeholder}
-        className="rounded-md border border-white/10 bg-white/5 px-2.5 py-1.5 text-xs text-white placeholder-zinc-600 outline-none transition focus:border-[#39FF14]/50 focus:ring-1 focus:ring-[#39FF14]/20"
-      />
-    </div>
-  )
-}
-
-function FTextarea({
-  label, value, onChange, placeholder, className = "",
-}: {
-  label: string; value: string; onChange: (v: string) => void
-  placeholder?: string; className?: string
-}) {
-  return (
-    <div className={`flex flex-col gap-1 ${className}`}>
-      <label className="text-[10px] font-bold uppercase tracking-widest text-zinc-500">{label}</label>
-      <textarea
-        value={value}
-        onChange={(e) => onChange(e.target.value)}
-        placeholder={placeholder}
-        rows={3}
-        className="rounded-md border border-white/10 bg-white/5 px-2.5 py-1.5 text-xs text-white placeholder-zinc-600 outline-none transition focus:border-[#39FF14]/50 focus:ring-1 focus:ring-[#39FF14]/20 resize-none"
-      />
-    </div>
-  )
-}
-
-function FSelect({
-  label, value, onChange, options,
-}: {
-  label: string; value: string; onChange: (v: string) => void
-  options: { label: string; value: string }[]
-}) {
-  return (
-    <div className="flex flex-col gap-1">
-      <label className="text-[10px] font-bold uppercase tracking-widest text-zinc-500">{label}</label>
-      <select
-        value={value}
-        onChange={(e) => onChange(e.target.value)}
-        className="rounded-md border border-white/10 bg-[#111] px-2.5 py-1.5 text-xs text-white outline-none transition focus:border-[#39FF14]/50"
-      >
-        {options.map((o) => <option key={o.value} value={o.value}>{o.label}</option>)}
-      </select>
-    </div>
-  )
-}
-
-function FCheckbox({
-  label, checked, onChange,
-}: {
-  label: string; checked: boolean; onChange: (v: boolean) => void
-}) {
-  return (
-    <div className="flex items-center gap-2">
-      <input
-        type="checkbox"
-        checked={checked}
-        onChange={(e) => onChange(e.target.checked)}
-        className="h-3.5 w-3.5 accent-[#39FF14]"
-      />
-      <label className="text-[10px] font-bold uppercase tracking-widest text-zinc-500">{label}</label>
-    </div>
-  )
-}
-
-// ── Jadwal Widget ─────────────────────────────────────────────────────────────
-
-function JadwalForm({
-  onInsert, editWidgetId, onResetEdit,
-}: {
-  onInsert: (shortcode: string, widgetId: string) => void
-  editWidgetId?: string | null
-  onResetEdit?: () => void
-}) {
-  const [rows, setRows] = useState<MatchEntry[]>([makeMatch()])
-  const [loading, setLoading] = useState(false)
-  const [saving, setSaving] = useState(false)
-  const [error, setError] = useState<string | null>(null)
-  const [activeGroup, setActiveGroup] = useState("A")
-  const supabase = createClient()
+    home_flag: "🏳️", away_flag: "🏳️",
+    home_abbr: "HOM", away_abbr: "AWY",
+    home_score: 0, away_score: 0,
+    status: "upcoming" as MatchStatus,
+    live_minute: "",
+    competition: "",
+    match_info: "",
+    events: [] as TimelineEvent[],
+  })
+  const [newEvent, setNewEvent] = useState<TimelineEvent>({ minute: "", type: "goal", player: "", team: "home", score_after: "" })
 
   useEffect(() => {
-    if (!editWidgetId) { setRows([makeMatch()]); return }
-    setLoading(true)
-    supabase.from("widget_jadwal").select("*").eq("widget_id", editWidgetId)
-      .order("match_date", { ascending: true })
-      .then(({ data, error }) => {
-        if (error) setError(error.message)
-        else if (data && data.length > 0) {
-          setRows(data.map((r) => ({
-            _localId: r.id,
-            group_label: r.group_label ?? "A",
-            home_team: r.home_team ?? "", away_team: r.away_team ?? "",
-            match_date: r.match_date ?? "", match_time: r.match_time ?? "",
-            score_home: r.score_home != null ? String(r.score_home) : "",
-            score_away: r.score_away != null ? String(r.score_away) : "",
-            status: r.status ?? "scheduled", stadium: r.stadium ?? "",
-          })))
-          setActiveGroup(data[0].group_label ?? "A")
-        }
-        setLoading(false)
-      })
-  }, [editWidgetId])
+    supabase.from("widget_timeline_pertandingan").select("*").eq("id", widgetId).maybeSingle()
+      .then(({ data: row }) => { if (row) setData(row as any) })
+  }, [widgetId])
 
-  const groups = [...new Set(rows.map((r) => r.group_label))].sort()
-
-  function updateRow(localId: string, patch: Partial<MatchEntry>) {
-    setRows((prev) => prev.map((r) => r._localId === localId ? { ...r, ...patch } : r))
+  const addEvent = () => {
+    if (!newEvent.minute || !newEvent.player) return
+    setData(p => ({ ...p, events: [newEvent, ...p.events] }))
+    setNewEvent({ minute: "", type: "goal", player: "", team: "home", score_after: "" })
   }
 
-  async function handleSave() {
-    const validRows = rows.filter((r) => r.home_team.trim() || r.away_team.trim())
-    if (!validRows.length) { setError("Tambahkan minimal satu pertandingan."); return }
-    setSaving(true); setError(null)
-    try {
-      const widgetId = editWidgetId || crypto.randomUUID()
-      await supabase.from("widget_jadwal").delete().eq("widget_id", widgetId)
-      const payload = validRows.map((r) => ({
-        widget_id: widgetId, group_label: r.group_label,
-        home_team: r.home_team, away_team: r.away_team,
-        match_date: r.match_date || null, match_time: r.match_time || null,
-        score_home: r.score_home !== "" ? Number(r.score_home) : null,
-        score_away: r.score_away !== "" ? Number(r.score_away) : null,
-        status: r.status, stadium: r.stadium || null,
-      }))
-      const { error: insertErr } = await supabase.from("widget_jadwal").insert(payload)
-      if (insertErr) throw insertErr
-      onInsert(`[match_data id="${widgetId}"]`, widgetId)
-      if (!editWidgetId) { setRows([makeMatch()]); setActiveGroup("A") }
-      onResetEdit?.()
-    } catch (e: any) { setError(e.message) } finally { setSaving(false) }
+  const removeEvent = (i: number) => setData(p => ({ ...p, events: p.events.filter((_, j) => j !== i) }))
+
+  const save = async () => {
+    setSaving(true)
+    await supabase.from("widget_timeline_pertandingan").upsert({ id: widgetId, ...data })
+    setSaving(false)
+    onSaved()
   }
 
-  if (loading) return <div className="flex justify-center py-8"><Loader2 size={18} className="animate-spin text-[#39FF14]" /></div>
-  const activeRows = rows.filter((r) => r.group_label === activeGroup)
-
-  return (
-    <div className="space-y-3">
-      {error && <p className="rounded-lg border border-red-500/30 bg-red-500/10 px-3 py-2 text-xs text-red-400">{error}</p>}
-      <div className="flex flex-wrap items-center gap-1.5">
-        {groups.map((g) => (
-          <button key={g} onClick={() => setActiveGroup(g)}
-            className={`rounded-md px-3 py-1 text-[11px] font-bold uppercase tracking-wider transition-all ${activeGroup === g ? "bg-[#39FF14] text-black" : "border border-white/10 bg-white/5 text-zinc-400 hover:text-white"}`}>
-            {g}
-          </button>
-        ))}
-        <button onClick={() => {
-            const name = window.prompt("Nama tab grup baru:", "")
-            if (!name || !name.trim()) return
-            const trimmed = name.trim()
-            if (groups.includes(trimmed)) { setActiveGroup(trimmed); return }
-            setActiveGroup(trimmed)
-            setRows((p) => [...p, makeMatch(trimmed)])
-          }}
-          className="flex items-center gap-1 rounded-md border border-dashed border-[#39FF14]/30 px-2 py-1 text-[11px] text-[#39FF14]/60 transition hover:border-[#39FF14]/60 hover:text-[#39FF14]">
-          <Plus size={11} /> Grup
-        </button>
-      </div>
-      <div className="max-h-80 space-y-2 overflow-y-auto pr-1">
-        {activeRows.map((row) => (
-          <div key={row._localId} className="relative rounded-lg border border-white/10 bg-white/[0.03] p-3">
-            <button onClick={() => setRows((p) => p.filter((r) => r._localId !== row._localId))}
-              className="absolute right-2 top-2 text-zinc-600 transition hover:text-red-400"><X size={12} /></button>
-            <div className="grid grid-cols-2 gap-2">
-              <FField label="Tim Kandang" value={row.home_team} onChange={(v) => updateRow(row._localId, { home_team: v })} placeholder="Tim A" />
-              <FField label="Tim Tamu" value={row.away_team} onChange={(v) => updateRow(row._localId, { away_team: v })} placeholder="Tim B" />
-              <FField label="Tanggal" value={row.match_date} onChange={(v) => updateRow(row._localId, { match_date: v })} type="date" />
-              <FField label="Waktu" value={row.match_time} onChange={(v) => updateRow(row._localId, { match_time: v })} type="time" />
-              <FField label="Stadion" value={row.stadium} onChange={(v) => updateRow(row._localId, { stadium: v })} placeholder="Nama Stadion" className="col-span-2" />
-              <FSelect label="Status" value={row.status} onChange={(v) => updateRow(row._localId, { status: v as MatchEntry["status"] })}
-                options={[{ label: "Akan Datang", value: "scheduled" }, { label: "Live", value: "live" }, { label: "Selesai", value: "finished" }]} />
-              {(row.status === "live" || row.status === "finished") && (
-                <>
-                  <FField label="Skor Kandang" value={row.score_home} onChange={(v) => updateRow(row._localId, { score_home: v })} type="number" />
-                  <FField label="Skor Tamu" value={row.score_away} onChange={(v) => updateRow(row._localId, { score_away: v })} type="number" />
-                </>
-              )}
-            </div>
-          </div>
-        ))}
-      </div>
-      <button onClick={() => setRows((p) => [...p, makeMatch(activeGroup)])}
-        className="flex w-full items-center justify-center gap-2 rounded-lg border border-dashed border-[#39FF14]/30 py-2.5 text-xs text-[#39FF14]/70 transition hover:border-[#39FF14]/60 hover:text-[#39FF14]">
-        <Plus size={14} /> Tambah Pertandingan
-      </button>
-      <div className="flex items-center justify-between gap-2 pt-1">
-        {editWidgetId && onResetEdit && (
-          <button onClick={onResetEdit} className="text-xs text-zinc-500 transition hover:text-white">Batal Edit</button>
-        )}
-        <button onClick={handleSave} disabled={saving}
-          className="ml-auto flex items-center gap-2 rounded-lg bg-[#39FF14] px-4 py-2 text-xs font-bold text-black transition hover:opacity-90 disabled:opacity-50">
-          {saving ? <Loader2 size={12} className="animate-spin" /> : <Save size={12} />}
-          {editWidgetId ? "Update & Sync" : "Simpan & Insert"}
-        </button>
-      </div>
+  const F = (label: string, key: keyof typeof data, type = "text") => (
+    <div key={key}>
+      <label className="block text-xs text-muted-foreground mb-1">{label}</label>
+      <input type={type} value={String(data[key])}
+        onChange={e => setData(p => ({ ...p, [key]: type === "number" ? Number(e.target.value) : e.target.value }))}
+        className="w-full rounded border border-border bg-secondary/50 px-2.5 py-1.5 text-sm text-foreground focus:outline-none focus:border-primary" />
     </div>
   )
-}
-
-// ── Klasemen Widget ───────────────────────────────────────────────────────────
-
-function KlasemenForm({
-  onInsert, editWidgetId, onResetEdit,
-}: {
-  onInsert: (shortcode: string, widgetId: string) => void
-  editWidgetId?: string | null
-  onResetEdit?: () => void
-}) {
-  const [rows, setRows] = useState<StandingEntry[]>([makeStanding("A", 1)])
-  const [loading, setLoading] = useState(false)
-  const [saving, setSaving] = useState(false)
-  const [error, setError] = useState<string | null>(null)
-  const [activeGroup, setActiveGroup] = useState("A")
-  const supabase = createClient()
-
-  useEffect(() => {
-    if (!editWidgetId) { setRows([makeStanding("A", 1)]); return }
-    setLoading(true)
-    supabase.from("widget_klasemen").select("*").eq("widget_id", editWidgetId)
-      .order("rank", { ascending: true })
-      .then(({ data, error }) => {
-        if (error) setError(error.message)
-        else if (data && data.length > 0) {
-          setRows(data.map((r) => ({
-            _localId: r.id,
-            group_label: r.group_label ?? "A", rank: r.rank ?? 1,
-            team_name: r.team_name ?? "",
-            played: r.played ?? 0, won: r.won ?? 0, drawn: r.drawn ?? 0, lost: r.lost ?? 0,
-            gf: r.gf ?? 0, ga: r.ga ?? 0, points: r.points ?? 0,
-          })))
-          setActiveGroup(data[0].group_label ?? "A")
-        }
-        setLoading(false)
-      })
-  }, [editWidgetId])
-
-  const groups = [...new Set(rows.map((r) => r.group_label))].sort()
-
-  function updateRow(localId: string, patch: Partial<StandingEntry>) {
-    setRows((prev) => prev.map((r) => r._localId === localId ? { ...r, ...patch } : r))
-  }
-
-  async function handleSave() {
-    const validRows = rows.filter((r) => r.team_name.trim())
-    if (!validRows.length) { setError("Tambahkan minimal satu tim."); return }
-    setSaving(true); setError(null)
-    try {
-      const widgetId = editWidgetId || crypto.randomUUID()
-      await supabase.from("widget_klasemen").delete().eq("widget_id", widgetId)
-      const payload = validRows.map((r, idx) => ({
-        widget_id: widgetId, group_label: r.group_label, rank: r.rank || idx + 1,
-        team_name: r.team_name, played: Number(r.played), won: Number(r.won),
-        drawn: Number(r.drawn), lost: Number(r.lost), gf: Number(r.gf), ga: Number(r.ga), points: Number(r.points),
-      }))
-      const { error: insertErr } = await supabase.from("widget_klasemen").insert(payload)
-      if (insertErr) throw insertErr
-      onInsert(`[klasemen_data id="${widgetId}"]`, widgetId)
-      if (!editWidgetId) { setRows([makeStanding("A", 1)]); setActiveGroup("A") }
-      onResetEdit?.()
-    } catch (e: any) { setError(e.message) } finally { setSaving(false) }
-  }
-
-  if (loading) return <div className="flex justify-center py-8"><Loader2 size={18} className="animate-spin text-[#39FF14]" /></div>
-  const activeRows = rows.filter((r) => r.group_label === activeGroup)
 
   return (
-    <div className="space-y-3">
-      {error && <p className="rounded-lg border border-red-500/30 bg-red-500/10 px-3 py-2 text-xs text-red-400">{error}</p>}
-      <div className="flex flex-wrap items-center gap-1.5">
-        {groups.map((g) => (
-          <button key={g} onClick={() => setActiveGroup(g)}
-            className={`rounded-md px-3 py-1 text-[11px] font-bold uppercase tracking-wider transition-all ${activeGroup === g ? "bg-[#39FF14] text-black" : "border border-white/10 bg-white/5 text-zinc-400 hover:text-white"}`}>
-            {g}
-          </button>
-        ))}
-        <button onClick={() => {
-            const name = window.prompt("Nama tab grup baru:", "")
-            if (!name || !name.trim()) return
-            const trimmed = name.trim()
-            if (groups.includes(trimmed)) { setActiveGroup(trimmed); return }
-            setActiveGroup(trimmed)
-            setRows((p) => [...p, makeStanding(trimmed, 1)])
-          }}
-          className="flex items-center gap-1 rounded-md border border-dashed border-[#39FF14]/30 px-2 py-1 text-[11px] text-[#39FF14]/60 transition hover:border-[#39FF14]/60 hover:text-[#39FF14]">
-          <Plus size={11} /> Grup
-        </button>
+    <div className="space-y-3 text-sm">
+      <div className="grid grid-cols-2 gap-2">
+        {F("Tim Tuan Rumah", "home_team")}
+        {F("Tim Tamu", "away_team")}
       </div>
-      <div className="max-h-80 space-y-2 overflow-y-auto pr-1">
-        {activeRows.map((row) => (
-          <div key={row._localId} className="relative rounded-lg border border-white/10 bg-white/[0.03] p-3">
-            <button onClick={() => setRows((p) => p.filter((r) => r._localId !== row._localId))}
-              className="absolute right-2 top-2 text-zinc-600 transition hover:text-red-400"><X size={12} /></button>
-            <div className="grid grid-cols-4 gap-2">
-              <FField label="Nama Tim" value={row.team_name} onChange={(v) => updateRow(row._localId, { team_name: v })} placeholder="Nama Tim" className="col-span-3" />
-              <FField label="Rank" value={row.rank} onChange={(v) => updateRow(row._localId, { rank: Number(v) })} type="number" />
-              <FField label="Main" value={row.played} onChange={(v) => updateRow(row._localId, { played: Number(v) })} type="number" />
-              <FField label="Menang" value={row.won} onChange={(v) => updateRow(row._localId, { won: Number(v) })} type="number" />
-              <FField label="Seri" value={row.drawn} onChange={(v) => updateRow(row._localId, { drawn: Number(v) })} type="number" />
-              <FField label="Kalah" value={row.lost} onChange={(v) => updateRow(row._localId, { lost: Number(v) })} type="number" />
-              <FField label="GF" value={row.gf} onChange={(v) => updateRow(row._localId, { gf: Number(v) })} type="number" />
-              <FField label="GA" value={row.ga} onChange={(v) => updateRow(row._localId, { ga: Number(v) })} type="number" />
-              <FField label="Poin" value={row.points} onChange={(v) => updateRow(row._localId, { points: Number(v) })} type="number" />
-            </div>
-          </div>
-        ))}
+      <div className="grid grid-cols-2 gap-2">
+        {F("Bendera Home (emoji)", "home_flag")}
+        {F("Bendera Away (emoji)", "away_flag")}
       </div>
-      <button onClick={() => setRows((p) => { const n = p.filter((r) => r.group_label === activeGroup).length; return [...p, makeStanding(activeGroup, n + 1)] })}
-        className="flex w-full items-center justify-center gap-2 rounded-lg border border-dashed border-[#39FF14]/30 py-2.5 text-xs text-[#39FF14]/70 transition hover:border-[#39FF14]/60 hover:text-[#39FF14]">
-        <Plus size={14} /> Tambah Tim
-      </button>
-      <div className="flex items-center justify-between gap-2 pt-1">
-        {editWidgetId && onResetEdit && (
-          <button onClick={onResetEdit} className="text-xs text-zinc-500 transition hover:text-white">Batal Edit</button>
-        )}
-        <button onClick={handleSave} disabled={saving}
-          className="ml-auto flex items-center gap-2 rounded-lg bg-[#39FF14] px-4 py-2 text-xs font-bold text-black transition hover:opacity-90 disabled:opacity-50">
-          {saving ? <Loader2 size={12} className="animate-spin" /> : <Save size={12} />}
-          {editWidgetId ? "Update & Sync" : "Simpan & Insert"}
-        </button>
+      <div className="grid grid-cols-2 gap-2">
+        {F("Singkatan Home", "home_abbr")}
+        {F("Singkatan Away", "away_abbr")}
       </div>
-    </div>
-  )
-}
-
-// ── Transfer Widget ───────────────────────────────────────────────────────────
-
-function TransferForm({
-  onInsert, editWidgetId, onResetEdit,
-}: {
-  onInsert: (shortcode: string, widgetId: string) => void
-  editWidgetId?: string | null
-  onResetEdit?: () => void
-}) {
-  const [rows, setRows] = useState<TransferEntry[]>([makeTransfer()])
-  const [loading, setLoading] = useState(false)
-  const [saving, setSaving] = useState(false)
-  const [error, setError] = useState<string | null>(null)
-  const [activeLeague, setActiveLeague] = useState("Premier League")
-  const supabase = createClient()
-
-  useEffect(() => {
-    if (!editWidgetId) { setRows([makeTransfer()]); return }
-    setLoading(true)
-    supabase.from("widget_transfer").select("*").eq("widget_id", editWidgetId)
-      .order("transfer_date", { ascending: false })
-      .then(({ data, error }) => {
-        if (error) setError(error.message)
-        else if (data && data.length > 0) {
-          setRows(data.map((r) => ({
-            _localId: r.id,
-            league_label: r.league_label ?? "Premier League",
-            player_name: r.player_name ?? "", player_initials: r.player_initials ?? "",
-            position: r.position ?? "", age: r.age != null ? String(r.age) : "",
-            from_club: r.from_club ?? "", from_club_color: r.from_club_color ?? "#888888",
-            to_club: r.to_club ?? "", league_dest: r.league_dest ?? "",
-            transfer_value: r.transfer_value != null ? Number(r.transfer_value) : "",
-            is_free: r.is_free ?? false,
-            status: r.status ?? "confirmed", transfer_date: r.transfer_date ?? "",
-          })))
-          setActiveLeague(data[0].league_label ?? "Premier League")
-        }
-        setLoading(false)
-      })
-  }, [editWidgetId])
-
-  const leagues = [...new Set(rows.map((r) => r.league_label))].sort()
-
-  function updateRow(localId: string, patch: Partial<TransferEntry>) {
-    setRows((prev) => prev.map((r) => r._localId === localId ? { ...r, ...patch } : r))
-  }
-
-  async function handleSave() {
-    const validRows = rows.filter((r) => r.player_name.trim())
-    if (!validRows.length) { setError("Tambahkan minimal satu pemain."); return }
-    setSaving(true); setError(null)
-    try {
-      const widgetId = editWidgetId || crypto.randomUUID()
-      await supabase.from("widget_transfer").delete().eq("widget_id", widgetId)
-      const payload = validRows.map((r) => ({
-        widget_id: widgetId,
-        league_label: r.league_label,
-        player_name: r.player_name,
-        player_initials: r.player_initials || r.player_name.split(" ").map((w) => w[0]).join("").toUpperCase().slice(0, 2),
-        position: r.position || null,
-        age: r.age ? Number(r.age) : null,
-        from_club: r.from_club || null,
-        from_club_color: r.from_club_color || null,
-        to_club: r.to_club || null,
-        league_dest: r.league_dest || r.league_label,
-        transfer_value: r.is_free ? null : (r.transfer_value !== "" ? Number(r.transfer_value) : null),
-        is_free: r.is_free,
-        status: r.status,
-        transfer_date: r.transfer_date || null,
-      }))
-      const { error: insertErr } = await supabase.from("widget_transfer").insert(payload)
-      if (insertErr) throw insertErr
-      onInsert(`[transfer_data id="${widgetId}"]`, widgetId)
-      if (!editWidgetId) { setRows([makeTransfer()]); setActiveLeague("Premier League") }
-      onResetEdit?.()
-    } catch (e: any) { setError(e.message) } finally { setSaving(false) }
-  }
-
-  if (loading) return <div className="flex justify-center py-8"><Loader2 size={18} className="animate-spin text-[#39FF14]" /></div>
-  const activeRows = rows.filter((r) => r.league_label === activeLeague)
-
-  return (
-    <div className="space-y-3">
-      {error && <p className="rounded-lg border border-red-500/30 bg-red-500/10 px-3 py-2 text-xs text-red-400">{error}</p>}
-
-      {/* League tabs */}
-      <div className="flex flex-wrap items-center gap-1.5">
-        {leagues.map((l) => (
-          <button key={l} onClick={() => setActiveLeague(l)}
-            className={`rounded-md px-3 py-1 text-[11px] font-bold uppercase tracking-wider transition-all ${activeLeague === l ? "bg-[#39FF14] text-black" : "border border-white/10 bg-white/5 text-zinc-400 hover:text-white"}`}>
-            {l}
-          </button>
-        ))}
-        <button
-          onClick={() => {
-            const name = prompt("Nama Liga baru (cth: La Liga):")
-            if (name?.trim()) { setActiveLeague(name.trim()); setRows((p) => [...p, makeTransfer(name.trim())]) }
-          }}
-          className="flex items-center gap-1 rounded-md border border-dashed border-[#39FF14]/30 px-2 py-1 text-[11px] text-[#39FF14]/60 transition hover:border-[#39FF14]/60 hover:text-[#39FF14]">
-          <Plus size={11} /> Liga
-        </button>
+      <div className="grid grid-cols-2 gap-2">
+        {F("Skor Home", "home_score", "number")}
+        {F("Skor Away", "away_score", "number")}
       </div>
-
-      {/* Transfer rows */}
-      <div className="max-h-96 space-y-2 overflow-y-auto pr-1">
-        {activeRows.map((row) => (
-          <div key={row._localId} className="relative rounded-lg border border-white/10 bg-white/[0.03] p-3">
-            <button onClick={() => setRows((p) => p.filter((r) => r._localId !== row._localId))}
-              className="absolute right-2 top-2 text-zinc-600 transition hover:text-red-400"><X size={12} /></button>
-            <div className="grid grid-cols-2 gap-2">
-              <FField label="Nama Pemain" value={row.player_name} onChange={(v) => updateRow(row._localId, { player_name: v })} placeholder="Jude Bellingham" className="col-span-2" />
-              <FField label="Inisial (opsional)" value={row.player_initials} onChange={(v) => updateRow(row._localId, { player_initials: v })} placeholder="JB" />
-              <FField label="Posisi" value={row.position} onChange={(v) => updateRow(row._localId, { position: v })} placeholder="CAM" />
-              <FField label="Usia" value={row.age} onChange={(v) => updateRow(row._localId, { age: v })} type="number" placeholder="20" />
-              <FField label="Asal Klub" value={row.from_club} onChange={(v) => updateRow(row._localId, { from_club: v })} placeholder="Real Madrid" />
-              <FField label="Ke Klub" value={row.to_club} onChange={(v) => updateRow(row._localId, { to_club: v })} placeholder="Manchester City" />
-              <FField label="Liga Tujuan" value={row.league_dest} onChange={(v) => updateRow(row._localId, { league_dest: v })} placeholder="Premier League" />
-              <FField label="Warna Klub Asal" value={row.from_club_color} onChange={(v) => updateRow(row._localId, { from_club_color: v })} type="color" />
-              <div className="col-span-2 flex items-end gap-2">
-                <div className={`flex flex-col gap-1 flex-1`}>
-                  <label className="text-[10px] font-bold uppercase tracking-widest text-zinc-500">Nilai Transfer (juta €)</label>
-                  <div className="relative flex items-center">
-                    <span className="pointer-events-none absolute left-2.5 text-xs text-zinc-500">€</span>
-                    <input
-                      type="number"
-                      min="0"
-                      step="0.1"
-                      value={row.transfer_value}
-                      onChange={(e) => updateRow(row._localId, { transfer_value: e.target.value === "" ? "" : Number(e.target.value) })}
-                      placeholder="85"
-                      disabled={row.is_free}
-                      className="w-full rounded-md border border-white/10 bg-white/5 pl-6 pr-10 py-1.5 text-xs text-white placeholder-zinc-600 outline-none transition focus:border-[#39FF14]/50 focus:ring-1 focus:ring-[#39FF14]/20 disabled:opacity-40"
-                    />
-                    <span className="pointer-events-none absolute right-2.5 text-[10px] text-zinc-500">juta</span>
-                  </div>
-                </div>
-                <div className="mb-0.5 flex items-center gap-2 rounded-md border border-white/10 bg-white/5 px-2.5 py-1.5">
-                  <FCheckbox label="Free Transfer" checked={row.is_free} onChange={(v) => updateRow(row._localId, { is_free: v })} />
-                </div>
-              </div>
-              <FSelect label="Status" value={row.status} onChange={(v) => updateRow(row._localId, { status: v as TransferEntry["status"] })}
-                options={[
-                  { label: "Confirmed ✅", value: "confirmed" },
-                  { label: "Official 🔵", value: "official" },
-                  { label: "Medical 🟡", value: "medical" },
-                  { label: "Rumor 💜", value: "rumor" },
-                ]} />
-              <FField label="Tanggal Transfer" value={row.transfer_date} onChange={(v) => updateRow(row._localId, { transfer_date: v })} type="date" />
-            </div>
-          </div>
-        ))}
+      <div>
+        <label className="block text-xs text-muted-foreground mb-1">Status</label>
+        <select value={data.status} onChange={e => setData(p => ({ ...p, status: e.target.value as MatchStatus }))}
+          className="w-full rounded border border-border bg-secondary/50 px-2.5 py-1.5 text-sm text-foreground focus:outline-none focus:border-primary">
+          <option value="upcoming">Upcoming</option>
+          <option value="live">Live</option>
+          <option value="finished">Finished</option>
+        </select>
       </div>
+      {data.status === "live" && F("Menit Live (contoh: 67')", "live_minute")}
+      {F("Info Pertandingan", "match_info")}
+      {F("Kompetisi", "competition")}
 
-      <button onClick={() => setRows((p) => [...p, makeTransfer(activeLeague)])}
-        className="flex w-full items-center justify-center gap-2 rounded-lg border border-dashed border-[#39FF14]/30 py-2.5 text-xs text-[#39FF14]/70 transition hover:border-[#39FF14]/60 hover:text-[#39FF14]">
-        <Plus size={14} /> Tambah Pemain
-      </button>
-      <div className="flex items-center justify-between gap-2 pt-1">
-        {editWidgetId && onResetEdit && (
-          <button onClick={onResetEdit} className="text-xs text-zinc-500 transition hover:text-white">Batal Edit</button>
-        )}
-        <button onClick={handleSave} disabled={saving}
-          className="ml-auto flex items-center gap-2 rounded-lg bg-[#39FF14] px-4 py-2 text-xs font-bold text-black transition hover:opacity-90 disabled:opacity-50">
-          {saving ? <Loader2 size={12} className="animate-spin" /> : <Save size={12} />}
-          {editWidgetId ? "Update & Sync" : "Simpan & Insert"}
-        </button>
-      </div>
-    </div>
-  )
-}
-
-// ── Peluang Juara Widget ──────────────────────────────────────────────────────
-
-function PeluangForm({
-  onInsert, editWidgetId, onResetEdit,
-}: {
-  onInsert: (shortcode: string, widgetId: string) => void
-  editWidgetId?: string | null
-  onResetEdit?: () => void
-}) {
-  const [rows, setRows] = useState<PeluangEntry[]>([makePeluang()])
-  const [loading, setLoading] = useState(false)
-  const [saving, setSaving] = useState(false)
-  const [error, setError] = useState<string | null>(null)
-  const supabase = createClient()
-
-  const CATEGORIES = ["FAVORIT UTAMA", "KANDIDAT KUAT", "DARK HORSE", "PELENGKAP"]
-
-  useEffect(() => {
-    if (!editWidgetId) { setRows([makePeluang()]); return }
-    setLoading(true)
-    supabase.from("widget_peluang").select("*").eq("widget_id", editWidgetId)
-      .order("rank", { ascending: true })
-      .then(({ data, error }) => {
-        if (error) setError(error.message)
-        else if (data && data.length > 0) {
-          setRows(data.map((r) => ({
-            _localId: r.id,
-            rank: r.rank ?? 1,
-            team_name: r.team_name ?? "",
-            team_flag: r.team_flag ?? "",
-            category: r.category ?? "FAVORIT UTAMA",
-            win_pct: r.win_pct != null ? String(r.win_pct) : "",
-            reasons_win: Array.isArray(r.reasons_win)
-              ? r.reasons_win.join("\n")
-              : (r.reasons_win ? JSON.parse(r.reasons_win).join("\n") : ""),
-            reasons_lose: Array.isArray(r.reasons_lose)
-              ? r.reasons_lose.join("\n")
-              : (r.reasons_lose ? JSON.parse(r.reasons_lose).join("\n") : ""),
-          })))
-        }
-        setLoading(false)
-      })
-  }, [editWidgetId])
-
-  function updateRow(localId: string, patch: Partial<PeluangEntry>) {
-    setRows((prev) => prev.map((r) => r._localId === localId ? { ...r, ...patch } : r))
-  }
-
-  async function handleSave() {
-    const validRows = rows.filter((r) => r.team_name.trim())
-    if (!validRows.length) { setError("Tambahkan minimal satu tim."); return }
-    setSaving(true); setError(null)
-    try {
-      const widgetId = editWidgetId || crypto.randomUUID()
-      await supabase.from("widget_peluang").delete().eq("widget_id", widgetId)
-      const payload = validRows.map((r, idx) => ({
-        widget_id: widgetId,
-        rank: r.rank || idx + 1,
-        team_name: r.team_name,
-        team_flag: r.team_flag || null,
-        category: r.category,
-        win_pct: r.win_pct ? Number(r.win_pct) : 0,
-        reasons_win: JSON.stringify(r.reasons_win.split("\n").map((s) => s.trim()).filter(Boolean)),
-        reasons_lose: JSON.stringify(r.reasons_lose.split("\n").map((s) => s.trim()).filter(Boolean)),
-      }))
-      const { error: insertErr } = await supabase.from("widget_peluang").insert(payload)
-      if (insertErr) throw insertErr
-      onInsert(`[peluang_data id="${widgetId}"]`, widgetId)
-      if (!editWidgetId) setRows([makePeluang()])
-      onResetEdit?.()
-    } catch (e: any) { setError(e.message) } finally { setSaving(false) }
-  }
-
-  if (loading) return <div className="flex justify-center py-8"><Loader2 size={18} className="animate-spin text-[#39FF14]" /></div>
-
-  return (
-    <div className="space-y-3">
-      {error && <p className="rounded-lg border border-red-500/30 bg-red-500/10 px-3 py-2 text-xs text-red-400">{error}</p>}
-      <p className="text-[10px] text-zinc-500">Isi satu per satu per negara/klub. Alasan dipisah baris baru (Enter).</p>
-
-      <div className="max-h-[500px] space-y-2 overflow-y-auto pr-1">
-        {rows.map((row, idx) => (
-          <div key={row._localId} className="relative rounded-lg border border-white/10 bg-white/[0.03] p-3">
-            <button onClick={() => setRows((p) => p.filter((r) => r._localId !== row._localId))}
-              className="absolute right-2 top-2 text-zinc-600 transition hover:text-red-400"><X size={12} /></button>
-            <div className="mb-1.5 flex items-center gap-2">
-              <span className="rounded bg-[#39FF14]/10 px-1.5 py-0.5 text-[10px] font-mono font-bold text-[#39FF14]">#{idx + 1}</span>
-            </div>
-            <div className="grid grid-cols-2 gap-2">
-              <FField label="Nama Negara/Klub" value={row.team_name} onChange={(v) => updateRow(row._localId, { team_name: v })} placeholder="Spanyol" className="col-span-2" />
-              <FField label="Flag Emoji" value={row.team_flag} onChange={(v) => updateRow(row._localId, { team_flag: v })} placeholder="🇪🇸" />
-              <FField label="Rank" value={row.rank} onChange={(v) => updateRow(row._localId, { rank: Number(v) })} type="number" />
-              <FSelect label="Kategori" value={row.category} onChange={(v) => updateRow(row._localId, { category: v })}
-                options={CATEGORIES.map((c) => ({ label: c, value: c }))} />
-              <FField label="% Peluang Juara (0-100)" value={row.win_pct} onChange={(v) => updateRow(row._localId, { win_pct: v })} type="number" placeholder="18.2" />
-              <FTextarea label="✅ Alasan Bisa Juara (1 per baris)" value={row.reasons_win}
-                onChange={(v) => updateRow(row._localId, { reasons_win: v })}
-                placeholder={"Juara Euro 2024\nSkuad muda & berbakat\nTiki-taka modern"} className="col-span-2" />
-              <FTextarea label="❌ Alasan Tidak Juara (1 per baris)" value={row.reasons_lose}
-                onChange={(v) => updateRow(row._localId, { reasons_lose: v })}
-                placeholder={"Tekanan sebagai favorit\nBelum ada striker dominan"} className="col-span-2" />
-            </div>
-          </div>
-        ))}
-      </div>
-
-      <button onClick={() => setRows((p) => [...p, { ...makePeluang(), rank: p.length + 1 }])}
-        className="flex w-full items-center justify-center gap-2 rounded-lg border border-dashed border-[#39FF14]/30 py-2.5 text-xs text-[#39FF14]/70 transition hover:border-[#39FF14]/60 hover:text-[#39FF14]">
-        <Plus size={14} /> Tambah Negara/Klub
-      </button>
-      <div className="flex items-center justify-between gap-2 pt-1">
-        {editWidgetId && onResetEdit && (
-          <button onClick={onResetEdit} className="text-xs text-zinc-500 transition hover:text-white">Batal Edit</button>
-        )}
-        <button onClick={handleSave} disabled={saving}
-          className="ml-auto flex items-center gap-2 rounded-lg bg-[#39FF14] px-4 py-2 text-xs font-bold text-black transition hover:opacity-90 disabled:opacity-50">
-          {saving ? <Loader2 size={12} className="animate-spin" /> : <Save size={12} />}
-          {editWidgetId ? "Update & Sync" : "Simpan & Insert"}
-        </button>
-      </div>
-    </div>
-  )
-}
-
-// ── Analisa Taktis Widget ──────────────────────────────────────────────────────
-
-function AnalisaTaktisForm({
-  onInsert, editWidgetId, onResetEdit,
-}: {
-  onInsert: (shortcode: string, widgetId: string) => void
-  editWidgetId?: string | null
-  onResetEdit?: () => void
-}) {
-  const [entry, setEntry] = useState<AnalisaTaktisEntry>(makeAnalisaTaktis())
-  const [loading, setLoading] = useState(false)
-  const [saving, setSaving] = useState(false)
-  const [error, setError] = useState<string | null>(null)
-  const supabase = createClient()
-
-  useEffect(() => {
-    if (!editWidgetId) { setEntry(makeAnalisaTaktis()); return }
-    setLoading(true)
-    supabase.from("widget_analisa_taktis").select("*").eq("widget_id", editWidgetId).limit(1)
-      .then(({ data, error }) => {
-        if (error) setError(error.message)
-        else if (data && data.length > 0) {
-          const r = data[0]
-          setEntry({
-            team_name: r.team_name ?? "",
-            coach_name: r.coach_name ?? "",
-            formation: r.formation ?? "",
-            play_style: r.play_style ?? "",
-            main_weapons: Array.isArray(r.main_weapons)
-              ? r.main_weapons.join("\n")
-              : (r.main_weapons ? JSON.parse(r.main_weapons).join("\n") : ""),
-          })
-        }
-        setLoading(false)
-      })
-  }, [editWidgetId])
-
-  function updateEntry(patch: Partial<AnalisaTaktisEntry>) {
-    setEntry((prev) => ({ ...prev, ...patch }))
-  }
-
-  async function handleSave() {
-    if (!entry.team_name.trim()) { setError("Nama Tim/Negara wajib diisi."); return }
-    if (!entry.formation.trim()) { setError("Formasi Utama wajib diisi."); return }
-    setSaving(true); setError(null)
-    try {
-      const widgetId = editWidgetId || crypto.randomUUID()
-      const weapons = entry.main_weapons.split("\n").map((s) => s.trim()).filter(Boolean)
-      await supabase.from("widget_analisa_taktis").delete().eq("widget_id", widgetId)
-      const { error: insertErr } = await supabase.from("widget_analisa_taktis").insert({
-        widget_id: widgetId,
-        team_name: entry.team_name.trim(),
-        coach_name: entry.coach_name.trim() || null,
-        formation: entry.formation.trim(),
-        play_style: entry.play_style.trim() || null,
-        main_weapons: JSON.stringify(weapons),
-      })
-      if (insertErr) throw insertErr
-      onInsert(`[analisa_taktis_data id="${widgetId}"]`, widgetId)
-      if (!editWidgetId) setEntry(makeAnalisaTaktis())
-      onResetEdit?.()
-    } catch (e: any) { setError(e.message) } finally { setSaving(false) }
-  }
-
-  if (loading) return <div className="flex justify-center py-8"><Loader2 size={18} className="animate-spin text-[#39FF14]" /></div>
-
-  return (
-    <div className="space-y-3">
-      {error && <p className="rounded-lg border border-red-500/30 bg-red-500/10 px-3 py-2 text-xs text-red-400">{error}</p>}
-      <p className="text-[10px] text-zinc-500">Isi informasi taktis tim. Senjata utama dipisah per baris (Enter).</p>
-      <div className="space-y-2">
+      {/* Event input */}
+      <div className="rounded border border-border p-3 space-y-2">
+        <p className="text-xs font-semibold text-foreground">Tambah Event</p>
         <div className="grid grid-cols-2 gap-2">
-          <FField
-            label="Nama Tim / Negara"
-            value={entry.team_name}
-            onChange={(v) => updateEntry({ team_name: v })}
-            placeholder="Argentina"
-            className="col-span-2"
-          />
-          <FField
-            label="Nama Pelatih"
-            value={entry.coach_name}
-            onChange={(v) => updateEntry({ coach_name: v })}
-            placeholder="Lionel Scaloni"
-            className="col-span-2"
-          />
-          <FField
-            label="Formasi Utama"
-            value={entry.formation}
-            onChange={(v) => updateEntry({ formation: v })}
-            placeholder="4-3-3"
-          />
-          <div className="flex flex-col gap-1">
-            <label className="text-[10px] font-bold uppercase tracking-widest text-zinc-500">Contoh Formasi</label>
-            <div className="flex flex-wrap gap-1 pt-0.5">
-              {["4-3-3", "4-2-3-1", "4-4-2", "3-5-2", "3-4-3", "5-3-2"].map((f) => (
-                <button
-                  key={f}
-                  onClick={() => updateEntry({ formation: f })}
-                  className={`rounded px-2 py-1 text-[10px] font-bold transition-all ${
-                    entry.formation === f
-                      ? "bg-[#39FF14] text-black"
-                      : "border border-white/10 bg-white/5 text-zinc-400 hover:text-white"
-                  }`}
-                >
-                  {f}
-                </button>
-              ))}
-            </div>
+          <div>
+            <label className="block text-xs text-muted-foreground mb-1">Menit</label>
+            <input value={newEvent.minute} onChange={e => setNewEvent(p => ({ ...p, minute: e.target.value }))} placeholder="45'" className="w-full rounded border border-border bg-secondary/50 px-2 py-1.5 text-sm" />
+          </div>
+          <div>
+            <label className="block text-xs text-muted-foreground mb-1">Tipe</label>
+            <select value={newEvent.type} onChange={e => setNewEvent(p => ({ ...p, type: e.target.value as EventType }))} className="w-full rounded border border-border bg-secondary/50 px-2 py-1.5 text-sm">
+              <option value="goal">Gol ⚽</option>
+              <option value="yellow_card">Kartu Kuning 🟨</option>
+              <option value="red_card">Kartu Merah 🟥</option>
+              <option value="substitution">Substitusi 🔄</option>
+              <option value="penalty">Penalti ⚽</option>
+              <option value="var">VAR 📺</option>
+            </select>
           </div>
         </div>
-        <FTextarea
-          label="Gaya Bermain"
-          value={entry.play_style}
-          onChange={(v) => updateEntry({ play_style: v })}
-          placeholder={"Pressing tinggi dan intensif di sepertiga lapangan lawan, transisi cepat, build-up pendek dari belakang dengan memanfaatkan kreativitas lini tengah."}
-        />
-        <FTextarea
-          label="Senjata Utama (1 per baris)"
-          value={entry.main_weapons}
-          onChange={(v) => updateEntry({ main_weapons: v })}
-          placeholder={"Individual brilliance dari Messi dan De Paul\nSerangan balik yang lightning-fast lewat sisi kiri\nSet piece delivery dari Julian Alvarez"}
-        />
-      </div>
-      <div className="flex items-center justify-between gap-2 pt-1">
-        {editWidgetId && onResetEdit && (
-          <button onClick={onResetEdit} className="text-xs text-zinc-500 transition hover:text-white">Batal Edit</button>
-        )}
-        <button onClick={handleSave} disabled={saving}
-          className="ml-auto flex items-center gap-2 rounded-lg bg-[#39FF14] px-4 py-2 text-xs font-bold text-black transition hover:opacity-90 disabled:opacity-50">
-          {saving ? <Loader2 size={12} className="animate-spin" /> : <Save size={12} />}
-          {editWidgetId ? "Update & Sync" : "Simpan & Insert"}
+        <div>
+          <label className="block text-xs text-muted-foreground mb-1">Pemain</label>
+          <input value={newEvent.player} onChange={e => setNewEvent(p => ({ ...p, player: e.target.value }))} placeholder="Nama Pemain" className="w-full rounded border border-border bg-secondary/50 px-2 py-1.5 text-sm" />
+        </div>
+        <div className="grid grid-cols-2 gap-2">
+          <div>
+            <label className="block text-xs text-muted-foreground mb-1">Tim</label>
+            <select value={newEvent.team} onChange={e => setNewEvent(p => ({ ...p, team: e.target.value as "home" | "away" }))} className="w-full rounded border border-border bg-secondary/50 px-2 py-1.5 text-sm">
+              <option value="home">Tuan Rumah</option>
+              <option value="away">Tamu</option>
+            </select>
+          </div>
+          <div>
+            <label className="block text-xs text-muted-foreground mb-1">Skor setelah</label>
+            <input value={newEvent.score_after} onChange={e => setNewEvent(p => ({ ...p, score_after: e.target.value }))} placeholder="1–0" className="w-full rounded border border-border bg-secondary/50 px-2 py-1.5 text-sm" />
+          </div>
+        </div>
+        <button onClick={addEvent} className="w-full rounded border border-primary/50 text-primary text-xs py-1.5 hover:bg-primary/10 transition-colors">
+          + Tambah Event
         </button>
       </div>
+
+      {/* Event list */}
+      {data.events.length > 0 && (
+        <div className="space-y-1.5">
+          <p className="text-xs font-semibold text-foreground">Events ({data.events.length})</p>
+          {data.events.map((ev, i) => (
+            <div key={i} className="flex items-center justify-between gap-2 rounded border border-border bg-secondary/30 px-2.5 py-1.5">
+              <span className="text-xs text-muted-foreground">{ev.minute}</span>
+              <span className="text-xs font-medium text-foreground flex-1 truncate">{ev.player}</span>
+              <span className="text-xs text-muted-foreground">{ev.score_after}</span>
+              <button onClick={() => removeEvent(i)} className="text-destructive/60 hover:text-destructive text-xs">✕</button>
+            </div>
+          ))}
+        </div>
+      )}
+
+      <button onClick={save} disabled={saving}
+        className="w-full rounded bg-primary py-2 text-xs font-bold text-black hover:bg-primary/90 disabled:opacity-40">
+        {saving ? "Menyimpan..." : "Simpan Widget"}
+      </button>
     </div>
   )
 }
 
-// ── Main WidgetInserter ───────────────────────────────────────────────────────
+// ─── Main WidgetInserter ──────────────────────────────────────────────────────
 
-export function WidgetInserter({
-  onInsert,
-  editWidgetId,
-  editWidgetType,
-  onResetEdit,
-  initialWidgets,
-}: WidgetInserterProps) {
-  const [jadwalOpen,   setJadwalOpen]   = useState(false)
-  const [klasemenOpen, setKlasemenOpen] = useState(false)
-  const [transferOpen, setTransferOpen] = useState(false)
-  const [peluangOpen,  setPeluangOpen]  = useState(false)
-  const [analisaOpen,  setAnalisaOpen]  = useState(false)
+export function WidgetInserter({ onInsert, editWidgetId, editWidgetType, onResetEdit, initialWidgets = [] }: Props) {
+  const supabase = createClient()
+  const [selectedType, setSelectedType] = useState<WidgetType>("jadwal")
+  const [activeWidgetId, setActiveWidgetId] = useState<string | null>(null)
+  const [justSaved, setJustSaved] = useState(false)
 
-  const [insertedWidgets, setInsertedWidgets] = useState<ActiveWidget[]>(initialWidgets ?? [])
-
+  // Saat masuk mode edit dari luar (klik badge di editor)
   useEffect(() => {
-    if (initialWidgets && initialWidgets.length > 0) {
-      setInsertedWidgets((prev) => {
-        const existingIds = new Set(prev.map((w) => w.widgetId))
-        const newOnes = initialWidgets.filter((w) => !existingIds.has(w.widgetId))
-        return newOnes.length > 0 ? [...prev, ...newOnes] : prev
-      })
+    if (editWidgetId && editWidgetType) {
+      setSelectedType(editWidgetType)
+      setActiveWidgetId(editWidgetId)
     }
-  }, [initialWidgets])
+  }, [editWidgetId, editWidgetType])
 
-  useEffect(() => {
-    setJadwalOpen(editWidgetType === "jadwal")
-    setKlasemenOpen(editWidgetType === "klasemen")
-    setTransferOpen(editWidgetType === "transfer")
-    setPeluangOpen(editWidgetType === "peluang")
-    setAnalisaOpen(editWidgetType === "analisa_taktis")
-  }, [editWidgetType])
-
-  const isEditing = !!editWidgetId
-
-  function handleInsert(shortcode: string, widgetId: string, widgetType: WidgetType) {
-    setInsertedWidgets((prev) => {
-      const exists = prev.some((w) => w.widgetId === widgetId)
-      return exists ? prev : [...prev, { widgetId, widgetType }]
-    })
-    onInsert(shortcode, widgetId, widgetType)
+  function startNew(type: WidgetType) {
+    setSelectedType(type)
+    setActiveWidgetId(uuidv4())
+    setJustSaved(false)
+    onResetEdit?.()
   }
 
-  const widgetMeta: Record<WidgetType, { icon: string; label: string }> = {
-    jadwal:          { icon: "📅", label: "Jadwal Pertandingan" },
-    klasemen:        { icon: "🏆", label: "Klasemen Grup" },
-    transfer:        { icon: "🔄", label: "Transfer Pemain" },
-    peluang:         { icon: "⭐", label: "Peluang Juara" },
-    analisa_taktis:  { icon: "🧠", label: "Analisa Taktis" },
+  function handleSaved() {
+    if (!activeWidgetId) return
+    const scKey = SHORTCODE_MAP[selectedType]
+    const shortcode = `[${scKey} id="${activeWidgetId}"]`
+    onInsert(shortcode, activeWidgetId, selectedType)
+    setJustSaved(true)
+    // Kalau edit mode, reset
+    if (editWidgetId) onResetEdit?.()
   }
 
-  function SectionHeader({
-    icon, label, open, onToggle, isActive,
-  }: {
-    icon: React.ReactNode; label: string; open: boolean; onToggle: () => void; isActive: boolean
-  }) {
-    return (
-      <button
-        onClick={onToggle}
-        className="flex w-full items-center justify-between px-4 py-3 text-sm"
-      >
-        <div className="flex items-center gap-2">
-          {icon}
-          <span className="font-semibold text-white">{label}</span>
-          {isActive && (
-            <span className="flex items-center gap-1 rounded-full bg-[#39FF14]/10 px-2 py-0.5 text-[10px] font-bold text-[#39FF14]">
-              <Pencil size={9} /> Mode Edit
-            </span>
-          )}
-        </div>
-        {open ? <ChevronUp size={14} className="text-zinc-400" /> : <ChevronDown size={14} className="text-zinc-400" />}
-      </button>
-    )
-  }
+  const ALL_TYPES = Object.keys(WIDGET_META) as WidgetType[]
 
   return (
-    <div className="space-y-3">
-      {/* ── Panel: Widget di Artikel ── */}
-      {insertedWidgets.length > 0 && (
-        <div className="rounded-xl border border-white/10 bg-[#0d0d0d] p-3">
-          <p className="mb-2 text-[10px] font-bold uppercase tracking-widest text-zinc-500">Widget di Artikel</p>
-          <div className="space-y-1.5">
-            {insertedWidgets.map((w) => {
-              const meta = widgetMeta[w.widgetType]
-              return (
-                <div
-                  key={w.widgetId}
-                  className={`flex items-center justify-between rounded-lg border px-3 py-2 transition-colors ${
-                    editWidgetId === w.widgetId ? "border-[#39FF14]/40 bg-[#39FF14]/5" : "border-white/8 bg-white/[0.02]"
-                  }`}
-                >
-                  <div className="flex items-center gap-2 min-w-0">
-                    <span className="text-sm">{meta.icon}</span>
-                    <div className="min-w-0">
-                      <p className="truncate text-[11px] font-semibold text-white">{meta.label}</p>
-                      <p className="font-mono text-[9px] text-zinc-600">{w.widgetId.slice(0, 8)}…</p>
-                    </div>
-                  </div>
-                  {editWidgetId === w.widgetId ? (
-                    <span className="flex items-center gap-1 rounded-full bg-[#39FF14]/10 px-2 py-0.5 text-[10px] font-bold text-[#39FF14]">
-                      <Pencil size={9} /> Editing
-                    </span>
-                  ) : (
-                    <button
-                      onClick={() =>
-                        window.dispatchEvent(new CustomEvent("widget-request-edit", {
-                          detail: { widgetId: w.widgetId, widgetType: w.widgetType }
-                        }))
-                      }
-                      className="flex items-center gap-1 rounded-md bg-[#39FF14]/10 px-2.5 py-1 text-[10px] font-bold text-[#39FF14] transition hover:bg-[#39FF14]/20"
-                    >
-                      <Pencil size={9} /> Edit
-                    </button>
-                  )}
-                </div>
-              )
-            })}
+    <div className="rounded-xl border border-border bg-card p-4 space-y-4">
+      {/* Pilih tipe widget */}
+      {!activeWidgetId && (
+        <div className="space-y-2">
+          <p className="text-xs font-bold uppercase tracking-widest text-muted-foreground">Pilih Jenis Widget</p>
+          <div className="grid grid-cols-1 gap-1.5">
+            {ALL_TYPES.map(type => (
+              <button key={type} onClick={() => startNew(type)}
+                className="flex items-center gap-2.5 rounded-lg border border-border bg-secondary/30 px-3 py-2 text-sm hover:border-primary/50 hover:bg-primary/5 transition-colors text-left">
+                <span>{WIDGET_META[type].icon}</span>
+                <span className="text-foreground font-medium">{WIDGET_META[type].label}</span>
+              </button>
+            ))}
           </div>
         </div>
       )}
 
-      {/* ── Jadwal Section ── */}
-      <div className={`overflow-hidden rounded-xl border transition-colors ${isEditing && editWidgetType === "jadwal" ? "border-[#39FF14]/40" : "border-white/10"} bg-[#0d0d0d]`}>
-        <SectionHeader
-          icon={<TableIcon size={15} className="text-[#39FF14]" />}
-          label="Jadwal Pertandingan"
-          open={jadwalOpen}
-          onToggle={() => setJadwalOpen((o) => !o)}
-          isActive={isEditing && editWidgetType === "jadwal"}
-        />
-        {jadwalOpen && (
-          <div className="border-t border-white/10 p-4">
-            <JadwalForm
-              onInsert={(shortcode, widgetId) => handleInsert(shortcode, widgetId, "jadwal")}
-              editWidgetId={isEditing && editWidgetType === "jadwal" ? editWidgetId : null}
-              onResetEdit={onResetEdit}
-            />
+      {/* Form widget aktif */}
+      {activeWidgetId && !justSaved && (
+        <div className="space-y-3">
+          <div className="flex items-center justify-between">
+            <p className="text-xs font-bold text-foreground flex items-center gap-1.5">
+              <span>{WIDGET_META[selectedType].icon}</span>
+              {editWidgetId ? "Edit" : "Buat"} {WIDGET_META[selectedType].label}
+            </p>
+            <button onClick={() => { setActiveWidgetId(null); onResetEdit?.() }}
+              className="text-xs text-muted-foreground hover:text-foreground">Batal</button>
           </div>
-        )}
-      </div>
 
-      {/* ── Klasemen Section ── */}
-      <div className={`overflow-hidden rounded-xl border transition-colors ${isEditing && editWidgetType === "klasemen" ? "border-[#39FF14]/40" : "border-white/10"} bg-[#0d0d0d]`}>
-        <SectionHeader
-          icon={<Trophy size={15} className="text-[#39FF14]" />}
-          label="Klasemen Grup"
-          open={klasemenOpen}
-          onToggle={() => setKlasemenOpen((o) => !o)}
-          isActive={isEditing && editWidgetType === "klasemen"}
-        />
-        {klasemenOpen && (
-          <div className="border-t border-white/10 p-4">
-            <KlasemenForm
-              onInsert={(shortcode, widgetId) => handleInsert(shortcode, widgetId, "klasemen")}
-              editWidgetId={isEditing && editWidgetType === "klasemen" ? editWidgetId : null}
-              onResetEdit={onResetEdit}
-            />
-          </div>
-        )}
-      </div>
+          {/* Render form sesuai tipe */}
+          {selectedType === "perbandingan_tim" && (
+            <PerbandinganTimForm widgetId={activeWidgetId} onSaved={handleSaved} />
+          )}
+          {selectedType === "timeline_pertandingan" && (
+            <TimelineForm widgetId={activeWidgetId} onSaved={handleSaved} />
+          )}
+          {/* Form tipe lama (jadwal, klasemen, transfer, peluang, analisa_taktis)
+              tetap menggunakan komponen form masing-masing yang sudah ada */}
+          {!["perbandingan_tim", "timeline_pertandingan"].includes(selectedType) && (
+            <p className="text-xs text-muted-foreground">
+              Form untuk <strong>{WIDGET_META[selectedType].label}</strong> sudah tersedia di komponen form lama.
+              Ganti komponen ini sesuai implementasi yang sudah ada.
+            </p>
+          )}
+        </div>
+      )}
 
-      {/* ── Transfer Section ── */}
-      <div className={`overflow-hidden rounded-xl border transition-colors ${isEditing && editWidgetType === "transfer" ? "border-[#39FF14]/40" : "border-white/10"} bg-[#0d0d0d]`}>
-        <SectionHeader
-          icon={<ArrowRightLeft size={15} className="text-[#39FF14]" />}
-          label="Transfer Pemain"
-          open={transferOpen}
-          onToggle={() => setTransferOpen((o) => !o)}
-          isActive={isEditing && editWidgetType === "transfer"}
-        />
-        {transferOpen && (
-          <div className="border-t border-white/10 p-4">
-            <TransferForm
-              onInsert={(shortcode, widgetId) => handleInsert(shortcode, widgetId, "transfer")}
-              editWidgetId={isEditing && editWidgetType === "transfer" ? editWidgetId : null}
-              onResetEdit={onResetEdit}
-            />
-          </div>
-        )}
-      </div>
+      {/* Konfirmasi setelah simpan */}
+      {justSaved && (
+        <div className="rounded-lg bg-primary/10 border border-primary/30 px-3 py-3 text-xs text-primary space-y-1">
+          <p className="font-bold">✅ Widget disisipkan ke artikel!</p>
+          <button onClick={() => { setActiveWidgetId(null); setJustSaved(false) }}
+            className="underline text-primary/70 hover:text-primary">Tambah widget lagi</button>
+        </div>
+      )}
 
-      {/* ── Peluang Juara Section ── */}
-      <div className={`overflow-hidden rounded-xl border transition-colors ${isEditing && editWidgetType === "peluang" ? "border-[#39FF14]/40" : "border-white/10"} bg-[#0d0d0d]`}>
-        <SectionHeader
-          icon={<Star size={15} className="text-[#39FF14]" />}
-          label="Peluang Juara"
-          open={peluangOpen}
-          onToggle={() => setPeluangOpen((o) => !o)}
-          isActive={isEditing && editWidgetType === "peluang"}
-        />
-        {peluangOpen && (
-          <div className="border-t border-white/10 p-4">
-            <PeluangForm
-              onInsert={(shortcode, widgetId) => handleInsert(shortcode, widgetId, "peluang")}
-              editWidgetId={isEditing && editWidgetType === "peluang" ? editWidgetId : null}
-              onResetEdit={onResetEdit}
-            />
-          </div>
-        )}
-      </div>
-
-      {/* ── Analisa Taktis Section ── */}
-      <div className={`overflow-hidden rounded-xl border transition-colors ${isEditing && editWidgetType === "analisa_taktis" ? "border-[#39FF14]/40" : "border-white/10"} bg-[#0d0d0d]`}>
-        <SectionHeader
-          icon={<Brain size={15} className="text-[#39FF14]" />}
-          label="Analisa Taktis"
-          open={analisaOpen}
-          onToggle={() => setAnalisaOpen((o) => !o)}
-          isActive={isEditing && editWidgetType === "analisa_taktis"}
-        />
-        {analisaOpen && (
-          <div className="border-t border-white/10 p-4">
-            <AnalisaTaktisForm
-              onInsert={(shortcode, widgetId) => handleInsert(shortcode, widgetId, "analisa_taktis")}
-              editWidgetId={isEditing && editWidgetType === "analisa_taktis" ? editWidgetId : null}
-              onResetEdit={onResetEdit}
-            />
-          </div>
-        )}
-      </div>
-
+      {/* Widget yang sudah ada di artikel (preloaded) */}
+      {initialWidgets.length > 0 && !activeWidgetId && (
+        <div className="space-y-1.5 pt-2 border-t border-border">
+          <p className="text-xs font-bold uppercase tracking-widest text-muted-foreground">Widget di Artikel</p>
+          {initialWidgets.map(w => (
+            <button key={w.widgetId}
+              onClick={() => { setSelectedType(w.widgetType); setActiveWidgetId(w.widgetId); setJustSaved(false) }}
+              className="flex w-full items-center gap-2 rounded border border-border bg-secondary/20 px-2.5 py-1.5 text-xs hover:border-primary/50 hover:text-primary transition-colors">
+              <span>{WIDGET_META[w.widgetType]?.icon ?? "📦"}</span>
+              <span className="flex-1 text-left text-muted-foreground">{WIDGET_META[w.widgetType]?.label}</span>
+              <span className="text-primary/40">Edit →</span>
+            </button>
+          ))}
+        </div>
+      )}
     </div>
   )
 }
