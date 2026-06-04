@@ -77,17 +77,18 @@ function ToolbarSeparator() {
 
 function buildShortcodePlaceholder(widgetId: string, widgetType: WidgetType): string {
   const shortcodeMap: Record<WidgetType, string> = {
-    jadwal:   `[match_data id="${widgetId}"]`,
-    klasemen: `[klasemen_data id="${widgetId}"]`,
-    transfer: `[transfer_data id="${widgetId}"]`,
-    peluang:  `[peluang_data id="${widgetId}"]`,
+    jadwal:         `[match_data id="${widgetId}"]`,
+    klasemen:       `[klasemen_data id="${widgetId}"]`,
+    transfer:       `[transfer_data id="${widgetId}"]`,
+    peluang:        `[peluang_data id="${widgetId}"]`,
+    analisa_taktis: `[analisa_taktis_data id="${widgetId}"]`,
   }
   const iconMap: Record<WidgetType, string> = {
-    jadwal: "📅", klasemen: "🏆", transfer: "🔄", peluang: "⭐",
+    jadwal: "📅", klasemen: "🏆", transfer: "🔄", peluang: "⭐", analisa_taktis: "🧠",
   }
   const labelMap: Record<WidgetType, string> = {
     jadwal: "Jadwal Pertandingan", klasemen: "Klasemen Grup",
-    transfer: "Transfer Pemain", peluang: "Peluang Juara",
+    transfer: "Transfer Pemain", peluang: "Peluang Juara", analisa_taktis: "Analisa Taktis",
   }
   const shortcode = shortcodeMap[widgetType] ?? shortcodeMap.jadwal
   const icon = iconMap[widgetType] ?? "📦"
