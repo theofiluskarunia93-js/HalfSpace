@@ -995,16 +995,19 @@ export function AnalisaTaktisCard({ widgetId, isAdmin, onEdit }: AnalisaTaktisCa
       5: ["LW", "CF", "ST", "CF", "RW"],
     }
 
+    // allLines: [fwd, ...mid lines (reversed), def, gk]
+    // Contoh 4-2-3-1: lines=[4,2,3,1] → allLines=[1,3,2,4,gk=1]
     const allLines: number[] = [lines[lines.length - 1], ...lines.slice(0, -1).reverse(), gk]
+    const totalOutfieldLines = allLines.length - 1 // exclude GK
     const lineConfigs = allLines.map((count, lineIdx) => {
-      const isGK = lineIdx === allLines.length - 1
+      const isGK  = lineIdx === allLines.length - 1
       const isFwd = lineIdx === 0
-      const isMid = lineIdx > 0 && !isGK && lines.length >= 3 && lineIdx < lines.length - 1
+      const isDef = lineIdx === totalOutfieldLines - 1  // baris tepat sebelum GK = pertahanan
       let labels: string[]
-      if (isGK) labels = ["GK"]
+      if (isGK)       labels = ["GK"]
       else if (isFwd) labels = fwdLabels[count] ?? Array(count).fill("FW")
-      else if (isMid && lineIdx === 1 && lines.length === 3) labels = midLabels[count] ?? Array(count).fill("MF")
-      else labels = positionLabels[count] ?? Array(count).fill("DF")
+      else if (isDef) labels = positionLabels[count] ?? Array(count).fill("CB")
+      else            labels = midLabels[count] ?? Array(count).fill("CM")
       return { count, labels }
     })
 
