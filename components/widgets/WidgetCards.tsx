@@ -938,12 +938,27 @@ export function AnalisaTaktisCard({ widgetId, isAdmin, onEdit }: AnalisaTaktisCa
     async function fetchData() {
       try {
         const supabase = createClient()
-        const { data: rows, error } = await supabase
+
+        // Coba fetch by widget_id dulu (baris baru: id == widget_id)
+        let { data: rows, error } = await supabase
           .from("widget_analisa_taktis")
           .select("*")
           .eq("widget_id", widgetId)
           .limit(1)
+
         if (error) throw error
+
+        // Fallback: jika tidak ketemu by widget_id, coba by id (baris lama: id != widget_id)
+        if (!rows || rows.length === 0) {
+          const fallback = await supabase
+            .from("widget_analisa_taktis")
+            .select("*")
+            .eq("id", widgetId)
+            .limit(1)
+          if (fallback.error) throw fallback.error
+          rows = fallback.data
+        }
+
         if (rows && rows.length > 0) {
           const r = rows[0]
           setData({

@@ -30,9 +30,16 @@ function sanitizeBadgeContent(content: string): string {
         const wId = el.dataset.widgetId
         const wType = el.dataset.widgetType
         if (!wId || !wType) return null
-        return wType === "jadwal"
-          ? `[match_data id="${wId}"]`
-          : `[klasemen_data id="${wId}"]`
+        const scMap: Record<string, string> = {
+          jadwal:                  `[match_data id="${wId}"]`,
+          klasemen:                `[klasemen_data id="${wId}"]`,
+          transfer:                `[transfer_data id="${wId}"]`,
+          peluang:                 `[peluang_data id="${wId}"]`,
+          analisa_taktis:          `[analisa_taktis_data id="${wId}"]`,
+          perbandingan_tim:        `[perbandingan_tim_data id="${wId}"]`,
+          timeline_pertandingan:   `[timeline_pertandingan_data id="${wId}"]`,
+        }
+        return scMap[wType] ?? null
       })()
 
     const parentP = el.closest("p")

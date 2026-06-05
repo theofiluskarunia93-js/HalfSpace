@@ -71,6 +71,19 @@ function hasWidgetPlaceholder(content: string): boolean {
 function cleanLegacyBadgeContent(content: string): string {
   if (!content.includes("widget-shortcode-badge")) return content
 
+  function buildShortcode(wType: string, wId: string): string | null {
+    const scMap: Record<string, string> = {
+      jadwal:                  `[match_data id="${wId}"]`,
+      klasemen:                `[klasemen_data id="${wId}"]`,
+      transfer:                `[transfer_data id="${wId}"]`,
+      peluang:                 `[peluang_data id="${wId}"]`,
+      analisa_taktis:          `[analisa_taktis_data id="${wId}"]`,
+      perbandingan_tim:        `[perbandingan_tim_data id="${wId}"]`,
+      timeline_pertandingan:   `[timeline_pertandingan_data id="${wId}"]`,
+    }
+    return scMap[wType] ?? null
+  }
+
   // ── SSR path (tidak ada DOMParser) ────────────────────────────────────────
   if (typeof window === "undefined") {
     // Hitung kedalaman tag <div> secara manual agar nested div bisa di-skip
@@ -109,9 +122,7 @@ function cleanLegacyBadgeContent(content: string): string {
 
       const shortcode = scMatch?.[1] ?? (
         wIdMatch && wTpMatch
-          ? (wTpMatch[1] === "jadwal"
-              ? `[match_data id="${wIdMatch[1]}"]`
-              : `[klasemen_data id="${wIdMatch[1]}"]`)
+          ? buildShortcode(wTpMatch[1], wIdMatch[1])
           : null
       )
 
@@ -139,9 +150,7 @@ function cleanLegacyBadgeContent(content: string): string {
         const wId = el.dataset.widgetId
         const wType = el.dataset.widgetType
         if (!wId || !wType) return null
-        return wType === "jadwal"
-          ? `[match_data id="${wId}"]`
-          : `[klasemen_data id="${wId}"]`
+        return buildShortcode(wType, wId)
       })()
 
     // Naiki ke ancestor tertinggi yang masih merupakan anak tunggal dari parent-nya
