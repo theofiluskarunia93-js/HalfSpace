@@ -972,21 +972,15 @@ export function AnalisaTaktisCard({ widgetId, isAdmin, onEdit }: AnalisaTaktisCa
   function FormationViz({ formation }: { formation: string }) {
     const { gk, lines } = parseFormation(formation)
 
-    // Positions map based on line count
-    const positionLabels: Record<number, string[]> = {
-      1: ["GK"],
+    // ── Defender baris (paling belakang outfield) ─────────────────────────
+    const defLabels: Record<number, string[]> = {
       2: ["CB", "CB"],
       3: ["LB", "CB", "RB"],
       4: ["LB", "CB", "CB", "RB"],
       5: ["LWB", "CB", "CB", "CB", "RWB"],
     }
-    const midLabels: Record<number, string[]> = {
-      1: ["CM"],
-      2: ["CM", "CM"],
-      3: ["CM", "CM", "CM"],
-      4: ["CM", "CM", "CM", "CM"],
-      5: ["CM", "CM", "CM", "CM", "CM"],
-    }
+
+    // ── Forward baris (paling depan) ──────────────────────────────────────
     const fwdLabels: Record<number, string[]> = {
       1: ["ST"],
       2: ["ST", "ST"],
@@ -995,19 +989,92 @@ export function AnalisaTaktisCard({ widgetId, isAdmin, onEdit }: AnalisaTaktisCa
       5: ["LW", "CF", "ST", "CF", "RW"],
     }
 
+    // ── Mid baris: label tergantung posisi relatif ─────────────────────────
+    // midPos = 0 → paling dekat FWD (attacking), midPos = last → paling dekat DEF (defensive)
+    function getMidLabels(count: number, midPos: number, totalMidLines: number): string[] {
+      // ── Hanya 1 baris mid → tengah lapangan murni ─────────────────────
+      // Sayap = LM/RM, tengah = CM
+      if (totalMidLines === 1) {
+        const solo: Record<number, string[]> = {
+          1: ["CDM"],
+          2: ["CM", "CM"],
+          3: ["CM", "CDM", "CM"],
+          4: ["LM", "CM", "CM", "RM"],
+          5: ["LM", "CM", "CDM", "CM", "RM"],
+        }
+        return solo[count] ?? Array(count).fill("CM")
+      }
+
+      // ── Baris paling dekat ke FWD (attacking) ─────────────────────────
+      // Tengah = CAM, sayap = LW/RW, jika 4 pemain → LM·CM·CM·RM
+      if (midPos === 0) {
+        const atk: Record<number, string[]> = {
+          1: ["CAM"],
+          2: ["CAM", "CAM"],
+          3: ["LW",  "CAM", "RW"],
+          4: ["LM",  "CM",  "CM",  "RM"],
+          5: ["LW",  "CAM", "CAM", "CAM", "RW"],
+        }
+        return atk[count] ?? Array(count).fill("CAM")
+      }
+
+      // ── Baris paling dekat ke DEF (defensive) ─────────────────────────
+      // Tengah = CDM, sayap = LM/RM
+      if (midPos === totalMidLines - 1) {
+        const def: Record<number, string[]> = {
+          1: ["CDM"],
+          2: ["CDM", "CDM"],
+          3: ["LM",  "CDM", "RM"],
+          4: ["LM",  "CDM", "CDM", "RM"],
+          5: ["LM",  "CDM", "CDM", "CDM", "RM"],
+        }
+        return def[count] ?? Array(count).fill("CDM")
+      }
+
+      // ── Baris tengah (di antara attacking & defensive) ────────────────
+      // Tengah = CDM, kiri/kanan = CM
+      const mid: Record<number, string[]> = {
+        1: ["CDM"],
+        2: ["CM", "CM"],
+        3: ["CM", "CDM", "CM"],
+        4: ["CM", "CDM", "CDM", "CM"],
+        5: ["LM", "CM", "CDM", "CM", "RM"],
+      }
+      return mid[count] ?? Array(count).fill("CM")
+    }
+
     // allLines: [fwd, ...mid lines (reversed), def, gk]
     // Contoh 4-2-3-1: lines=[4,2,3,1] → allLines=[1,3,2,4,gk=1]
     const allLines: number[] = [lines[lines.length - 1], ...lines.slice(0, -1).reverse(), gk]
     const totalOutfieldLines = allLines.length - 1 // exclude GK
+
+    // Kumpulkan index baris mid saja (bukan GK, bukan FWD, bukan DEF)
+    const midLineIndices: number[] = []
+    allLines.forEach((_, lineIdx) => {
+      const isGK  = lineIdx === allLines.length - 1
+      const isFwd = lineIdx === 0
+      const isDef = lineIdx === totalOutfieldLines - 1
+      if (!isGK && !isFwd && !isDef) midLineIndices.push(lineIdx)
+    })
+    const totalMidLines = midLineIndices.length
+
     const lineConfigs = allLines.map((count, lineIdx) => {
       const isGK  = lineIdx === allLines.length - 1
       const isFwd = lineIdx === 0
-      const isDef = lineIdx === totalOutfieldLines - 1  // baris tepat sebelum GK = pertahanan
+      const isDef = lineIdx === totalOutfieldLines - 1
       let labels: string[]
-      if (isGK)       labels = ["GK"]
-      else if (isFwd) labels = fwdLabels[count] ?? Array(count).fill("FW")
-      else if (isDef) labels = positionLabels[count] ?? Array(count).fill("CB")
-      else            labels = midLabels[count] ?? Array(count).fill("CM")
+
+      if (isGK) {
+        labels = ["GK"]
+      } else if (isFwd) {
+        labels = fwdLabels[count] ?? Array(count).fill("FW")
+      } else if (isDef) {
+        labels = defLabels[count] ?? Array(count).fill("CB")
+      } else {
+        const midPos = midLineIndices.indexOf(lineIdx)
+        labels = getMidLabels(count, midPos, totalMidLines)
+      }
+
       return { count, labels }
     })
 
