@@ -1233,6 +1233,22 @@ export function ArticleDetail({ articleId, initialData }: ArticleDetailProps) {
                   <ShareButtons title={article.title} />
                 </div>
 
+                {/* Tags — bottom */}
+                {article.article_tags && article.article_tags.length > 0 && (
+                  <div className="mt-6 flex flex-wrap items-center gap-2">
+                    <Tag className="h-3.5 w-3.5 text-muted-foreground flex-shrink-0" aria-hidden="true" />
+                    {article.article_tags.map(({ tags: tag }) => tag && (
+                      <a
+                        key={tag.slug}
+                        href={`/tag/${tag.slug}`}
+                        className="rounded-full border border-border bg-secondary px-3 py-1 text-xs font-medium text-muted-foreground transition-colors hover:border-primary hover:text-primary"
+                      >
+                        #{tag.name}
+                      </a>
+                    ))}
+                  </div>
+                )}
+
                 {/* Author card */}
                 <div className="mt-6">
                   <AuthorCard />
