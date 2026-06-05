@@ -11,7 +11,7 @@ import { ArticleBody } from "@/components/article/ArticleBody"
 import {
   Clock, Eye, Calendar, ChevronRight, Home,
   Share2, Twitter, Facebook, Link2, Check,
-  BookOpen, ArrowUp, User, MessageSquare, Send, RefreshCw,
+  BookOpen, ArrowUp, User, MessageSquare, Send, RefreshCw, Tag,
 } from "lucide-react"
 
 // ─── Types ─────────────────────────────────────────────────────────────────
@@ -29,6 +29,7 @@ interface Article {
   created_at: string
   updated_at: string | null
   categories: { name: string; slug: string } | null
+  article_tags: { tags: { name: string; slug: string } | null }[] | null
 }
 
 interface RelatedArticle {
@@ -1025,7 +1026,7 @@ export function ArticleDetail({ articleId, initialData }: ArticleDetailProps) {
     async function fetchArticle() {
       let { data } = await supabase
         .from("articles")
-        .select("*, categories(name, slug)")
+        .select("*, categories(name, slug), article_tags(tags(name, slug))")
         .eq("id", articleId)
         .eq("status", "published")
         .maybeSingle()
@@ -1033,7 +1034,7 @@ export function ArticleDetail({ articleId, initialData }: ArticleDetailProps) {
       if (!data) {
         const fallback = await supabase
           .from("articles")
-          .select("*, categories(name, slug)")
+          .select("*, categories(name, slug), article_tags(tags(name, slug))")
           .eq("id", articleId)
           .maybeSingle()
         data = fallback.data
@@ -1165,6 +1166,22 @@ export function ArticleDetail({ articleId, initialData }: ArticleDetailProps) {
                   <div className="mt-4">
                     <ShareButtons title={article.title} />
                   </div>
+
+                  {/* Tags */}
+                  {article.article_tags && article.article_tags.length > 0 && (
+                    <div className="mt-4 flex flex-wrap items-center gap-2">
+                      <Tag className="h-3.5 w-3.5 text-muted-foreground flex-shrink-0" aria-hidden="true" />
+                      {article.article_tags.map(({ tags: tag }) => tag && (
+                        <a
+                          key={tag.slug}
+                          href={`/tag/${tag.slug}`}
+                          className="rounded-full border border-border bg-secondary px-3 py-1 text-xs font-medium text-muted-foreground transition-colors hover:border-primary hover:text-primary"
+                        >
+                          #{tag.name}
+                        </a>
+                      ))}
+                    </div>
+                  )}
                 </header>
 
                 {/* TOC mobile */}
