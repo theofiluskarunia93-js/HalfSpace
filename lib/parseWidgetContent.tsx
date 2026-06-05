@@ -1,17 +1,20 @@
 /**
- * parseWidgetContent.ts
+ * parseWidgetContent.tsx
  *
  * Mem-parse konten artikel HTML, mendeteksi shortcode widget, dan
  * mengembalikan array React nodes (teks HTML + komponen widget).
  *
  * Shortcode yang didukung:
- *  [match_data id="<uuid>"]              → JadwalCard
- *  [klasemen_data id="<uuid>"]           → KlasemenCard
- *  [transfer_data id="<uuid>"]           → TransferCard
- *  [peluang_data id="<uuid>"]            → PeluangCard
- *  [analisa_taktis_data id="<uuid>"]     → AnalisaTaktisCard
- *  [perbandingan_tim_data id="<uuid>"]   → PerbandinganTimCard  ← BARU
- *  [timeline_pertandingan_data id="<uuid>"] → TimelinePertandinganCard ← BARU
+ *  [match_data id="<uuid>"]                  → JadwalCard
+ *  [klasemen_data id="<uuid>"]               → KlasemenCard
+ *  [transfer_data id="<uuid>"]               → TransferCard
+ *  [peluang_data id="<uuid>"]                → PeluangCard
+ *  [analisa_taktis_data id="<uuid>"]         → AnalisaTaktisCard
+ *  [perbandingan_tim_data id="<uuid>"]       → PerbandinganTimCard
+ *  [timeline_pertandingan_data id="<uuid>"]  → TimelinePertandinganCard
+ *  [profil_stadion_data id="<uuid>"]         → ProfilStadionCard   ← BARU
+ *  [daftar_pemain_data id="<uuid>"]          → DaftarPemainCard    ← BARU
+ *  [pemain_andalan_data id="<uuid>"]         → PemainAndalanCard   ← BARU
  */
 
 import React from "react"
@@ -22,11 +25,14 @@ import { PeluangCard }              from "@/components/widgets/PeluangCard"
 import { AnalisaTaktisCard }        from "@/components/widgets/AnalisaTaktisCard"
 import { PerbandinganTimCard }      from "@/components/widgets/PerbandinganTimCard"
 import { TimelinePertandinganCard } from "@/components/widgets/TimelinePertandinganCard"
+import { ProfilStadionCard }        from "@/components/widgets/ProfilStadionCard"
+import { DaftarPemainCard }         from "@/components/widgets/DaftarPemainCard"
+import { PemainAndalanCard }        from "@/components/widgets/PemainAndalanCard"
 import type { WidgetType }          from "@/components/widgets/WidgetInserter"
 
 // ─── Regex: cocokkan SEMUA shortcode yang dikenal ─────────────────────────────
 const WIDGET_SHORTCODE_RE =
-  /\[(match_data|klasemen_data|transfer_data|peluang_data|analisa_taktis_data|perbandingan_tim_data|timeline_pertandingan_data)\s+id="([a-fA-F0-9-]{36})"\]/g
+  /\[(match_data|klasemen_data|transfer_data|peluang_data|analisa_taktis_data|perbandingan_tim_data|timeline_pertandingan_data|profil_stadion_data|daftar_pemain_data|pemain_andalan_data)\s+id="([a-fA-F0-9-]{36})"\]/g
 
 // ─── hasWidgetShortcode ───────────────────────────────────────────────────────
 export function hasWidgetShortcode(content: string): boolean {
@@ -153,6 +159,48 @@ export function parseWidgetContent(
             isAdmin,
             onEdit: isAdmin && onEdit
               ? (id: string) => onEdit(id, "timeline_pertandingan" as WidgetType)
+              : undefined,
+            refreshKey,
+          })
+        )
+        break
+
+      case "profil_stadion_data":
+        nodes.push(
+          React.createElement(ProfilStadionCard, {
+            key,
+            widgetId,
+            isAdmin,
+            onEdit: isAdmin && onEdit
+              ? (id: string) => onEdit(id, "profil_stadion" as WidgetType)
+              : undefined,
+            refreshKey,
+          })
+        )
+        break
+
+      case "daftar_pemain_data":
+        nodes.push(
+          React.createElement(DaftarPemainCard, {
+            key,
+            widgetId,
+            isAdmin,
+            onEdit: isAdmin && onEdit
+              ? (id: string) => onEdit(id, "daftar_pemain" as WidgetType)
+              : undefined,
+            refreshKey,
+          })
+        )
+        break
+
+      case "pemain_andalan_data":
+        nodes.push(
+          React.createElement(PemainAndalanCard, {
+            key,
+            widgetId,
+            isAdmin,
+            onEdit: isAdmin && onEdit
+              ? (id: string) => onEdit(id, "pemain_andalan" as WidgetType)
               : undefined,
             refreshKey,
           })

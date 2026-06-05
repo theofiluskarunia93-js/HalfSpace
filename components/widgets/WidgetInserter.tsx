@@ -24,6 +24,9 @@ export type WidgetType =
   | "analisa_taktis"
   | "perbandingan_tim"
   | "timeline_pertandingan"
+  | "profil_stadion"
+  | "daftar_pemain"
+  | "pemain_andalan"
 
 // ─── Shortcode map ────────────────────────────────────────────────────────────
 export const SHORTCODE_MAP: Record<WidgetType, string> = {
@@ -34,6 +37,9 @@ export const SHORTCODE_MAP: Record<WidgetType, string> = {
   analisa_taktis:          "analisa_taktis_data",
   perbandingan_tim:        "perbandingan_tim_data",
   timeline_pertandingan:   "timeline_pertandingan_data",
+  profil_stadion:          "profil_stadion_data",
+  daftar_pemain:           "daftar_pemain_data",
+  pemain_andalan:          "pemain_andalan_data",
 }
 
 export const TABLE_MAP: Record<WidgetType, string> = {
@@ -44,6 +50,9 @@ export const TABLE_MAP: Record<WidgetType, string> = {
   analisa_taktis:          "widget_analisa_taktis",
   perbandingan_tim:        "widget_perbandingan_tim",
   timeline_pertandingan:   "widget_timeline_pertandingan",
+  profil_stadion:          "widget_profil_stadion",
+  daftar_pemain:           "widget_daftar_pemain",
+  pemain_andalan:          "widget_pemain_andalan",
 }
 
 export const WIDGET_META: Record<WidgetType, { icon: string; label: string }> = {
@@ -54,6 +63,9 @@ export const WIDGET_META: Record<WidgetType, { icon: string; label: string }> = 
   analisa_taktis:          { icon: "🧠", label: "Analisa Taktis" },
   perbandingan_tim:        { icon: "⚔️", label: "Perbandingan Tim" },
   timeline_pertandingan:   { icon: "📋", label: "Timeline Pertandingan" },
+  profil_stadion:          { icon: "🏟️", label: "Profil Stadion" },
+  daftar_pemain:           { icon: "👥", label: "Daftar Pemain Tim" },
+  pemain_andalan:          { icon: "⭐", label: "Pemain Andalan" },
 }
 
 // ─── Props ────────────────────────────────────────────────────────────────────
@@ -709,6 +721,324 @@ function AnalisaTaktisForm({ widgetId, onSaved }: { widgetId: string; onSaved: (
   )
 }
 
+// ─── Form: Profil Stadion ─────────────────────────────────────────────────────
+
+function ProfilStadionForm({ widgetId, onSaved }: { widgetId: string; onSaved: () => void }) {
+  const supabase = createClient()
+  const [saving, setSaving] = useState(false)
+  const [data, setData] = useState({
+    nama_stadion: "",
+    kota: "",
+    kapasitas: 0,
+    jenis_rumput: "",
+    jenis_atap: "",
+    negara: "",
+    tahun_berdiri: "",
+    foto_url: "",
+  })
+
+  useEffect(() => {
+    supabase.from("widget_profil_stadion").select("*").eq("id", widgetId).maybeSingle()
+      .then(({ data: row }) => {
+        if (row) setData({
+          nama_stadion: row.nama_stadion ?? "",
+          kota: row.kota ?? "",
+          kapasitas: row.kapasitas ?? 0,
+          jenis_rumput: row.jenis_rumput ?? "",
+          jenis_atap: row.jenis_atap ?? "",
+          negara: row.negara ?? "",
+          tahun_berdiri: row.tahun_berdiri ? String(row.tahun_berdiri) : "",
+          foto_url: row.foto_url ?? "",
+        })
+      })
+  }, [widgetId])
+
+  async function save() {
+    setSaving(true)
+    await supabase.from("widget_profil_stadion").upsert({
+      id: widgetId,
+      nama_stadion: data.nama_stadion,
+      kota: data.kota,
+      kapasitas: Number(data.kapasitas),
+      jenis_rumput: data.jenis_rumput,
+      jenis_atap: data.jenis_atap,
+      negara: data.negara || null,
+      tahun_berdiri: data.tahun_berdiri ? Number(data.tahun_berdiri) : null,
+      foto_url: data.foto_url || null,
+    }, { onConflict: "id" })
+    setSaving(false)
+    onSaved()
+  }
+
+  return (
+    <div className="space-y-3">
+      <FInput label="Nama Stadion" value={data.nama_stadion}
+        onChange={v => setData(p => ({ ...p, nama_stadion: v }))} placeholder="Gelora Bung Karno" />
+      <div className="grid grid-cols-2 gap-2">
+        <FInput label="Kota" value={data.kota}
+          onChange={v => setData(p => ({ ...p, kota: v }))} placeholder="Jakarta" />
+        <FInput label="Negara" value={data.negara}
+          onChange={v => setData(p => ({ ...p, negara: v }))} placeholder="Indonesia" />
+      </div>
+      <FInput label="Kapasitas (penonton)" value={data.kapasitas}
+        onChange={v => setData(p => ({ ...p, kapasitas: Number(v) }))} type="number" placeholder="77000" />
+      <div className="grid grid-cols-2 gap-2">
+        <FInput label="Jenis Rumput" value={data.jenis_rumput}
+          onChange={v => setData(p => ({ ...p, jenis_rumput: v }))} placeholder="Natural / Sintetis" />
+        <FInput label="Jenis Atap" value={data.jenis_atap}
+          onChange={v => setData(p => ({ ...p, jenis_atap: v }))} placeholder="Terbuka / Tertutup" />
+      </div>
+      <FInput label="Tahun Berdiri (opsional)" value={data.tahun_berdiri}
+        onChange={v => setData(p => ({ ...p, tahun_berdiri: v }))} type="number" placeholder="1962" />
+      <FInput label="URL Foto (opsional)" value={data.foto_url}
+        onChange={v => setData(p => ({ ...p, foto_url: v }))} placeholder="https://..." />
+      <button onClick={save} disabled={saving}
+        className="w-full rounded-lg bg-primary px-4 py-2 text-sm font-bold text-primary-foreground disabled:opacity-50">
+        {saving ? "Menyimpan..." : "Simpan & Sisipkan"}
+      </button>
+    </div>
+  )
+}
+
+// ─── Form: Daftar Pemain Tim ──────────────────────────────────────────────────
+
+function DaftarPemainForm({ widgetId, onSaved }: { widgetId: string; onSaved: () => void }) {
+  const supabase = createClient()
+  const [saving, setSaving] = useState(false)
+  const [rows, setRows] = useState([{
+    id: crypto.randomUUID(),
+    nomor_punggung: 1,
+    nama_pemain: "",
+    usia: 0,
+    asal_klub: "",
+    nilai_pasar: "",
+    posisi: "",
+  }])
+
+  useEffect(() => {
+    supabase.from("widget_daftar_pemain").select("*").eq("widget_id", widgetId)
+      .order("nomor_punggung", { ascending: true })
+      .then(({ data }) => {
+        if (data && data.length > 0) setRows(data.map(r => ({
+          id: r.id,
+          nomor_punggung: r.nomor_punggung,
+          nama_pemain: r.nama_pemain,
+          usia: r.usia,
+          asal_klub: r.asal_klub,
+          nilai_pasar: r.nilai_pasar,
+          posisi: r.posisi ?? "",
+        })))
+      })
+  }, [widgetId])
+
+  function updateRow(i: number, field: string, value: any) {
+    setRows(prev => { const c = [...prev]; c[i] = { ...c[i], [field]: value }; return c })
+  }
+  function addRow() {
+    setRows(prev => [...prev, {
+      id: crypto.randomUUID(), nomor_punggung: prev.length + 1,
+      nama_pemain: "", usia: 0, asal_klub: "", nilai_pasar: "", posisi: "",
+    }])
+  }
+  async function removeRow(i: number) {
+    const row = rows[i]
+    await supabase.from("widget_daftar_pemain").delete().eq("id", row.id)
+    setRows(prev => prev.filter((_, idx) => idx !== i))
+  }
+
+  async function save() {
+    setSaving(true)
+    for (const row of rows) {
+      await supabase.from("widget_daftar_pemain").upsert({
+        id: row.id,
+        widget_id: widgetId,
+        nomor_punggung: Number(row.nomor_punggung),
+        nama_pemain: row.nama_pemain,
+        usia: Number(row.usia),
+        asal_klub: row.asal_klub,
+        nilai_pasar: row.nilai_pasar,
+        posisi: row.posisi || null,
+      }, { onConflict: "id" })
+    }
+    setSaving(false)
+    onSaved()
+  }
+
+  const posisiOptions = [
+    { label: "— Pilih Posisi —", value: "" },
+    { label: "GK - Kiper", value: "GK" },
+    { label: "CB - Bek Tengah", value: "CB" },
+    { label: "LB - Bek Kiri", value: "LB" },
+    { label: "RB - Bek Kanan", value: "RB" },
+    { label: "LWB - Wingback Kiri", value: "LWB" },
+    { label: "RWB - Wingback Kanan", value: "RWB" },
+    { label: "DM - Gelandang Bertahan", value: "DM" },
+    { label: "CM - Gelandang Tengah", value: "CM" },
+    { label: "AM - Gelandang Serang", value: "AM" },
+    { label: "LW - Sayap Kiri", value: "LW" },
+    { label: "RW - Sayap Kanan", value: "RW" },
+    { label: "SS - Second Striker", value: "SS" },
+    { label: "ST - Striker", value: "ST" },
+    { label: "CF - Centre Forward", value: "CF" },
+  ]
+
+  return (
+    <div className="space-y-3">
+      {rows.map((row, i) => (
+        <div key={row.id} className="relative rounded-lg border border-border bg-secondary/20 p-3 space-y-2">
+          <button onClick={() => removeRow(i)} className="absolute right-2 top-2 text-xs text-muted-foreground hover:text-destructive">✕</button>
+          <div className="grid grid-cols-2 gap-2">
+            <FInput label="No. Punggung" value={row.nomor_punggung}
+              onChange={v => updateRow(i, "nomor_punggung", Number(v))} type="number" placeholder="10" />
+            <FSelect label="Posisi" value={row.posisi}
+              onChange={v => updateRow(i, "posisi", v)} options={posisiOptions} />
+            <div className="col-span-2">
+              <FInput label="Nama Pemain" value={row.nama_pemain}
+                onChange={v => updateRow(i, "nama_pemain", v)} placeholder="Lionel Messi" />
+            </div>
+            <FInput label="Usia" value={row.usia}
+              onChange={v => updateRow(i, "usia", Number(v))} type="number" placeholder="25" />
+            <FInput label="Asal Klub" value={row.asal_klub}
+              onChange={v => updateRow(i, "asal_klub", v)} placeholder="Inter Miami" />
+            <div className="col-span-2">
+              <FInput label="Nilai Pasar" value={row.nilai_pasar}
+                onChange={v => updateRow(i, "nilai_pasar", v)} placeholder="€30M" />
+            </div>
+          </div>
+        </div>
+      ))}
+      <button onClick={addRow} className="w-full rounded-lg border border-dashed border-primary/30 py-2 text-xs text-primary/70 hover:border-primary/60 hover:text-primary">
+        + Tambah Pemain
+      </button>
+      <button onClick={save} disabled={saving} className="w-full rounded-lg bg-primary px-4 py-2 text-sm font-bold text-primary-foreground disabled:opacity-50">
+        {saving ? "Menyimpan..." : "Simpan & Sisipkan"}
+      </button>
+    </div>
+  )
+}
+
+// ─── Form: Pemain Andalan ─────────────────────────────────────────────────────
+
+function PemainAndalanForm({ widgetId, onSaved }: { widgetId: string; onSaved: () => void }) {
+  const supabase = createClient()
+  const [saving, setSaving] = useState(false)
+  const [data, setData] = useState({
+    nama_pemain: "",
+    nomor_punggung: 10,
+    posisi: "ST",
+    usia: 25,
+    tinggi_badan: 175,
+    berat_badan: 70,
+    kaki_dominan: "Kanan",
+    jumlah_pertandingan: 0,
+    kontribusi_goal: 0,
+    kontribusi_assist: 0,
+    menit_bermain: 0,
+    rating_performa: 7.0,
+    kebangsaan: "",
+    foto_url: "",
+  })
+
+  useEffect(() => {
+    supabase.from("widget_pemain_andalan").select("*").eq("id", widgetId).maybeSingle()
+      .then(({ data: row }) => {
+        if (row) setData({
+          nama_pemain: row.nama_pemain ?? "",
+          nomor_punggung: row.nomor_punggung ?? 10,
+          posisi: row.posisi ?? "ST",
+          usia: row.usia ?? 25,
+          tinggi_badan: row.tinggi_badan ?? 175,
+          berat_badan: row.berat_badan ?? 70,
+          kaki_dominan: row.kaki_dominan ?? "Kanan",
+          jumlah_pertandingan: row.jumlah_pertandingan ?? 0,
+          kontribusi_goal: row.kontribusi_goal ?? 0,
+          kontribusi_assist: row.kontribusi_assist ?? 0,
+          menit_bermain: row.menit_bermain ?? 0,
+          rating_performa: row.rating_performa ?? 7.0,
+          kebangsaan: row.kebangsaan ?? "",
+          foto_url: row.foto_url ?? "",
+        })
+      })
+  }, [widgetId])
+
+  async function save() {
+    setSaving(true)
+    await supabase.from("widget_pemain_andalan").upsert({
+      id: widgetId,
+      nama_pemain: data.nama_pemain,
+      nomor_punggung: Number(data.nomor_punggung),
+      posisi: data.posisi,
+      usia: Number(data.usia),
+      tinggi_badan: Number(data.tinggi_badan),
+      berat_badan: Number(data.berat_badan),
+      kaki_dominan: data.kaki_dominan,
+      jumlah_pertandingan: Number(data.jumlah_pertandingan),
+      kontribusi_goal: Number(data.kontribusi_goal),
+      kontribusi_assist: Number(data.kontribusi_assist),
+      menit_bermain: Number(data.menit_bermain),
+      rating_performa: Number(data.rating_performa),
+      kebangsaan: data.kebangsaan || null,
+      foto_url: data.foto_url || null,
+    }, { onConflict: "id" })
+    setSaving(false)
+    onSaved()
+  }
+
+  const kakiOptions = [
+    { label: "Kanan", value: "Kanan" },
+    { label: "Kiri", value: "Kiri" },
+    { label: "Kedua", value: "Kedua" },
+  ]
+
+  return (
+    <div className="space-y-3">
+      <p className="text-[10px] font-bold uppercase tracking-widest text-muted-foreground pt-1">Identitas Pemain</p>
+      <FInput label="Nama Pemain" value={data.nama_pemain}
+        onChange={v => setData(p => ({ ...p, nama_pemain: v }))} placeholder="Erling Haaland" />
+      <div className="grid grid-cols-2 gap-2">
+        <FInput label="No. Punggung" value={data.nomor_punggung}
+          onChange={v => setData(p => ({ ...p, nomor_punggung: Number(v) }))} type="number" />
+        <FInput label="Posisi" value={data.posisi}
+          onChange={v => setData(p => ({ ...p, posisi: v }))} placeholder="ST" />
+        <FInput label="Usia" value={data.usia}
+          onChange={v => setData(p => ({ ...p, usia: Number(v) }))} type="number" />
+        <FInput label="Kebangsaan (opsional)" value={data.kebangsaan}
+          onChange={v => setData(p => ({ ...p, kebangsaan: v }))} placeholder="Norwegia" />
+      </div>
+      <p className="text-[10px] font-bold uppercase tracking-widest text-muted-foreground pt-1">Data Fisik</p>
+      <div className="grid grid-cols-3 gap-2">
+        <FInput label="Tinggi (cm)" value={data.tinggi_badan}
+          onChange={v => setData(p => ({ ...p, tinggi_badan: Number(v) }))} type="number" placeholder="194" />
+        <FInput label="Berat (kg)" value={data.berat_badan}
+          onChange={v => setData(p => ({ ...p, berat_badan: Number(v) }))} type="number" placeholder="88" />
+        <FSelect label="Kaki Dominan" value={data.kaki_dominan}
+          onChange={v => setData(p => ({ ...p, kaki_dominan: v }))} options={kakiOptions} />
+      </div>
+      <p className="text-[10px] font-bold uppercase tracking-widest text-muted-foreground pt-1">Statistik</p>
+      <div className="grid grid-cols-2 gap-2">
+        <FInput label="Jumlah Pertandingan" value={data.jumlah_pertandingan}
+          onChange={v => setData(p => ({ ...p, jumlah_pertandingan: Number(v) }))} type="number" />
+        <FInput label="Menit Bermain" value={data.menit_bermain}
+          onChange={v => setData(p => ({ ...p, menit_bermain: Number(v) }))} type="number" />
+        <FInput label="Kontribusi Gol" value={data.kontribusi_goal}
+          onChange={v => setData(p => ({ ...p, kontribusi_goal: Number(v) }))} type="number" />
+        <FInput label="Kontribusi Assist" value={data.kontribusi_assist}
+          onChange={v => setData(p => ({ ...p, kontribusi_assist: Number(v) }))} type="number" />
+        <div className="col-span-2">
+          <FInput label="Rating Performa (0–10)" value={data.rating_performa}
+            onChange={v => setData(p => ({ ...p, rating_performa: Number(v) }))} type="number" placeholder="7.5" />
+        </div>
+      </div>
+      <FInput label="URL Foto (opsional)" value={data.foto_url}
+        onChange={v => setData(p => ({ ...p, foto_url: v }))} placeholder="https://..." />
+      <button onClick={save} disabled={saving}
+        className="w-full rounded-lg bg-primary px-4 py-2 text-sm font-bold text-primary-foreground disabled:opacity-50">
+        {saving ? "Menyimpan..." : "Simpan & Sisipkan"}
+      </button>
+    </div>
+  )
+}
+
 // ─── Main WidgetInserter ──────────────────────────────────────────────────────
 
 export function WidgetInserter({ onInsert, editWidgetId, editWidgetType, onResetEdit, initialWidgets = [] }: Props) {
@@ -795,6 +1125,15 @@ export function WidgetInserter({ onInsert, editWidgetId, editWidgetType, onReset
           )}
           {selectedType === "analisa_taktis" && (
             <AnalisaTaktisForm widgetId={activeWidgetId} onSaved={handleSaved} />
+          )}
+          {selectedType === "profil_stadion" && (
+            <ProfilStadionForm widgetId={activeWidgetId} onSaved={handleSaved} />
+          )}
+          {selectedType === "daftar_pemain" && (
+            <DaftarPemainForm widgetId={activeWidgetId} onSaved={handleSaved} />
+          )}
+          {selectedType === "pemain_andalan" && (
+            <PemainAndalanForm widgetId={activeWidgetId} onSaved={handleSaved} />
           )}
         </div>
       )}

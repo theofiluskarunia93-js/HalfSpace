@@ -874,6 +874,270 @@ function TimelinePertandinganEditor({ widgetId, onClose, onSaved }: { widgetId: 
   )
 }
 
+// ── Editor: Profil Stadion ────────────────────────────────────────────────────
+
+function ProfilStadionEditor({ widgetId, onClose, onSaved }: { widgetId: string; onClose: () => void; onSaved?: () => void }) {
+  const supabase = createClient()
+  const [saving, setSaving] = useState(false)
+  const [data, setData] = useState({
+    nama_stadion: "", kota: "", kapasitas: 0, jenis_rumput: "",
+    jenis_atap: "", negara: "", tahun_berdiri: "", foto_url: "",
+  })
+
+  useEffect(() => {
+    supabase.from("widget_profil_stadion").select("*").eq("id", widgetId).maybeSingle()
+      .then(({ data: row }) => {
+        if (row) setData({
+          nama_stadion: row.nama_stadion ?? "",
+          kota: row.kota ?? "",
+          kapasitas: row.kapasitas ?? 0,
+          jenis_rumput: row.jenis_rumput ?? "",
+          jenis_atap: row.jenis_atap ?? "",
+          negara: row.negara ?? "",
+          tahun_berdiri: row.tahun_berdiri ? String(row.tahun_berdiri) : "",
+          foto_url: row.foto_url ?? "",
+        })
+      })
+  }, [widgetId])
+
+  async function save() {
+    setSaving(true)
+    await supabase.from("widget_profil_stadion").upsert({
+      id: widgetId,
+      nama_stadion: data.nama_stadion,
+      kota: data.kota,
+      kapasitas: Number(data.kapasitas),
+      jenis_rumput: data.jenis_rumput,
+      jenis_atap: data.jenis_atap,
+      negara: data.negara || null,
+      tahun_berdiri: data.tahun_berdiri ? Number(data.tahun_berdiri) : null,
+      foto_url: data.foto_url || null,
+    }, { onConflict: "id" })
+    setSaving(false)
+    onSaved?.()
+    onClose()
+  }
+
+  return (
+    <div className="space-y-4">
+      <Input label="Nama Stadion" value={data.nama_stadion} onChange={v => setData(p => ({ ...p, nama_stadion: v }))} placeholder="Gelora Bung Karno" />
+      <div className="grid grid-cols-2 gap-3">
+        <Input label="Kota" value={data.kota} onChange={v => setData(p => ({ ...p, kota: v }))} placeholder="Jakarta" />
+        <Input label="Negara" value={data.negara} onChange={v => setData(p => ({ ...p, negara: v }))} placeholder="Indonesia" />
+      </div>
+      <Input label="Kapasitas (penonton)" value={data.kapasitas} onChange={v => setData(p => ({ ...p, kapasitas: Number(v) }))} type="number" placeholder="77000" />
+      <div className="grid grid-cols-2 gap-3">
+        <Input label="Jenis Rumput" value={data.jenis_rumput} onChange={v => setData(p => ({ ...p, jenis_rumput: v }))} placeholder="Natural / Sintetis" />
+        <Input label="Jenis Atap" value={data.jenis_atap} onChange={v => setData(p => ({ ...p, jenis_atap: v }))} placeholder="Terbuka / Tertutup" />
+      </div>
+      <Input label="Tahun Berdiri (opsional)" value={data.tahun_berdiri} onChange={v => setData(p => ({ ...p, tahun_berdiri: v }))} type="number" placeholder="1962" />
+      <Input label="URL Foto (opsional)" value={data.foto_url} onChange={v => setData(p => ({ ...p, foto_url: v }))} placeholder="https://..." />
+      <div className="flex justify-end gap-3 pt-2">
+        <button onClick={onClose} className="rounded-lg border border-white/10 px-5 py-2 text-sm text-zinc-400 hover:text-white">Batal</button>
+        <button onClick={save} disabled={saving} className="flex items-center gap-2 rounded-lg bg-[#39FF14] px-5 py-2 text-sm font-bold text-black hover:opacity-90 disabled:opacity-50">
+          {saving ? <Loader2 size={14} className="animate-spin" /> : <Save size={14} />} Simpan
+        </button>
+      </div>
+    </div>
+  )
+}
+
+// ── Editor: Daftar Pemain Tim ─────────────────────────────────────────────────
+
+function DaftarPemainEditor({ widgetId, onClose, onSaved }: { widgetId: string; onClose: () => void; onSaved?: () => void }) {
+  const supabase = createClient()
+  const [saving, setSaving] = useState(false)
+  const [rows, setRows] = useState([{
+    id: crypto.randomUUID(), widget_id: widgetId, nomor_punggung: 1,
+    nama_pemain: "", usia: 0, asal_klub: "", nilai_pasar: "", posisi: "", _isNew: true,
+  }])
+
+  useEffect(() => {
+    supabase.from("widget_daftar_pemain").select("*").eq("widget_id", widgetId)
+      .order("nomor_punggung", { ascending: true })
+      .then(({ data }) => {
+        if (data && data.length > 0) setRows(data.map(r => ({ ...r, posisi: r.posisi ?? "", _isNew: false })) as any)
+      })
+  }, [widgetId])
+
+  function updateRow(i: number, field: string, value: any) {
+    setRows(prev => { const c = [...prev]; c[i] = { ...c[i], [field]: value }; return c })
+  }
+  function addRow() {
+    setRows(prev => [...prev, {
+      id: crypto.randomUUID(), widget_id: widgetId, nomor_punggung: prev.length + 1,
+      nama_pemain: "", usia: 0, asal_klub: "", nilai_pasar: "", posisi: "", _isNew: true,
+    }])
+  }
+  async function removeRow(i: number) {
+    const row = rows[i] as any
+    if (!row._isNew) await supabase.from("widget_daftar_pemain").delete().eq("id", row.id)
+    setRows(prev => prev.filter((_, idx) => idx !== i))
+  }
+
+  async function save() {
+    setSaving(true)
+    for (const row of rows) {
+      await supabase.from("widget_daftar_pemain").upsert({
+        id: row.id, widget_id: widgetId,
+        nomor_punggung: Number(row.nomor_punggung),
+        nama_pemain: row.nama_pemain,
+        usia: Number(row.usia),
+        asal_klub: row.asal_klub,
+        nilai_pasar: row.nilai_pasar,
+        posisi: row.posisi || null,
+      }, { onConflict: "id" })
+    }
+    setSaving(false)
+    onSaved?.()
+    onClose()
+  }
+
+  const posisiOptions = [
+    "", "GK", "CB", "LB", "RB", "LWB", "RWB", "DM", "CM", "AM", "LW", "RW", "SS", "ST", "CF",
+  ]
+
+  return (
+    <div className="space-y-3">
+      {rows.map((row, i) => (
+        <div key={row.id} className="relative rounded-xl border border-white/10 bg-white/5 p-4 space-y-3">
+          <button onClick={() => removeRow(i)} className="absolute right-3 top-3 text-zinc-600 hover:text-red-400"><Trash2 size={14} /></button>
+          <div className="grid grid-cols-2 gap-3">
+            <Input label="No. Punggung" value={row.nomor_punggung} onChange={v => updateRow(i, "nomor_punggung", Number(v))} type="number" />
+            <div className="flex flex-col gap-1">
+              <label className="text-[11px] font-semibold uppercase tracking-widest text-zinc-500">Posisi</label>
+              <select value={row.posisi} onChange={e => updateRow(i, "posisi", e.target.value)}
+                className="rounded-lg border border-white/10 bg-zinc-900 px-3 py-2 text-sm text-white outline-none focus:border-[#39FF14]/50">
+                {posisiOptions.map(p => <option key={p} value={p}>{p || "— Pilih —"}</option>)}
+              </select>
+            </div>
+            <div className="col-span-2">
+              <Input label="Nama Pemain" value={row.nama_pemain} onChange={v => updateRow(i, "nama_pemain", v)} placeholder="Lionel Messi" />
+            </div>
+            <Input label="Usia" value={row.usia} onChange={v => updateRow(i, "usia", Number(v))} type="number" />
+            <Input label="Asal Klub" value={row.asal_klub} onChange={v => updateRow(i, "asal_klub", v)} placeholder="Inter Miami" />
+            <div className="col-span-2">
+              <Input label="Nilai Pasar" value={row.nilai_pasar} onChange={v => updateRow(i, "nilai_pasar", v)} placeholder="€30M" />
+            </div>
+          </div>
+        </div>
+      ))}
+      <button onClick={addRow} className="flex w-full items-center justify-center gap-2 rounded-xl border border-dashed border-[#39FF14]/30 py-2.5 text-sm text-[#39FF14]/70 hover:border-[#39FF14]/60 hover:text-[#39FF14]">
+        <Plus size={14} /> Tambah Pemain
+      </button>
+      <div className="flex justify-end gap-3 pt-2">
+        <button onClick={onClose} className="rounded-lg border border-white/10 px-5 py-2 text-sm text-zinc-400 hover:text-white">Batal</button>
+        <button onClick={save} disabled={saving} className="flex items-center gap-2 rounded-lg bg-[#39FF14] px-5 py-2 text-sm font-bold text-black hover:opacity-90 disabled:opacity-50">
+          {saving ? <Loader2 size={14} className="animate-spin" /> : <Save size={14} />} Simpan
+        </button>
+      </div>
+    </div>
+  )
+}
+
+// ── Editor: Pemain Andalan ────────────────────────────────────────────────────
+
+function PemainAndalanEditor({ widgetId, onClose, onSaved }: { widgetId: string; onClose: () => void; onSaved?: () => void }) {
+  const supabase = createClient()
+  const [saving, setSaving] = useState(false)
+  const [data, setData] = useState({
+    nama_pemain: "", nomor_punggung: 10, posisi: "ST", usia: 25,
+    tinggi_badan: 175, berat_badan: 70, kaki_dominan: "Kanan",
+    jumlah_pertandingan: 0, kontribusi_goal: 0, kontribusi_assist: 0,
+    menit_bermain: 0, rating_performa: 7.0, kebangsaan: "", foto_url: "",
+  })
+
+  useEffect(() => {
+    supabase.from("widget_pemain_andalan").select("*").eq("id", widgetId).maybeSingle()
+      .then(({ data: row }) => {
+        if (row) setData({
+          nama_pemain: row.nama_pemain ?? "",
+          nomor_punggung: row.nomor_punggung ?? 10,
+          posisi: row.posisi ?? "ST",
+          usia: row.usia ?? 25,
+          tinggi_badan: row.tinggi_badan ?? 175,
+          berat_badan: row.berat_badan ?? 70,
+          kaki_dominan: row.kaki_dominan ?? "Kanan",
+          jumlah_pertandingan: row.jumlah_pertandingan ?? 0,
+          kontribusi_goal: row.kontribusi_goal ?? 0,
+          kontribusi_assist: row.kontribusi_assist ?? 0,
+          menit_bermain: row.menit_bermain ?? 0,
+          rating_performa: row.rating_performa ?? 7.0,
+          kebangsaan: row.kebangsaan ?? "",
+          foto_url: row.foto_url ?? "",
+        })
+      })
+  }, [widgetId])
+
+  async function save() {
+    setSaving(true)
+    await supabase.from("widget_pemain_andalan").upsert({
+      id: widgetId,
+      nama_pemain: data.nama_pemain,
+      nomor_punggung: Number(data.nomor_punggung),
+      posisi: data.posisi,
+      usia: Number(data.usia),
+      tinggi_badan: Number(data.tinggi_badan),
+      berat_badan: Number(data.berat_badan),
+      kaki_dominan: data.kaki_dominan,
+      jumlah_pertandingan: Number(data.jumlah_pertandingan),
+      kontribusi_goal: Number(data.kontribusi_goal),
+      kontribusi_assist: Number(data.kontribusi_assist),
+      menit_bermain: Number(data.menit_bermain),
+      rating_performa: Number(data.rating_performa),
+      kebangsaan: data.kebangsaan || null,
+      foto_url: data.foto_url || null,
+    }, { onConflict: "id" })
+    setSaving(false)
+    onSaved?.()
+    onClose()
+  }
+
+  return (
+    <div className="space-y-4">
+      <p className="text-[10px] font-bold uppercase tracking-widest text-zinc-500">Identitas Pemain</p>
+      <Input label="Nama Pemain" value={data.nama_pemain} onChange={v => setData(p => ({ ...p, nama_pemain: v }))} placeholder="Erling Haaland" />
+      <div className="grid grid-cols-2 gap-3">
+        <Input label="No. Punggung" value={data.nomor_punggung} onChange={v => setData(p => ({ ...p, nomor_punggung: Number(v) }))} type="number" />
+        <Input label="Posisi" value={data.posisi} onChange={v => setData(p => ({ ...p, posisi: v }))} placeholder="ST" />
+        <Input label="Usia" value={data.usia} onChange={v => setData(p => ({ ...p, usia: Number(v) }))} type="number" />
+        <Input label="Kebangsaan" value={data.kebangsaan} onChange={v => setData(p => ({ ...p, kebangsaan: v }))} placeholder="Norwegia" />
+      </div>
+      <p className="text-[10px] font-bold uppercase tracking-widest text-zinc-500">Data Fisik</p>
+      <div className="grid grid-cols-3 gap-3">
+        <Input label="Tinggi (cm)" value={data.tinggi_badan} onChange={v => setData(p => ({ ...p, tinggi_badan: Number(v) }))} type="number" />
+        <Input label="Berat (kg)" value={data.berat_badan} onChange={v => setData(p => ({ ...p, berat_badan: Number(v) }))} type="number" />
+        <div className="flex flex-col gap-1">
+          <label className="text-[11px] font-semibold uppercase tracking-widest text-zinc-500">Kaki Dominan</label>
+          <select value={data.kaki_dominan} onChange={e => setData(p => ({ ...p, kaki_dominan: e.target.value }))}
+            className="rounded-lg border border-white/10 bg-zinc-900 px-3 py-2 text-sm text-white outline-none focus:border-[#39FF14]/50">
+            <option value="Kanan">Kanan</option>
+            <option value="Kiri">Kiri</option>
+            <option value="Kedua">Kedua</option>
+          </select>
+        </div>
+      </div>
+      <p className="text-[10px] font-bold uppercase tracking-widest text-zinc-500">Statistik</p>
+      <div className="grid grid-cols-2 gap-3">
+        <Input label="Jumlah Pertandingan" value={data.jumlah_pertandingan} onChange={v => setData(p => ({ ...p, jumlah_pertandingan: Number(v) }))} type="number" />
+        <Input label="Menit Bermain" value={data.menit_bermain} onChange={v => setData(p => ({ ...p, menit_bermain: Number(v) }))} type="number" />
+        <Input label="Kontribusi Gol" value={data.kontribusi_goal} onChange={v => setData(p => ({ ...p, kontribusi_goal: Number(v) }))} type="number" />
+        <Input label="Kontribusi Assist" value={data.kontribusi_assist} onChange={v => setData(p => ({ ...p, kontribusi_assist: Number(v) }))} type="number" />
+        <div className="col-span-2">
+          <Input label="Rating Performa (0–10)" value={data.rating_performa} onChange={v => setData(p => ({ ...p, rating_performa: Number(v) }))} type="number" placeholder="7.5" />
+        </div>
+      </div>
+      <Input label="URL Foto (opsional)" value={data.foto_url} onChange={v => setData(p => ({ ...p, foto_url: v }))} placeholder="https://..." />
+      <div className="flex justify-end gap-3 pt-2">
+        <button onClick={onClose} className="rounded-lg border border-white/10 px-5 py-2 text-sm text-zinc-400 hover:text-white">Batal</button>
+        <button onClick={save} disabled={saving} className="flex items-center gap-2 rounded-lg bg-[#39FF14] px-5 py-2 text-sm font-bold text-black hover:opacity-90 disabled:opacity-50">
+          {saving ? <Loader2 size={14} className="animate-spin" /> : <Save size={14} />} Simpan
+        </button>
+      </div>
+    </div>
+  )
+}
+
 // ── Main Modal ────────────────────────────────────────────────────────────────
 
 export function WidgetEditModal({ widgetId, widgetType, onClose, onSaved }: WidgetEditModalProps) {
@@ -901,6 +1165,9 @@ export function WidgetEditModal({ widgetId, widgetType, onClose, onSaved }: Widg
     analisa_taktis:          "Edit Analisa Taktis",
     perbandingan_tim:        "Edit Perbandingan Tim",
     timeline_pertandingan:   "Edit Timeline Pertandingan",
+    profil_stadion:          "Edit Profil Stadion",
+    daftar_pemain:           "Edit Daftar Pemain Tim",
+    pemain_andalan:          "Edit Pemain Andalan",
   }
   const title = titleMap[widgetType] ?? "Edit Widget"
 
@@ -943,6 +1210,12 @@ export function WidgetEditModal({ widgetId, widgetType, onClose, onSaved }: Widg
             <PerbandinganTimEditor widgetId={widgetId} onClose={onClose} onSaved={onSaved} />
           ) : widgetType === "timeline_pertandingan" ? (
             <TimelinePertandinganEditor widgetId={widgetId} onClose={onClose} onSaved={onSaved} />
+          ) : widgetType === "profil_stadion" ? (
+            <ProfilStadionEditor widgetId={widgetId} onClose={onClose} onSaved={onSaved} />
+          ) : widgetType === "daftar_pemain" ? (
+            <DaftarPemainEditor widgetId={widgetId} onClose={onClose} onSaved={onSaved} />
+          ) : widgetType === "pemain_andalan" ? (
+            <PemainAndalanEditor widgetId={widgetId} onClose={onClose} onSaved={onSaved} />
           ) : (
             <div className="py-8 text-center">
               <p className="text-sm text-gray-400">Gunakan panel <span className="font-bold text-[#39FF14]">Widget Inserter</span> di editor untuk mengedit widget ini.</p>

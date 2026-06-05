@@ -1299,3 +1299,550 @@ export function AnalisaTaktisCard({ widgetId, isAdmin, onEdit }: AnalisaTaktisCa
     </div>
   )
 }
+
+// ── Profil Stadion Card ────────────────────────────────────────────────────────
+
+export interface ProfilStadionRow {
+  id: string
+  nama_stadion: string
+  kota: string
+  kapasitas: number
+  jenis_rumput: string
+  jenis_atap: string
+  negara?: string | null
+  tahun_berdiri?: number | null
+  foto_url?: string | null
+}
+
+interface ProfilStadionCardProps {
+  widgetId: string
+  isAdmin?: boolean
+  onEdit?: (widgetId: string) => void
+  refreshKey?: number
+}
+
+export function ProfilStadionCard({ widgetId, isAdmin, onEdit, refreshKey }: ProfilStadionCardProps) {
+  const [data, setData] = useState<ProfilStadionRow | null>(null)
+  const [loading, setLoading] = useState(true)
+  const [error, setError] = useState<string | null>(null)
+
+  useEffect(() => {
+    async function fetchData() {
+      try {
+        const supabase = createClient()
+        const { data: row, error } = await supabase
+          .from("widget_profil_stadion")
+          .select("*")
+          .eq("id", widgetId)
+          .maybeSingle()
+        if (error) throw error
+        setData(row)
+      } catch (e: any) {
+        setError(e.message ?? "Gagal memuat data stadion.")
+      } finally {
+        setLoading(false)
+      }
+    }
+    fetchData()
+  }, [widgetId, refreshKey])
+
+  return (
+    <div className="not-prose my-6 rounded-2xl border border-white/10 bg-[#0f1117] shadow-lg overflow-hidden">
+      {/* Header */}
+      <div className="flex items-center justify-between border-b border-white/10 bg-[#13151c] px-5 py-3.5">
+        <div className="flex items-center gap-2.5">
+          <span className="text-lg">🏟️</span>
+          <span className="font-semibold text-white">Profil Stadion</span>
+        </div>
+        {isAdmin && onEdit && (
+          <button
+            onClick={() => onEdit(widgetId)}
+            className="flex items-center gap-1.5 rounded-lg border border-[#39FF14]/30 bg-[#39FF14]/10 px-3 py-1.5 text-xs font-medium text-[#39FF14] transition-all hover:bg-[#39FF14]/20 hover:border-[#39FF14]/60"
+          >
+            <Pencil size={12} />
+            Edit Widget
+          </button>
+        )}
+      </div>
+
+      {loading ? (
+        <LoadingState />
+      ) : error ? (
+        <ErrorState message={error} />
+      ) : !data ? (
+        <p className="py-8 text-center text-sm text-gray-500">Data stadion belum tersedia.</p>
+      ) : (
+        <div className="p-5 space-y-5">
+          {/* Nama + Kota */}
+          <div className="text-center space-y-1">
+            <h2 className="text-2xl font-black text-white tracking-tight">{data.nama_stadion}</h2>
+            <p className="text-sm text-[#39FF14] font-semibold uppercase tracking-widest">
+              {data.kota}{data.negara ? `, ${data.negara}` : ""}
+            </p>
+          </div>
+
+          {/* Kapasitas highlight */}
+          <div className="rounded-xl bg-[#39FF14]/10 border border-[#39FF14]/20 px-5 py-4 text-center">
+            <p className="text-[10px] font-bold uppercase tracking-widest text-[#39FF14]/70 mb-1">Kapasitas</p>
+            <p className="text-4xl font-black text-[#39FF14]">
+              {data.kapasitas.toLocaleString("id-ID")}
+            </p>
+            <p className="text-xs text-gray-400 mt-0.5">penonton</p>
+          </div>
+
+          {/* Detail grid */}
+          <div className="grid grid-cols-2 gap-3">
+            <div className="rounded-xl bg-[#181b24] border border-white/5 p-4 space-y-1">
+              <p className="text-[10px] font-bold uppercase tracking-widest text-gray-500">Jenis Rumput</p>
+              <p className="text-sm font-semibold text-white">{data.jenis_rumput}</p>
+            </div>
+            <div className="rounded-xl bg-[#181b24] border border-white/5 p-4 space-y-1">
+              <p className="text-[10px] font-bold uppercase tracking-widest text-gray-500">Jenis Atap</p>
+              <p className="text-sm font-semibold text-white">{data.jenis_atap}</p>
+            </div>
+            {data.tahun_berdiri && (
+              <div className="col-span-2 rounded-xl bg-[#181b24] border border-white/5 p-4 space-y-1">
+                <p className="text-[10px] font-bold uppercase tracking-widest text-gray-500">Tahun Berdiri</p>
+                <p className="text-sm font-semibold text-white">{data.tahun_berdiri}</p>
+              </div>
+            )}
+          </div>
+
+          {/* Footer accent */}
+          <div className="h-px bg-gradient-to-r from-transparent via-[#39FF14]/30 to-transparent" />
+        </div>
+      )}
+    </div>
+  )
+}
+
+// ── Daftar Pemain Tim Card ─────────────────────────────────────────────────────
+
+export interface DaftarPemainRow {
+  id: string
+  widget_id: string
+  nomor_punggung: number
+  nama_pemain: string
+  usia: number
+  asal_klub: string
+  nilai_pasar: string
+  posisi?: string | null
+}
+
+interface DaftarPemainCardProps {
+  widgetId: string
+  isAdmin?: boolean
+  onEdit?: (widgetId: string) => void
+  refreshKey?: number
+}
+
+function getPosisiGroup(posisi: string | null | undefined): string {
+  if (!posisi) return "Lainnya"
+  const p = posisi.toUpperCase()
+  if (p === "GK") return "Kiper"
+  if (["CB", "LB", "RB", "LWB", "RWB"].includes(p)) return "Bek"
+  if (["DM", "CM", "AM"].includes(p)) return "Gelandang"
+  if (["LW", "RW", "SS", "ST", "CF"].includes(p)) return "Penyerang"
+  return "Lainnya"
+}
+
+export function DaftarPemainCard({ widgetId, isAdmin, onEdit, refreshKey }: DaftarPemainCardProps) {
+  const [players, setPlayers] = useState<DaftarPemainRow[]>([])
+  const [loading, setLoading] = useState(true)
+  const [error, setError] = useState<string | null>(null)
+  const [activeGroup, setActiveGroup] = useState<string>("Semua")
+
+  useEffect(() => {
+    async function fetchData() {
+      try {
+        const supabase = createClient()
+        const { data, error } = await supabase
+          .from("widget_daftar_pemain")
+          .select("*")
+          .eq("widget_id", widgetId)
+          .order("nomor_punggung", { ascending: true })
+        if (error) throw error
+        setPlayers(data ?? [])
+      } catch (e: any) {
+        setError(e.message ?? "Gagal memuat daftar pemain.")
+      } finally {
+        setLoading(false)
+      }
+    }
+    fetchData()
+  }, [widgetId, refreshKey])
+
+  const posisiGroups = Array.from(new Set(players.map(p => getPosisiGroup(p.posisi)))).filter(Boolean)
+  const groups = ["Semua", ...posisiGroups]
+  const filtered = activeGroup === "Semua" ? players : players.filter(p => getPosisiGroup(p.posisi) === activeGroup)
+
+  return (
+    <div className="not-prose my-6 rounded-2xl border border-white/10 bg-[#0f1117] shadow-lg overflow-hidden">
+      {/* Header */}
+      <div className="flex items-center justify-between border-b border-white/10 bg-[#13151c] px-5 py-3.5">
+        <div className="flex items-center gap-2.5">
+          <span className="text-lg">👥</span>
+          <span className="font-semibold text-white">Daftar Pemain Tim</span>
+        </div>
+        {isAdmin && onEdit && (
+          <button
+            onClick={() => onEdit(widgetId)}
+            className="flex items-center gap-1.5 rounded-lg border border-[#39FF14]/30 bg-[#39FF14]/10 px-3 py-1.5 text-xs font-medium text-[#39FF14] transition-all hover:bg-[#39FF14]/20 hover:border-[#39FF14]/60"
+          >
+            <Pencil size={12} />
+            Edit Widget
+          </button>
+        )}
+      </div>
+
+      {loading ? (
+        <LoadingState />
+      ) : error ? (
+        <ErrorState message={error} />
+      ) : players.length === 0 ? (
+        <p className="py-8 text-center text-sm text-gray-500">Belum ada data pemain.</p>
+      ) : (
+        <>
+          {/* Position filter tabs */}
+          {groups.length > 1 && (
+            <div
+              className="flex gap-2 border-b border-white/10 bg-[#13151c] px-5 py-3 overflow-x-auto"
+              style={{ WebkitOverflowScrolling: "touch", scrollbarWidth: "none", msOverflowStyle: "none" } as React.CSSProperties}
+            >
+              {groups.map(g => (
+                <button
+                  key={g}
+                  onClick={() => setActiveGroup(g)}
+                  className={`shrink-0 rounded-lg px-4 py-1.5 text-xs font-bold uppercase tracking-wider transition-all ${
+                    activeGroup === g
+                      ? "bg-[#39FF14] text-black"
+                      : "border border-white/10 bg-white/5 text-gray-300 hover:border-[#39FF14]/40 hover:text-white"
+                  }`}
+                >
+                  {g}
+                </button>
+              ))}
+            </div>
+          )}
+
+          {/* Table */}
+          <div className="overflow-x-auto">
+            <table className="w-full text-sm">
+              <thead>
+                <tr className="border-b border-white/10 bg-[#181b24]">
+                  <th className="px-4 py-3 text-left text-[10px] font-bold uppercase tracking-widest text-gray-500 w-12">#</th>
+                  <th className="px-4 py-3 text-left text-[10px] font-bold uppercase tracking-widest text-gray-500">Pemain</th>
+                  <th className="px-4 py-3 text-center text-[10px] font-bold uppercase tracking-widest text-gray-500">Usia</th>
+                  <th className="px-4 py-3 text-left text-[10px] font-bold uppercase tracking-widest text-gray-500">Asal Klub</th>
+                  <th className="px-4 py-3 text-right text-[10px] font-bold uppercase tracking-widest text-gray-500">Nilai Pasar</th>
+                </tr>
+              </thead>
+              <tbody>
+                {filtered.map((p, idx) => (
+                  <tr
+                    key={p.id}
+                    className={`border-b border-white/5 transition-colors hover:bg-white/5 ${idx % 2 === 0 ? "bg-transparent" : "bg-white/[0.02]"}`}
+                  >
+                    <td className="px-4 py-3">
+                      <span className="flex h-7 w-7 items-center justify-center rounded-lg bg-[#39FF14]/10 text-xs font-black text-[#39FF14]">
+                        {p.nomor_punggung}
+                      </span>
+                    </td>
+                    <td className="px-4 py-3">
+                      <p className="font-semibold text-white">{p.nama_pemain}</p>
+                      {p.posisi && (
+                        <p className="text-[10px] text-gray-500 mt-0.5 uppercase tracking-widest">{p.posisi}</p>
+                      )}
+                    </td>
+                    <td className="px-4 py-3 text-center text-gray-300">{p.usia}</td>
+                    <td className="px-4 py-3 text-gray-300">{p.asal_klub}</td>
+                    <td className="px-4 py-3 text-right">
+                      <span className="font-bold text-[#39FF14]">{p.nilai_pasar}</span>
+                    </td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </div>
+
+          {/* Footer count */}
+          <div className="px-5 py-3 border-t border-white/5 bg-[#13151c]">
+            <p className="text-xs text-gray-500">
+              Total: <span className="font-bold text-gray-300">{filtered.length}</span> pemain
+              {activeGroup !== "Semua" && ` (${activeGroup})`}
+            </p>
+          </div>
+        </>
+      )}
+    </div>
+  )
+}
+
+// ── Pemain Andalan Card ────────────────────────────────────────────────────────
+
+export interface PemainAndalanRow {
+  id: string
+  nama_pemain: string
+  nomor_punggung: number
+  posisi: string
+  usia: number
+  tinggi_badan: number
+  berat_badan: number
+  kaki_dominan: string
+  jumlah_pertandingan: number
+  kontribusi_goal: number
+  kontribusi_assist: number
+  menit_bermain: number
+  rating_performa: number
+  kebangsaan?: string | null
+  foto_url?: string | null
+}
+
+interface PemainAndalanCardProps {
+  widgetId: string
+  isAdmin?: boolean
+  onEdit?: (widgetId: string) => void
+  refreshKey?: number
+}
+
+export function PemainAndalanCard({ widgetId, isAdmin, onEdit, refreshKey }: PemainAndalanCardProps) {
+  const [data, setData] = useState<PemainAndalanRow | null>(null)
+  const [loading, setLoading] = useState(true)
+  const [error, setError] = useState<string | null>(null)
+  const [activeTab, setActiveTab] = useState<"profil" | "statistik" | "fisik">("profil")
+
+  useEffect(() => {
+    async function fetchData() {
+      try {
+        const supabase = createClient()
+        const { data: row, error } = await supabase
+          .from("widget_pemain_andalan")
+          .select("*")
+          .eq("id", widgetId)
+          .maybeSingle()
+        if (error) throw error
+        setData(row)
+      } catch (e: any) {
+        setError(e.message ?? "Gagal memuat data pemain.")
+      } finally {
+        setLoading(false)
+      }
+    }
+    fetchData()
+  }, [widgetId, refreshKey])
+
+  const TABS: { key: "profil" | "statistik" | "fisik"; label: string; icon: string }[] = [
+    { key: "profil", label: "Profil", icon: "👤" },
+    { key: "statistik", label: "Statistik", icon: "📊" },
+    { key: "fisik", label: "Fisik", icon: "💪" },
+  ]
+
+  function RatingBar({ value, max = 10 }: { value: number; max?: number }) {
+    const pct = Math.min(100, (value / max) * 100)
+    return (
+      <div className="flex items-center gap-3">
+        <div className="flex-1 h-2 rounded-full bg-white/10 overflow-hidden">
+          <div
+            className="h-full rounded-full bg-gradient-to-r from-[#39FF14]/60 to-[#39FF14]"
+            style={{ width: `${pct}%` }}
+          />
+        </div>
+        <span className="text-xs font-black text-[#39FF14] w-8 text-right">{value}</span>
+      </div>
+    )
+  }
+
+  function StatBox({ label, value, unit = "" }: { label: string; value: string | number; unit?: string }) {
+    return (
+      <div className="rounded-xl bg-[#181b24] border border-white/5 p-4 text-center space-y-1">
+        <p className="text-[10px] font-bold uppercase tracking-widest text-gray-500">{label}</p>
+        <p className="text-2xl font-black text-white leading-none">{value}</p>
+        {unit && <p className="text-[10px] text-gray-500">{unit}</p>}
+      </div>
+    )
+  }
+
+  return (
+    <div className="not-prose my-6 rounded-2xl border border-white/10 bg-[#0f1117] shadow-lg overflow-hidden">
+      {/* Header */}
+      <div className="flex items-center justify-between border-b border-white/10 bg-[#13151c] px-5 py-3.5">
+        <div className="flex items-center gap-2.5">
+          <span className="text-lg">⭐</span>
+          <span className="font-semibold text-white">Pemain Andalan</span>
+        </div>
+        {isAdmin && onEdit && (
+          <button
+            onClick={() => onEdit(widgetId)}
+            className="flex items-center gap-1.5 rounded-lg border border-[#39FF14]/30 bg-[#39FF14]/10 px-3 py-1.5 text-xs font-medium text-[#39FF14] transition-all hover:bg-[#39FF14]/20 hover:border-[#39FF14]/60"
+          >
+            <Pencil size={12} />
+            Edit Widget
+          </button>
+        )}
+      </div>
+
+      {loading ? (
+        <LoadingState />
+      ) : error ? (
+        <ErrorState message={error} />
+      ) : !data ? (
+        <p className="py-8 text-center text-sm text-gray-500">Data pemain belum tersedia.</p>
+      ) : (
+        <>
+          {/* Player hero section */}
+          <div className="bg-gradient-to-br from-[#13151c] to-[#0f1117] px-5 pt-5 pb-4">
+            <div className="flex items-center gap-4">
+              {/* Avatar / number badge */}
+              <div className="relative flex-shrink-0">
+                <div className="h-20 w-20 rounded-2xl bg-gradient-to-br from-[#39FF14]/20 to-[#39FF14]/5 border border-[#39FF14]/30 flex items-center justify-center">
+                  <span className="text-3xl font-black text-[#39FF14]">{data.nomor_punggung}</span>
+                </div>
+                <span className="absolute -bottom-1.5 -right-1.5 rounded-md bg-[#39FF14] px-1.5 py-0.5 text-[9px] font-black text-black uppercase tracking-widest">
+                  {data.posisi}
+                </span>
+              </div>
+              <div className="flex-1 min-w-0">
+                <p className="text-xl font-black text-white leading-tight truncate">{data.nama_pemain}</p>
+                {data.kebangsaan && (
+                  <p className="text-xs text-[#39FF14]/70 font-semibold mt-0.5">{data.kebangsaan}</p>
+                )}
+                {/* Rating stars visual */}
+                <div className="flex items-center gap-2 mt-2">
+                  <div className="flex gap-0.5">
+                    {[...Array(5)].map((_, i) => (
+                      <span
+                        key={i}
+                        className={`text-sm ${i < Math.round(data.rating_performa / 2) ? "text-[#39FF14]" : "text-white/10"}`}
+                      >★</span>
+                    ))}
+                  </div>
+                  <span className="text-xs font-bold text-gray-400">{data.rating_performa}/10</span>
+                </div>
+              </div>
+            </div>
+          </div>
+
+          {/* Interactive Tabs */}
+          <div className="flex border-b border-white/10 bg-[#13151c]">
+            {TABS.map(tab => (
+              <button
+                key={tab.key}
+                onClick={() => setActiveTab(tab.key)}
+                className={`flex-1 flex items-center justify-center gap-1.5 py-3 text-xs font-bold uppercase tracking-wider transition-all relative ${
+                  activeTab === tab.key ? "text-[#39FF14]" : "text-gray-500 hover:text-gray-300"
+                }`}
+              >
+                <span>{tab.icon}</span>
+                <span>{tab.label}</span>
+                {activeTab === tab.key && (
+                  <span className="absolute bottom-0 left-0 right-0 h-0.5 bg-[#39FF14] rounded-full" />
+                )}
+              </button>
+            ))}
+          </div>
+
+          {/* Tab Content */}
+          <div className="p-5">
+
+            {/* ── Tab: Profil ── */}
+            {activeTab === "profil" && (
+              <div className="space-y-3">
+                <div className="grid grid-cols-2 gap-3">
+                  <StatBox label="Usia" value={data.usia} unit="tahun" />
+                  <StatBox label="No. Punggung" value={data.nomor_punggung} />
+                </div>
+                <div className="rounded-xl bg-[#181b24] border border-white/5 px-4 py-3 flex items-center justify-between">
+                  <p className="text-[10px] font-bold uppercase tracking-widest text-gray-500">Posisi</p>
+                  <span className="rounded-lg bg-[#39FF14]/10 border border-[#39FF14]/20 px-3 py-1 text-xs font-bold text-[#39FF14]">
+                    {data.posisi}
+                  </span>
+                </div>
+                <div className="rounded-xl bg-[#181b24] border border-white/5 px-4 py-3 flex items-center justify-between">
+                  <p className="text-[10px] font-bold uppercase tracking-widest text-gray-500">Kaki Dominan</p>
+                  <span className="text-sm font-bold text-white">{data.kaki_dominan}</span>
+                </div>
+              </div>
+            )}
+
+            {/* ── Tab: Statistik ── */}
+            {activeTab === "statistik" && (
+              <div className="space-y-3">
+                <div className="grid grid-cols-3 gap-3">
+                  <StatBox label="Pertandingan" value={data.jumlah_pertandingan} />
+                  <StatBox label="Gol" value={data.kontribusi_goal} />
+                  <StatBox label="Assist" value={data.kontribusi_assist} />
+                </div>
+                <div className="rounded-xl bg-[#181b24] border border-white/5 p-4 space-y-3">
+                  <p className="text-[10px] font-bold uppercase tracking-widest text-gray-500">Kontribusi per Laga</p>
+                  <div className="flex justify-between text-xs">
+                    <span className="text-gray-400">Rata-rata Gol</span>
+                    <span className="text-white font-bold">
+                      {data.jumlah_pertandingan > 0
+                        ? (data.kontribusi_goal / data.jumlah_pertandingan).toFixed(2)
+                        : "0.00"}/laga
+                    </span>
+                  </div>
+                  <div className="flex justify-between text-xs">
+                    <span className="text-gray-400">Rata-rata Assist</span>
+                    <span className="text-white font-bold">
+                      {data.jumlah_pertandingan > 0
+                        ? (data.kontribusi_assist / data.jumlah_pertandingan).toFixed(2)
+                        : "0.00"}/laga
+                    </span>
+                  </div>
+                </div>
+                <div className="rounded-xl bg-[#181b24] border border-white/5 p-4 space-y-3">
+                  <div className="flex items-center justify-between">
+                    <p className="text-[10px] font-bold uppercase tracking-widest text-gray-500">Menit Bermain</p>
+                    <span className="text-sm font-bold text-white">{data.menit_bermain.toLocaleString("id-ID")}'</span>
+                  </div>
+                  <div>
+                    <p className="text-[10px] font-bold uppercase tracking-widest text-gray-500 mb-2">Rating Performa</p>
+                    <RatingBar value={data.rating_performa} max={10} />
+                  </div>
+                </div>
+              </div>
+            )}
+
+            {/* ── Tab: Fisik ── */}
+            {activeTab === "fisik" && (
+              <div className="space-y-3">
+                <div className="grid grid-cols-2 gap-3">
+                  <StatBox label="Tinggi Badan" value={data.tinggi_badan} unit="cm" />
+                  <StatBox label="Berat Badan" value={data.berat_badan} unit="kg" />
+                </div>
+                <div className="rounded-xl bg-[#181b24] border border-white/5 px-4 py-3 flex items-center justify-between">
+                  <p className="text-[10px] font-bold uppercase tracking-widest text-gray-500">Kaki Dominan</p>
+                  <div className="flex items-center gap-2">
+                    <span className="text-lg">
+                      {data.kaki_dominan === "Kedua" ? "⚡" : "🦶"}
+                    </span>
+                    <span className="text-sm font-bold text-white">{data.kaki_dominan}</span>
+                  </div>
+                </div>
+                <div className="rounded-xl bg-[#181b24] border border-white/5 p-4 text-center space-y-1">
+                  <p className="text-[10px] font-bold uppercase tracking-widest text-gray-500 mb-2">Indeks Massa Tubuh (BMI)</p>
+                  <p className="text-3xl font-black text-[#39FF14]">
+                    {(data.berat_badan / Math.pow(data.tinggi_badan / 100, 2)).toFixed(1)}
+                  </p>
+                  <p className="text-xs text-gray-500">
+                    {(() => {
+                      const bmi = data.berat_badan / Math.pow(data.tinggi_badan / 100, 2)
+                      if (bmi < 18.5) return "Kurus"
+                      if (bmi < 25) return "Normal"
+                      if (bmi < 30) return "Berlebih"
+                      return "Obesitas"
+                    })()}
+                  </p>
+                </div>
+              </div>
+            )}
+          </div>
+
+          {/* Footer accent */}
+          <div className="h-px bg-gradient-to-r from-transparent via-[#39FF14]/30 to-transparent" />
+        </>
+      )}
+    </div>
+  )
+}

@@ -38,6 +38,9 @@ function sanitizeBadgeContent(content: string): string {
           analisa_taktis:          `[analisa_taktis_data id="${wId}"]`,
           perbandingan_tim:        `[perbandingan_tim_data id="${wId}"]`,
           timeline_pertandingan:   `[timeline_pertandingan_data id="${wId}"]`,
+          profil_stadion:          `[profil_stadion_data id="${wId}"]`,
+          daftar_pemain:           `[daftar_pemain_data id="${wId}"]`,
+          pemain_andalan:          `[pemain_andalan_data id="${wId}"]`,
         }
         return scMap[wType] ?? null
       })()

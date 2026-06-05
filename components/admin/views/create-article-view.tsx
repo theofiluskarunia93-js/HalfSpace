@@ -84,15 +84,20 @@ function buildShortcodePlaceholder(widgetId: string, widgetType: WidgetType): st
     analisa_taktis:          `[analisa_taktis_data id="${widgetId}"]`,
     perbandingan_tim:        `[perbandingan_tim_data id="${widgetId}"]`,
     timeline_pertandingan:   `[timeline_pertandingan_data id="${widgetId}"]`,
+    profil_stadion:          `[profil_stadion_data id="${widgetId}"]`,
+    daftar_pemain:           `[daftar_pemain_data id="${widgetId}"]`,
+    pemain_andalan:          `[pemain_andalan_data id="${widgetId}"]`,
   }
   const iconMap: Record<WidgetType, string> = {
     jadwal: "📅", klasemen: "🏆", transfer: "🔄", peluang: "⭐", analisa_taktis: "🧠",
     perbandingan_tim: "⚔️", timeline_pertandingan: "📋",
+    profil_stadion: "🏟️", daftar_pemain: "👥", pemain_andalan: "⭐",
   }
   const labelMap: Record<WidgetType, string> = {
     jadwal: "Jadwal Pertandingan", klasemen: "Klasemen Grup",
     transfer: "Transfer Pemain", peluang: "Peluang Juara", analisa_taktis: "Analisa Taktis",
     perbandingan_tim: "Perbandingan Tim", timeline_pertandingan: "Timeline Pertandingan",
+    profil_stadion: "Profil Stadion", daftar_pemain: "Daftar Pemain Tim", pemain_andalan: "Pemain Andalan",
   }
   const shortcode = shortcodeMap[widgetType] ?? shortcodeMap.jadwal
   const icon = iconMap[widgetType] ?? "📦"

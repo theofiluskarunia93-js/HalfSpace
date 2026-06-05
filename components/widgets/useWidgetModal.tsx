@@ -2,7 +2,17 @@
 
 import { useState } from "react"
 
-export type WidgetType = "jadwal" | "klasemen" | "transfer" | "peluang" | "analisa_taktis" | "perbandingan_tim" | "timeline_pertandingan"
+export type WidgetType =
+  | "jadwal"
+  | "klasemen"
+  | "transfer"
+  | "peluang"
+  | "analisa_taktis"
+  | "perbandingan_tim"
+  | "timeline_pertandingan"
+  | "profil_stadion"
+  | "daftar_pemain"
+  | "pemain_andalan"
 
 export function useWidgetModal() {
   const [modalWidgetId, setModalWidgetId] = useState<string | null>(null)

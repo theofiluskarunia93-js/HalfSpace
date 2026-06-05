@@ -62,7 +62,7 @@ function contentToHtml(content: string): string {
 
 // Deteksi apakah konten mengandung shortcode widget
 function hasWidgetPlaceholder(content: string): boolean {
-  return /\[(match_data|klasemen_data|transfer_data|peluang_data|analisa_taktis_data|perbandingan_tim_data|timeline_pertandingan_data)\s+id="[a-fA-F0-9-]{36}"\]/.test(content)
+  return /\[(match_data|klasemen_data|transfer_data|peluang_data|analisa_taktis_data|perbandingan_tim_data|timeline_pertandingan_data|profil_stadion_data|daftar_pemain_data|pemain_andalan_data)\s+id="[a-fA-F0-9-]{36}"\]/.test(content)
 }
 
 // Bersihkan badge HTML editor yang terlanjur tersimpan di DB.
@@ -80,6 +80,9 @@ function cleanLegacyBadgeContent(content: string): string {
       analisa_taktis:          `[analisa_taktis_data id="${wId}"]`,
       perbandingan_tim:        `[perbandingan_tim_data id="${wId}"]`,
       timeline_pertandingan:   `[timeline_pertandingan_data id="${wId}"]`,
+      profil_stadion:          `[profil_stadion_data id="${wId}"]`,
+      daftar_pemain:           `[daftar_pemain_data id="${wId}"]`,
+      pemain_andalan:          `[pemain_andalan_data id="${wId}"]`,
     }
     return scMap[wType] ?? null
   }
