@@ -111,35 +111,35 @@ function buildShortcodePlaceholder(widgetId: string, widgetType: WidgetType): st
     `data-widget-type="${widgetType}" ` +
     `contenteditable="false" ` +
     `style="` +
-      `background:#ffffff;` +
+      `background:#0f1117;` +
       `border:1.5px solid rgba(57,255,20,0.45);` +
       `border-radius:12px;` +
       `overflow:hidden;` +
       `margin:16px 0;` +
-      `box-shadow:0 0 0 1px rgba(57,255,20,0.1),0 4px 16px rgba(57,255,20,0.08);` +
+      `will-change:transform;` +
       `cursor:default;` +
       `font-family:inherit;` +
     `">` +
     // Header
     `<div style="` +
-      `background:linear-gradient(135deg,#f8fff8 0%,#f0fff0 100%);` +
+      `background:#13151c;` +
       `border-bottom:1.5px solid rgba(57,255,20,0.25);` +
       `padding:10px 14px;` +
       `display:flex;align-items:center;justify-content:space-between;` +
     `">` +
       `<div style="display:flex;align-items:center;gap:8px;">` +
         `<span style="font-size:16px;">${icon}</span>` +
-        `<span style="font-size:12px;font-weight:800;color:#111;">${label}</span>` +
+        `<span style="font-size:12px;font-weight:800;color:#f0f0f0;">${label}</span>` +
         `<span style="background:#39FF14;color:#111;font-size:8px;font-weight:900;padding:1px 6px;border-radius:20px;text-transform:uppercase;">WIDGET</span>` +
       `</div>` +
       `<div style="display:flex;align-items:center;gap:6px;">` +
-        `<div style="width:6px;height:6px;border-radius:50%;background:#39FF14;box-shadow:0 0 6px #39FF14;"></div>` +
+        `<div style="width:6px;height:6px;border-radius:50%;background:#39FF14;"></div>` +
         `<span style="color:#39FF14;font-size:9px;font-weight:700;">AKTIF</span>` +
       `</div>` +
     `</div>` +
     // Body
     `<div style="padding:10px 14px;">` +
-      `<code style="font-size:10px;color:#555;background:#f5f5f5;padding:3px 8px;border-radius:6px;">${shortcode}</code>` +
+      `<code style="font-size:10px;color:#a0a0a0;background:#1a1d24;padding:3px 8px;border-radius:6px;">${shortcode}</code>` +
     `</div>` +
     // Footer
     `<div style="padding:4px 14px 10px;display:flex;align-items:center;justify-content:flex-end;gap:4px;">` +
@@ -997,12 +997,12 @@ export function CreateArticleView({ onBack, articleId }: CreateArticleViewProps)
                 </div>
 
                 {/* Area tulis */}
-                <div className="min-h-[540px] bg-card px-10 py-8">
+                <div className="h-[640px] overflow-y-auto bg-card px-10 py-8 scroll-smooth">
                   <EditorContent editor={editor} />
                 </div>
               </>
             ) : (
-              <div className="min-h-[540px] bg-card">
+              <div className="h-[640px] overflow-y-auto bg-card scroll-smooth">
                 {!previewContent.trim() ? (
                   <div className="flex h-60 items-center justify-center text-sm text-muted-foreground">
                     Belum ada konten untuk dipreview.
