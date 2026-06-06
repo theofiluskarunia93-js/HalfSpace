@@ -99,10 +99,10 @@ export function TrendingArticles({ widgetVisible = true, initialArticles }: Tren
             <article
               key={article.id}
               onClick={() => router.push(`/article/${article.slug}`)}
-              className="group min-w-[280px] flex-shrink-0 cursor-pointer overflow-hidden rounded-xl border border-border bg-card transition-all hover:border-primary/50 sm:min-w-[320px] md:min-w-[360px]"
+              className="group w-[280px] flex-shrink-0 cursor-pointer overflow-hidden rounded-xl border border-border bg-card transition-all hover:border-primary/50 sm:w-[320px] md:w-[360px]"
             >
               {/* Image */}
-              <div className="relative aspect-[16/9] overflow-hidden bg-muted">
+              <div className="relative h-[180px] overflow-hidden bg-muted sm:h-[190px] md:h-[200px]">
                 {article.featured_image_url ? (
                   <Image
                     src={article.featured_image_url}
