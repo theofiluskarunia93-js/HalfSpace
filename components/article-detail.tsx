@@ -895,6 +895,8 @@ export function ArticleDetail({ articleId, initialData }: ArticleDetailProps) {
   // rawContent: konten asli dari DB, dipakai untuk ArticleBody agar
   // parseWidgetContent bisa mendeteksi marker widget tanpa terdistorsi DOMParser
   const [rawContent, setRawContent] = useState("")
+  // fontSize: 0 = normal, -1 = kecil, 1 = besar
+  const [fontSize, setFontSize] = useState<0 | -1 | 1>(0)
   const contentRef = useRef<HTMLDivElement>(null)
   const supabase = createClient()
 
@@ -1174,9 +1176,51 @@ export function ArticleDetail({ articleId, initialData }: ArticleDetailProps) {
                     </span>
                   </div>
 
-                  {/* Share — top */}
-                  <div className="mt-4">
+                  {/* Share + Font Size control — top */}
+                  <div className="mt-4 flex flex-wrap items-center justify-between gap-3">
                     <ShareButtons title={article.title} />
+
+                    {/* Font size control */}
+                    <div className="flex items-center gap-1 rounded-lg border border-border bg-secondary/50 px-2 py-1">
+                      <button
+                        onClick={() => setFontSize(fontSize === -1 ? 0 : -1)}
+                        title="Perkecil tulisan"
+                        className={[
+                          "flex h-7 w-9 items-center justify-center rounded text-xs font-bold transition-colors",
+                          fontSize === -1
+                            ? "bg-primary text-primary-foreground"
+                            : "text-muted-foreground hover:bg-secondary hover:text-foreground",
+                        ].join(" ")}
+                      >
+                        A-
+                      </button>
+                      <div className="h-4 w-px bg-border" />
+                      <button
+                        onClick={() => setFontSize(0)}
+                        title="Ukuran normal"
+                        className={[
+                          "flex h-7 w-7 items-center justify-center rounded text-sm font-bold transition-colors",
+                          fontSize === 0
+                            ? "bg-primary text-primary-foreground"
+                            : "text-muted-foreground hover:bg-secondary hover:text-foreground",
+                        ].join(" ")}
+                      >
+                        A
+                      </button>
+                      <div className="h-4 w-px bg-border" />
+                      <button
+                        onClick={() => setFontSize(fontSize === 1 ? 0 : 1)}
+                        title="Perbesar tulisan"
+                        className={[
+                          "flex h-7 w-9 items-center justify-center rounded text-sm font-bold transition-colors",
+                          fontSize === 1
+                            ? "bg-primary text-primary-foreground"
+                            : "text-muted-foreground hover:bg-secondary hover:text-foreground",
+                        ].join(" ")}
+                      >
+                        A+
+                      </button>
+                    </div>
                   </div>
 
                   {/* Tags */}
@@ -1225,11 +1269,20 @@ export function ArticleDetail({ articleId, initialData }: ArticleDetailProps) {
                   </figure>
                 )}
 
-                <ArticleBody
-                  content={hasWidgetPlaceholder(rawContent) ? rawContent : (processedContent || rawContent || article.content || "")}
-                  isAdmin={false}
-                  className={contentClassName}
-                />
+                <div
+                  style={{
+                    fontSize:
+                      fontSize === -1 ? "0.9em" :
+                      fontSize === 1  ? "1.12em" :
+                      undefined,
+                  }}
+                >
+                  <ArticleBody
+                    content={hasWidgetPlaceholder(rawContent) ? rawContent : (processedContent || rawContent || article.content || "")}
+                    isAdmin={false}
+                    className={contentClassName}
+                  />
+                </div>
 
                 {/* Share — bottom */}
                 <div className="mt-8 border-t pt-6 border-border">
