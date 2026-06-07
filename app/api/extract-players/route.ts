@@ -4,10 +4,10 @@
 // mengirimnya ke Google Gemini Vision, dan mengembalikan array pemain
 // yang sudah diformat sesuai skema widget_daftar_pemain.
 //
-// Hanya digunakan oleh form DaftarPemain di WidgetInserter.
-// API key GEMINI_API_KEY disimpan di .env.local — tidak pernah expose ke browser.
+// Menggunakan @google/genai SDK — support API key format AQ. maupun AIza.
 
 import { NextRequest, NextResponse } from "next/server"
+import { GoogleGenAI } from "@google/genai"
 
 // ─── Tipe hasil ekstraksi ─────────────────────────────────────────────────────
 interface ExtractedPlayer {
@@ -43,10 +43,8 @@ function normalizeNilaiPasar(raw: string | null | undefined): string {
     const num  = tmMatch[1].replace(",", ".")
     const unit = tmMatch[2].toUpperCase()
     const unitLabel = unit === "B" ? "M" : unit === "K" ? "rb" : "M"
-    // Hilangkan desimal .00
     const parsed = parseFloat(num)
-    const display = parsed % 1 === 0 ? `${parsed}` : `${parsed}`
-    return `€${display}${unitLabel}`
+    return `€${parsed}${unitLabel}`
   }
 
   // Sudah dalam format "€205M" atau "€30M" → kembalikan apa adanya
@@ -60,7 +58,7 @@ export async function POST(req: NextRequest) {
   const apiKey = process.env.GEMINI_API_KEY
   if (!apiKey) {
     return NextResponse.json(
-      { error: "GEMINI_API_KEY belum dikonfigurasi di .env.local" },
+      { error: "GEMINI_API_KEY belum dikonfigurasi di environment variables." },
       { status: 500 }
     )
   }
@@ -106,50 +104,31 @@ Penting:
 - Jika kolom tidak ada di gambar, gunakan nilai default yang sudah ditentukan di atas.`
 
   try {
-    const geminiRes = await fetch(
-      `https://generativelanguage.googleapis.com/v1beta/models/gemini-2.0-flash:generateContent?key=${apiKey}`,
-      {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({
-          contents: [
+    const ai = new GoogleGenAI({ apiKey })
+
+    const result = await ai.models.generateContent({
+      model: "gemini-2.0-flash",
+      contents: [
+        {
+          role: "user",
+          parts: [
             {
-              parts: [
-                {
-                  inline_data: {
-                    mime_type: mimeType,
-                    data: imageBase64,
-                  },
-                },
-                { text: prompt },
-              ],
+              inlineData: {
+                mimeType: mimeType,
+                data: imageBase64,
+              },
             },
+            { text: prompt },
           ],
-          generationConfig: {
-            temperature: 0,       // deterministic — penting untuk ekstraksi data
-            maxOutputTokens: 2048,
-          },
-        }),
-      }
-    )
+        },
+      ],
+      config: {
+        temperature: 0,
+        maxOutputTokens: 2048,
+      },
+    })
 
-    if (!geminiRes.ok) {
-      const errText = await geminiRes.text()
-      console.error("[extract-players] Gemini error:", errText)
-      return NextResponse.json(
-        { error: `Gemini API error ${geminiRes.status}. Periksa API key dan quota.` },
-        { status: 502 }
-      )
-    }
-
-    const geminiData = await geminiRes.json()
-
-    // Ambil teks dari response Gemini
-    const rawText: string =
-      geminiData?.candidates?.[0]?.content?.parts
-        ?.filter((p: any) => p.text)
-        ?.map((p: any) => p.text)
-        ?.join("") ?? ""
+    const rawText = result.text ?? ""
 
     if (!rawText.trim()) {
       return NextResponse.json(
@@ -203,7 +182,7 @@ Penting:
   } catch (err: any) {
     console.error("[extract-players] Unexpected error:", err)
     return NextResponse.json(
-      { error: "Terjadi error tak terduga. Coba lagi." },
+      { error: `Terjadi error: ${err.message ?? "Coba lagi."}` },
       { status: 500 }
     )
   }
