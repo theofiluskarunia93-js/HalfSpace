@@ -129,6 +129,24 @@ export default function RootLayout({
           type="application/ld+json"
           dangerouslySetInnerHTML={{ __html: JSON.stringify(organizationSchema) }}
         />
+        {/* Subscribe with Google — Google Publisher */}
+        <script
+          async
+          type="application/javascript"
+          src="https://news.google.com/swg/js/v1/swg-basic.js"
+        />
+        <script
+          dangerouslySetInnerHTML={{
+            __html: `(self.SWG_BASIC = self.SWG_BASIC || []).push( basicSubscriptions => {
+    basicSubscriptions.init({
+      type: "NewsArticle",
+      isPartOfType: ["Product"],
+      isPartOfProductId: "CAow5u_GDA:openaccess",
+      clientOptions: { theme: "dark", lang: "id" },
+    });
+  });`,
+          }}
+        />
       </head>
       <body className={`${inter.variable} ${oswald.variable} font-sans antialiased`}>
         {children}
