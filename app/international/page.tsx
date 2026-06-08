@@ -2,62 +2,92 @@ import type { Metadata } from "next"
 import Link from "next/link"
 import { NavbarStandalone } from "@/components/navbar-standalone"
 import { FooterStandalone } from "@/components/footer-standalone"
-import { GroupArticleGridServer } from "@/components/group-article-grid-server"
+import { HorizontalArticleScroll } from "@/components/horizontal-article-scroll"
 
 export const revalidate = 3600
 
 export async function generateMetadata(): Promise<Metadata> {
-  const BASE_URL = process.env.NEXT_PUBLIC_BASE_URL ?? "https://halfspacesport.com"
-  const title = "International | HalfSpace"
+  const BASE_URL = process.env.NEXT_PUBLIC_BASE_URL ?? "https://halfspace.id"
+  const title       = "International | HalfSpace"
   const description = "Coverage of major international tournaments."
   return {
     title, description,
     alternates: { canonical: `${BASE_URL}/international` },
-    openGraph: { title, description, type: "website", url: `${BASE_URL}/international`, siteName: "HalfSpace",
-      images: [{ url: `${BASE_URL}/og-default.jpg`, width: 1200, height: 630, alt: "HalfSpace" }] },
+    openGraph: {
+      title, description, type: "website",
+      url: `${BASE_URL}/international`, siteName: "HalfSpace",
+      images: [{ url: `${BASE_URL}/og-default.jpg`, width: 1200, height: 630, alt: "HalfSpace" }],
+    },
     twitter: { card: "summary_large_image", title, description, images: [`${BASE_URL}/og-default.jpg`] },
   }
 }
 
 const competitions = [
-  { id: "world-cup", label: "World Cup", description: "The biggest sporting event on the planet", href: "/international/world-cup" },
-  { id: "euro", label: "Euro", description: "The best of European national teams", href: "/international/euro" },
-  { id: "copa-america", label: "Copa America", description: "South American football passion", href: "/international/copa-america" },
-  { id: "afcon", label: "AFCON", description: "Africa's premier national team competition", href: "/international/afcon" },
+  { id: "world-cup",    label: "World Cup",    description: "The biggest sporting event on the planet", href: "/international/world-cup" },
+  { id: "euro",         label: "Euro",         description: "The best of European national teams",      href: "/international/euro" },
+  { id: "copa-america", label: "Copa America", description: "South American football passion",          href: "/international/copa-america" },
+  { id: "afcon",        label: "AFCON",        description: "Africa's premier national team competition", href: "/international/afcon" },
 ] as const
 
-export default async function InternationalPage() {
+export default function InternationalPage() {
   return (
     <div className="min-h-screen bg-background">
       <NavbarStandalone />
       <main className="mx-auto min-h-[60vh] max-w-7xl px-4 py-12">
-        <div className="mb-8">
-          <h1 className="mb-4 text-4xl font-bold uppercase tracking-tight text-foreground md:text-5xl" style={{ fontFamily: "var(--font-oswald)" }}>
+        {/* Header */}
+        <div className="mb-10">
+          <h1
+            className="mb-4 text-4xl font-black uppercase tracking-tight text-foreground md:text-5xl"
+            style={{ fontFamily: "var(--font-oswald)" }}
+          >
             International
           </h1>
-          <div className="h-1 w-16 bg-primary" />
-          <p className="mt-4 max-w-2xl text-lg text-muted-foreground">Coverage of major international tournaments.</p>
+          <div className="h-1 w-16 bg-primary" style={{ boxShadow: "0 0 10px oklch(0.87 0.29 142 / 0.6)" }} />
+          <p className="mt-4 max-w-2xl text-lg text-muted-foreground">
+            Coverage of major international tournaments.
+          </p>
         </div>
-        <div className="mb-12">
-          <h2 className="mb-6 text-2xl font-bold uppercase tracking-tight text-foreground" style={{ fontFamily: "var(--font-oswald)" }}>
-            Latest International News
-          </h2>
-          <GroupArticleGridServer groupKey="international" title="International" />
-        </div>
-        <div>
-          <h2 className="mb-6 text-2xl font-bold uppercase tracking-tight text-foreground" style={{ fontFamily: "var(--font-oswald)" }}>
-            Competitions
-          </h2>
+
+        {/* Latest news — horizontal scroll */}
+        <section className="mb-14">
+          <div className="mb-6 flex items-center gap-3">
+            <h2
+              className="text-2xl font-bold uppercase tracking-tight text-foreground"
+              style={{ fontFamily: "var(--font-oswald)" }}
+            >
+              Latest International News
+            </h2>
+            <div className="h-px flex-1 bg-gradient-to-r from-primary/40 to-transparent" />
+          </div>
+          <HorizontalArticleScroll groupKey="international" title="International" />
+        </section>
+
+        {/* Competitions */}
+        <section>
+          <div className="mb-6 flex items-center gap-3">
+            <h2
+              className="text-2xl font-bold uppercase tracking-tight text-foreground"
+              style={{ fontFamily: "var(--font-oswald)" }}
+            >
+              Competitions
+            </h2>
+            <div className="h-px flex-1 bg-gradient-to-r from-primary/40 to-transparent" />
+          </div>
           <div className="grid gap-6 md:grid-cols-2 lg:grid-cols-3">
             {competitions.map((comp) => (
-              <Link key={comp.id} href={comp.href}
-                className="group overflow-hidden rounded-xl border border-border bg-card p-6 text-left transition-all hover:border-primary/50 hover:bg-card/80">
+              <Link
+                key={comp.id}
+                href={comp.href}
+                className="group overflow-hidden rounded-xl border border-border bg-card p-6 text-left transition-all hover:border-primary/50 hover:bg-card/80"
+              >
                 <div className="mb-4 flex h-16 w-16 items-center justify-center rounded-lg bg-primary/10">
                   <svg className="h-8 w-8 text-primary" fill="currentColor" viewBox="0 0 24 24">
                     <path d="M12 2C6.48 2 2 6.48 2 12s4.48 10 10 10 10-4.48 10-10S17.52 2 12 2zm-1 17.93c-3.95-.49-7-3.85-7-7.93 0-.62.08-1.21.21-1.79L9 15v1c0 1.1.9 2 2 2v1.93zm6.9-2.54c-.26-.81-1-1.39-1.9-1.39h-1v-3c0-.55-.45-1-1-1H8v-2h2c.55 0 1-.45 1-1V7h2c1.1 0 2-.9 2-2v-.41c2.93 1.19 5 4.06 5 7.41 0 2.08-.8 3.97-2.1 5.39z" />
                   </svg>
                 </div>
-                <h3 className="mb-2 text-xl font-bold text-foreground transition-colors group-hover:text-primary">{comp.label}</h3>
+                <h3 className="mb-2 text-xl font-bold text-foreground transition-colors group-hover:text-primary">
+                  {comp.label}
+                </h3>
                 <p className="text-sm text-muted-foreground">{comp.description}</p>
                 <div className="mt-4 flex items-center text-sm font-medium text-primary">
                   View Coverage
@@ -68,7 +98,7 @@ export default async function InternationalPage() {
               </Link>
             ))}
           </div>
-        </div>
+        </section>
       </main>
       <FooterStandalone />
     </div>

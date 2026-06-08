@@ -33,6 +33,7 @@ const PAGE_TO_ROUTE: Partial<Record<PublicPage, string>> = {
   "afc-cup": "/asia/afc-cup",
   "aff-cup": "/asia/aff-cup",
   "liga1": "/liga1",
+  "sejarah": "/sejarah",
   "transfer": "/transfer",
   "about": "/about-us",
   "contact": "/contact-us",
@@ -92,6 +93,7 @@ export function Footer({ onGoToAdmin, onPageChange }: FooterProps) {
     ],
     "More": [
       { label: "Transfer", page: "transfer" as PublicPage },
+      { label: "Sejarah", page: "sejarah" as PublicPage },
       { label: "About Us", page: "about" as PublicPage },
       { label: "Contact Us", page: "contact" as PublicPage },
       { label: "Privacy Policy", page: "privacy" as PublicPage },

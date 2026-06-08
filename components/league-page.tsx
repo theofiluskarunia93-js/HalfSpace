@@ -1,9 +1,8 @@
 // Server Component — tidak ada "use client".
-// Data artikel di-fetch di server saat build/revalidate, bukan di browser.
-// Googlebot mendapat konten penuh, bukan shell kosong.
+// Artikel di-fetch di client via InfiniteArticleList (infinite scroll + load more).
 import { NavbarStandalone } from "@/components/navbar-standalone"
 import { FooterStandalone } from "@/components/footer-standalone"
-import { GroupArticleGridServer } from "@/components/group-article-grid-server"
+import { InfiniteArticleList } from "@/components/infinite-article-list"
 
 interface LeaguePageProps {
   title: string
@@ -12,7 +11,7 @@ interface LeaguePageProps {
   badgeLabel?: string
 }
 
-export async function LeaguePage({ title, description, categorySlug, badgeLabel }: LeaguePageProps) {
+export function LeaguePage({ title, description, categorySlug, badgeLabel }: LeaguePageProps) {
   return (
     <div className="min-h-screen bg-background">
       <NavbarStandalone />
@@ -30,12 +29,15 @@ export async function LeaguePage({ title, description, categorySlug, badgeLabel 
           >
             {title}
           </h1>
-          <div className="h-1 w-20 bg-primary" style={{ boxShadow: "0 0 10px oklch(0.87 0.29 142 / 0.6)" }} />
+          <div
+            className="h-1 w-20 bg-primary"
+            style={{ boxShadow: "0 0 10px oklch(0.87 0.29 142 / 0.6)" }}
+          />
           <p className="mt-4 max-w-2xl text-lg text-muted-foreground">{description}</p>
         </div>
 
-        {/* Articles — server-fetched, ISR */}
-        <GroupArticleGridServer groupKey={categorySlug} title={title} />
+        {/* Articles — infinite scroll with load more */}
+        <InfiniteArticleList categorySlug={categorySlug} title={title} />
       </main>
       <FooterStandalone />
     </div>

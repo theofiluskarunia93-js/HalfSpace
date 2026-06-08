@@ -25,6 +25,7 @@ const PAGE_TO_ROUTE: Partial<Record<PublicPage, string>> = {
   "afc-cup": "/asia/afc-cup",
   "aff-cup": "/asia/aff-cup",
   "liga1": "/liga1",
+  "sejarah": "/sejarah",
   "transfer": "/transfer",
   "about": "/about-us",
   "contact": "/contact-us",
@@ -341,6 +342,7 @@ export function Navbar({ currentPage, onPageChange, onScrollToSection }: NavbarP
 
                   <button onClick={() => handlePageClick("liga1")} className="w-full rounded-md px-3 py-2 text-left text-sm text-foreground transition-colors hover:bg-secondary hover:text-primary">Liga 1</button>
                   <button onClick={() => handlePageClick("transfer")} className="w-full rounded-md px-3 py-2 text-left text-sm text-foreground transition-colors hover:bg-secondary hover:text-primary">Transfer</button>
+                  <button onClick={() => handlePageClick("sejarah")} className="w-full rounded-md px-3 py-2 text-left text-sm text-foreground transition-colors hover:bg-secondary hover:text-primary">Sejarah</button>
                   <button onClick={() => handlePageClick("about")} className="w-full rounded-md px-3 py-2 text-left text-sm text-foreground transition-colors hover:bg-secondary hover:text-primary">About Us</button>
                 </div>
               )}
@@ -390,6 +392,7 @@ export function Navbar({ currentPage, onPageChange, onScrollToSection }: NavbarP
             ))}
             <button onClick={() => handlePageClick("liga1")} className="rounded-md px-3 py-2 text-left text-sm font-semibold text-foreground transition-all hover:bg-secondary hover:text-primary hover:pl-5">Liga 1</button>
             <button onClick={() => handlePageClick("transfer")} className="rounded-md px-3 py-2 text-left text-sm font-semibold text-foreground transition-all hover:bg-secondary hover:text-primary hover:pl-5">Transfer</button>
+            <button onClick={() => handlePageClick("sejarah")} className="rounded-md px-3 py-2 text-left text-sm font-semibold text-foreground transition-all hover:bg-secondary hover:text-primary hover:pl-5">Sejarah</button>
             <button onClick={() => handlePageClick("about")} className="rounded-md px-3 py-2 text-left text-sm font-semibold text-foreground transition-all hover:bg-secondary hover:text-primary hover:pl-5">About Us</button>
           </div>
         </div>

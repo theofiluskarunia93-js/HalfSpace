@@ -12,6 +12,7 @@ export type PublicPage =
   | "international"
   | "asia"
   | "liga1"
+  | "sejarah"
   | "champions-league"
   | "premier-league"
   | "la-liga"
