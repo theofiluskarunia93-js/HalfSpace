@@ -23,19 +23,42 @@ function timeAgo(dateStr: string) {
   return `${days} hari yang lalu`
 }
 
-function ArticleCard({ article, onView }: { article: any; onView: (id: string, slug: string) => void }) {
+function ArticleCard({
+  article,
+  onView,
+  index,
+}: {
+  article: any
+  onView: (id: string, slug: string) => void
+  index: number
+}) {
+  // 3 card pertama langsung dimuat (terlihat di viewport awal),
+  // sisanya lazy agar tidak memblock render tapi tetap decode lebih awal
+  const isEager = index < 3
+
   return (
     <article
       onClick={() => onView(article.id, article.slug)}
-      // Fixed width so cards don't stretch; min-w keeps them from collapsing
       className="group cursor-pointer flex-shrink-0 w-72 sm:w-80 overflow-hidden rounded-xl border border-border bg-card transition-colors hover:border-primary/50"
     >
-      <div className="aspect-video overflow-hidden bg-muted relative">
+      {/* Container gambar: bg-muted sebagai placeholder warna,
+          sehingga tidak pernah hitam — kalau gambar belum selesai
+          dimuat, area sudah berwarna muted (abu gelap) */}
+      <div className="aspect-video overflow-hidden bg-muted">
         {article.featured_image_url ? (
           <img
             src={article.featured_image_url}
-            alt={article.title}
-            className="h-full w-full object-cover transition-transform group-hover:scale-105"
+            alt={article.featured_image_alt || article.title}
+            // eager untuk card yang langsung terlihat, lazy untuk sisanya
+            loading={isEager ? "eager" : "lazy"}
+            // async: decode tidak memblokir main thread → tidak ada jeda hitam
+            decoding="async"
+            // fetchpriority tinggi hanya untuk card pertama
+            {...(index === 0 ? { fetchPriority: "high" } : {})}
+            className="h-full w-full object-cover transition-transform duration-300 group-hover:scale-105"
+            // Fallback: kalau gambar gagal dimuat, sembunyikan elemen
+            // sehingga placeholder bg-muted tetap terlihat
+            onError={(e) => { (e.currentTarget as HTMLImageElement).style.display = "none" }}
           />
         ) : (
           <div className="flex h-full items-center justify-center text-muted-foreground">
@@ -104,7 +127,7 @@ export function HorizontalArticleScroll({ groupKey, title }: HorizontalArticleSc
 
       const { data } = await supabase
         .from("articles")
-        .select("id, title, slug, excerpt, featured_image_url, published_at, created_at, categories(name, slug)")
+        .select("id, title, slug, excerpt, featured_image_url, featured_image_alt, published_at, created_at, categories(name, slug)")
         .eq("status", "published")
         .in("category_id", catIds)
         .order("published_at", { ascending: false })
@@ -158,8 +181,8 @@ export function HorizontalArticleScroll({ groupKey, title }: HorizontalArticleSc
         className="flex gap-5 overflow-x-auto pb-3 scroll-smooth"
         style={{ scrollbarWidth: "none", msOverflowStyle: "none" }}
       >
-        {articles.map((article) => (
-          <ArticleCard key={article.id} article={article} onView={handleView} />
+        {articles.map((article, index) => (
+          <ArticleCard key={article.id} article={article} onView={handleView} index={index} />
         ))}
       </div>
 
@@ -172,7 +195,7 @@ export function HorizontalArticleScroll({ groupKey, title }: HorizontalArticleSc
         <ChevronRight className="h-5 w-5" />
       </button>
 
-      {/* Mobile swipe hint — fades in briefly on mount */}
+      {/* Mobile swipe hint */}
       <p className="mt-2 text-center text-xs text-muted-foreground sm:hidden">
         ← Geser untuk melihat lebih banyak →
       </p>
