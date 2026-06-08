@@ -1,7 +1,6 @@
 "use client"
 
 import { useState, useEffect, useCallback, useRef } from "react"
-import Image from "next/image"
 import { useRouter } from "next/navigation"
 import { createClient } from "@/lib/supabase/client"
 import { trackArticleView } from "@/lib/supabase/tracking"
@@ -20,29 +19,49 @@ function timeAgo(dateStr: string) {
   return `${days} hari yang lalu`
 }
 
+// ─── Thumbnail — pakai <img> biasa bukan Next/Image fill ──────────────────
+// Alasan: Next/Image fill butuh parent berukuran fixed + posisi relative.
+// Saat artikel baru dimuat (load more), layout belum stabil sehingga
+// gambar muncul hitam sebentar sebelum browser menghitung dimensinya.
+// Dengan <img> + object-cover di container fixed, hal ini tidak terjadi.
+function Thumbnail({ src, alt }: { src: string | null; alt: string }) {
+  const [errored, setErrored] = useState(false)
+
+  if (!src || errored) {
+    return (
+      <div className="flex h-full w-full items-center justify-center bg-muted">
+        <svg className="h-8 w-8 opacity-30 text-muted-foreground" fill="currentColor" viewBox="0 0 24 24">
+          <path d="M21 19V5c0-1.1-.9-2-2-2H5c-1.1 0-2 .9-2 2v14c0 1.1.9 2 2 2h14c1.1 0 2-.9 2-2zM8.5 13.5l2.5 3.01L14.5 12l4.5 6H5l3.5-4.5z" />
+        </svg>
+      </div>
+    )
+  }
+
+  return (
+    // eslint-disable-next-line @next/next/no-img-element
+    <img
+      src={src}
+      alt={alt}
+      loading="lazy"
+      decoding="async"
+      onError={() => setErrored(true)}
+      className="h-full w-full object-cover transition-transform group-hover:scale-105"
+    />
+  )
+}
+
 function ArticleRow({ article, onView }: { article: any; onView: (id: string, slug: string) => void }) {
   return (
     <article
       onClick={() => onView(article.id, article.slug)}
       className="group flex cursor-pointer gap-4 rounded-xl border border-border bg-card p-4 transition-colors hover:border-primary/50 sm:gap-5"
     >
-      {/* Thumbnail */}
-      <div className="relative flex-shrink-0 w-28 h-20 sm:w-36 sm:h-24 overflow-hidden rounded-lg bg-muted">
-        {article.featured_image_url ? (
-          <Image
-            src={article.featured_image_url}
-            alt={article.title}
-            fill
-            sizes="(max-width: 640px) 112px, 144px"
-            className="object-cover transition-transform group-hover:scale-105"
-          />
-        ) : (
-          <div className="flex h-full items-center justify-center text-muted-foreground">
-            <svg className="h-8 w-8 opacity-30" fill="currentColor" viewBox="0 0 24 24">
-              <path d="M21 19V5c0-1.1-.9-2-2-2H5c-1.1 0-2 .9-2 2v14c0 1.1.9 2 2 2h14c1.1 0 2-.9 2-2zM8.5 13.5l2.5 3.01L14.5 12l4.5 6H5l3.5-4.5z" />
-            </svg>
-          </div>
-        )}
+      {/* Thumbnail — ukuran fixed agar tidak ada layout shift */}
+      <div
+        className="flex-shrink-0 overflow-hidden rounded-lg bg-muted"
+        style={{ width: 112, height: 80 }}    // w-28 h-20 dalam px — fixed, tidak collapse
+      >
+        <Thumbnail src={article.featured_image_url} alt={article.title} />
       </div>
 
       {/* Text */}
@@ -78,7 +97,7 @@ function ArticleRow({ article, onView }: { article: any; onView: (id: string, sl
 function SkeletonRow() {
   return (
     <div className="flex gap-4 rounded-xl border border-border bg-card p-4 animate-pulse">
-      <div className="flex-shrink-0 w-28 h-20 sm:w-36 sm:h-24 rounded-lg bg-muted" />
+      <div className="flex-shrink-0 rounded-lg bg-muted" style={{ width: 112, height: 80 }} />
       <div className="flex-1 space-y-2 py-1">
         <div className="h-3 w-16 bg-muted rounded" />
         <div className="h-4 w-full bg-muted rounded" />
@@ -95,13 +114,13 @@ interface InfiniteArticleListProps {
 }
 
 export function InfiniteArticleList({ categorySlug, title }: InfiniteArticleListProps) {
-  const [articles, setArticles]       = useState<any[]>([])
-  const [totalCount, setTotalCount]   = useState(0)
-  const [page, setPage]               = useState(0)
-  const [isLoading, setIsLoading]     = useState(true)
+  const [articles, setArticles]           = useState<any[]>([])
+  const [totalCount, setTotalCount]       = useState(0)
+  const [page, setPage]                   = useState(0)
+  const [isLoading, setIsLoading]         = useState(true)
   const [isLoadingMore, setIsLoadingMore] = useState(false)
-  const [categoryId, setCategoryId]   = useState<string | null>(null)
-  const router = useRouter()
+  const [categoryId, setCategoryId]       = useState<string | null>(null)
+  const router   = useRouter()
   const supabase = createClient()
   const isMounted = useRef(true)
 
