@@ -888,7 +888,9 @@ interface ArticleDetailProps {
 }
 
 export function ArticleDetail({ articleId, initialData }: ArticleDetailProps) {
-  const [article, setArticle] = useState<Article | null>(initialData as Article | null ?? null)
+  const [article, setArticle] = useState<Article | null>(
+    initialData ? { ...(initialData as any), article_tags: (initialData as any).article_tags ?? null } as Article : null
+  )
   const [isLoading, setIsLoading] = useState(!initialData)
   const [toc, setToc] = useState<TocItem[]>([])
   const [processedContent, setProcessedContent] = useState("")

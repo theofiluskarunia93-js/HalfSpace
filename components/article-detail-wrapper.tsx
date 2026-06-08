@@ -35,7 +35,7 @@ async function fetchArticleFull(id: string): Promise<ArticleSSR | null> {
   const supabaseKey = process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY!
 
   const res = await fetch(
-    `${supabaseUrl}/rest/v1/articles?id=eq.${encodeURIComponent(id)}&status=eq.published&select=id,title,slug,excerpt,content,featured_image_url,featured_image_alt,author,views,published_at,created_at,updated_at,categories(name,slug)`,
+    `${supabaseUrl}/rest/v1/articles?id=eq.${encodeURIComponent(id)}&status=eq.published&select=id,title,slug,excerpt,content,featured_image_url,featured_image_alt,author,views,published_at,created_at,updated_at,categories(name,slug),article_tags(tags(name,slug))`,
     {
       headers: {
         apikey: supabaseKey,
