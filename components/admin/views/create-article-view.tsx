@@ -716,17 +716,46 @@ export function CreateArticleView({ onBack, articleId }: CreateArticleViewProps)
 
   // ── Sync tags ─────────────────────────────────────────────────────────────
   const syncTags = async (artId: string) => {
-    const tagIds: string[] = []
-    for (const tagName of tags) {
-      const slug = generateSlug(tagName)
-      const { data: existing } = await supabase.from("tags").select("id").eq("slug", slug).single()
-      if (existing) { tagIds.push(existing.id); continue }
-      const { data: newTag } = await supabase.from("tags").insert({ name: tagName, slug }).select("id").single()
-      if (newTag) tagIds.push(newTag.id)
+    if (tags.length === 0) {
+      // Tidak ada tag — hapus semua relasi lama lalu selesai
+      await supabase.from("article_tags").delete().eq("article_id", artId)
+      return
     }
+
+    // Cek semua tag secara paralel — 1 round-trip per tag, bukan sequential
+    const slugs = tags.map(generateSlug)
+    const existingResults = await Promise.all(
+      slugs.map((slug) =>
+        supabase.from("tags").select("id").eq("slug", slug).maybeSingle()
+      )
+    )
+
+    // Tag yang belum ada di DB → insert sekaligus (batch)
+    const toInsert = tags
+      .map((name, i) => ({ name, slug: slugs[i] }))
+      .filter((_, i) => !existingResults[i].data)
+
+    let insertedTags: { id: string; slug: string }[] = []
+    if (toInsert.length > 0) {
+      const { data } = await supabase
+        .from("tags")
+        .insert(toInsert)
+        .select("id, slug")
+      insertedTags = (data as { id: string; slug: string }[]) ?? []
+    }
+
+    // Gabungkan: existing + baru
+    const tagIds: string[] = slugs.map((slug, i) => {
+      if (existingResults[i].data) return existingResults[i].data!.id as string
+      return insertedTags.find((t) => t.slug === slug)?.id ?? ""
+    }).filter(Boolean)
+
+    // Update relasi: hapus lama + insert baru dalam 1 batch
     await supabase.from("article_tags").delete().eq("article_id", artId)
     if (tagIds.length > 0) {
-      await supabase.from("article_tags").insert(tagIds.map((tag_id) => ({ article_id: artId, tag_id })))
+      await supabase
+        .from("article_tags")
+        .insert(tagIds.map((tag_id) => ({ article_id: artId, tag_id })))
     }
   }
 
