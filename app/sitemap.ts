@@ -1,6 +1,10 @@
 import type { MetadataRoute } from "next"
 import { createClient } from "@supabase/supabase-js"
 
+// Regenerate sitemap setiap 10 menit agar artikel baru langsung masuk
+// tanpa perlu deploy ulang
+export const revalidate = 600
+
 const BASE_URL = process.env.NEXT_PUBLIC_SITE_URL ?? "https://halfspacesport.com"
 
 // Halaman statis yang selalu ada
@@ -91,6 +95,11 @@ const STATIC_ROUTES: MetadataRoute.Sitemap = [
     priority: 0.7,
   },
   {
+    url: `${BASE_URL}/sejarah`,
+    changeFrequency: "weekly",
+    priority: 0.6,
+  },
+  {
     url: `${BASE_URL}/author/redaksi-halfspace`,
     changeFrequency: "weekly",
     priority: 0.5,
@@ -123,22 +132,33 @@ export default async function sitemap(): Promise<MetadataRoute.Sitemap> {
     process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY!
   )
 
-  // Ambil semua artikel yang sudah published
+  // ── Artikel ──────────────────────────────────────────────────────────────
+  // Gunakan published_at sebagai lastModified utama.
+  // updated_at hanya dipakai jika lebih baru dari published_at,
+  // agar artikel yang baru publish langsung punya lastModified yang akurat.
   const { data: articles } = await supabase
     .from("articles")
     .select("slug, published_at, updated_at")
     .eq("status", "published")
     .order("published_at", { ascending: false })
 
-  const articleRoutes: MetadataRoute.Sitemap = (articles ?? []).map((article) => ({
-    url: `${BASE_URL}/article/${article.slug}`,
-    lastModified: new Date(article.updated_at ?? article.published_at),
-    changeFrequency: "weekly",
-    priority: 0.9,
-  }))
+  const articleRoutes: MetadataRoute.Sitemap = (articles ?? []).map((article) => {
+    const published = new Date(article.published_at)
+    const updated = article.updated_at ? new Date(article.updated_at) : null
+    // Pakai tanggal yang paling baru di antara keduanya
+    const lastModified = updated && updated > published ? updated : published
 
+    return {
+      url: `${BASE_URL}/article/${article.slug}`,
+      lastModified,
+      changeFrequency: "weekly",
+      priority: 0.9,
+    }
+  })
+
+  // ── Tag ───────────────────────────────────────────────────────────────────
   // Ambil tag yang punya minimal 1 artikel published,
-  // sekaligus ambil tanggal artikel terbaru untuk lastModified
+  // lastModified diambil dari artikel terbaru di tag tersebut
   const { data: tagData } = await supabase
     .from("article_tags")
     .select("tags(slug), articles!inner(published_at, updated_at, status)")
@@ -150,17 +170,21 @@ export default async function sitemap(): Promise<MetadataRoute.Sitemap> {
     const slug = (row.tags as any)?.slug
     const article = row.articles as any
     if (!slug) continue
-    const date = new Date(article.updated_at ?? article.published_at)
+    const published = new Date(article.published_at)
+    const updated = article.updated_at ? new Date(article.updated_at) : null
+    const date = updated && updated > published ? updated : published
     const existing = tagMap.get(slug)
     if (!existing || date > existing) tagMap.set(slug, date)
   }
 
-  const tagRoutes: MetadataRoute.Sitemap = Array.from(tagMap.entries()).map(([slug, lastDate]) => ({
-    url: `${BASE_URL}/tag/${slug}`,
-    lastModified: lastDate,
-    changeFrequency: "daily",
-    priority: 0.6,
-  }))
+  const tagRoutes: MetadataRoute.Sitemap = Array.from(tagMap.entries()).map(
+    ([slug, lastDate]) => ({
+      url: `${BASE_URL}/tag/${slug}`,
+      lastModified: lastDate,
+      changeFrequency: "daily",
+      priority: 0.6,
+    })
+  )
 
   return [...STATIC_ROUTES, ...articleRoutes, ...tagRoutes]
 }
