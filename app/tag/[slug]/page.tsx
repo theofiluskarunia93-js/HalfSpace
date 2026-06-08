@@ -9,15 +9,16 @@ import type { Metadata } from "next"
 export const revalidate = 3600
 
 interface Props {
-  params: { slug: string }
+  params: Promise<{ slug: string }>
 }
 
 export async function generateMetadata({ params }: Props): Promise<Metadata> {
+  const { slug } = await params
   const supabase = await createClient()
   const { data: tag } = await supabase
     .from("tags")
     .select("name")
-    .eq("slug", params.slug)
+    .eq("slug", slug)
     .single()
 
   const BASE_URL = process.env.NEXT_PUBLIC_BASE_URL ?? "https://halfspacesport.com"
@@ -30,13 +31,13 @@ export async function generateMetadata({ params }: Props): Promise<Metadata> {
     title,
     description,
     alternates: {
-      canonical: `${BASE_URL}/tag/${params.slug}`,
+      canonical: `${BASE_URL}/tag/${slug}`,
     },
     openGraph: {
       title,
       description,
       type: "website",
-      url: `${BASE_URL}/tag/${params.slug}`,
+      url: `${BASE_URL}/tag/${slug}`,
       siteName: "HalfSpace",
       images: [
         {
@@ -57,12 +58,13 @@ export async function generateMetadata({ params }: Props): Promise<Metadata> {
 }
 
 export default async function TagPage({ params }: Props) {
+  const { slug } = await params
   const supabase = await createClient()
 
   const { data: tag } = await supabase
     .from("tags")
     .select("*")
-    .eq("slug", params.slug)
+    .eq("slug", slug)
     .single()
 
   if (!tag) notFound()
@@ -197,7 +199,7 @@ export default async function TagPage({ params }: Props) {
                     key={t.id}
                     href={`/tag/${t.slug}`}
                     className={`rounded-full px-3 py-1.5 text-xs font-medium transition-colors ${
-                      t.slug === params.slug
+                      t.slug === slug
                         ? "bg-primary text-primary-foreground"
                         : "bg-secondary text-muted-foreground hover:bg-primary/15 hover:text-primary"
                     }`}
