@@ -17,8 +17,9 @@ import {
   Bold, Italic, List, ListOrdered, Link2,
   Code2, Minus, Heading1, Heading2, Heading3,
   Undo2, Redo2, Table as TableIcon, Star,
-  Pilcrow, MessageSquareQuote,
+  Pilcrow, MessageSquareQuote, Sparkles,
 } from "lucide-react"
+import type { NewsType } from "@/app/api/generate-article/route"
 import { Button } from "@/components/ui/button"
 import { Input } from "@/components/ui/input"
 import { createClient } from "@/lib/supabase/client"
@@ -399,6 +400,14 @@ export function CreateArticleView({ onBack, articleId }: CreateArticleViewProps)
   const [editWidgetId,   setEditWidgetId]   = useState<string | null>(null)
   const [editWidgetType, setEditWidgetType] = useState<WidgetType | null>(null)
 
+  // ── AI Generate state ────────────────────────────────────────────────────────────
+  const [aiModalOpen,   setAiModalOpen]   = useState(false)
+  const [aiNewsType,    setAiNewsType]    = useState<"transfer" | "konpers" | "cedera">("transfer")
+  const [aiTopic,       setAiTopic]       = useState("")
+  const [aiContext,     setAiContext]     = useState("")
+  const [aiGenerating,  setAiGenerating]  = useState(false)
+  const [aiError,       setAiError]       = useState<string | null>(null)
+
   // ── Pre-loaded widgets (untuk artikel lama dari Posts → Edit) ──────────────
   // Diisi setelah fetchArticle parse shortcode dari konten artikel.
   const [preloadedWidgets, setPreloadedWidgets] = useState<{ widgetId: string; widgetType: WidgetType }[]>([])
@@ -679,6 +688,35 @@ export function CreateArticleView({ onBack, articleId }: CreateArticleViewProps)
       '<blockquote class="pull-quote"><p>Tulis kutipan penting di sini.</p></blockquote>'
     ).run()
   }, [editor])
+
+  // ── AI Generate handler ────────────────────────────────────────────────────────────
+  async function handleAiGenerate() {
+    if (!aiTopic.trim() || !aiContext.trim()) {
+      setAiError("Topik dan konteks wajib diisi.")
+      return
+    }
+    setAiGenerating(true)
+    setAiError(null)
+    try {
+      const res = await fetch("/api/generate-article", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ newsType: aiNewsType, topic: aiTopic, context: aiContext }),
+      })
+      const data = await res.json()
+      if (!res.ok) throw new Error(data.error ?? `Error ${res.status}`)
+      setTitle(data.title)
+      if (editor) editor.commands.setContent(data.content)
+      setAiModalOpen(false)
+      setAiTopic("")
+      setAiContext("")
+      setAiError(null)
+    } catch (err: any) {
+      setAiError(err.message ?? "Gagal generate artikel. Coba lagi.")
+    } finally {
+      setAiGenerating(false)
+    }
+  }
 
   // ── Widget insert callback ────────────────────────────────────────────────
   // Dipanggil oleh WidgetInserter setelah data tersimpan ke Supabase
@@ -1023,6 +1061,10 @@ export function CreateArticleView({ onBack, articleId }: CreateArticleViewProps)
                   <ToolbarButton onClick={() => editor?.chain().focus().redo().run()} disabled={!editor?.can().redo()} title="Redo">
                     <Redo2 className="h-4 w-4" />
                   </ToolbarButton>
+                  <ToolbarSeparator />
+                  <ToolbarButton onClick={() => { setAiModalOpen(true); setAiError(null) }} title="Generate Breaking News dengan AI" active={aiModalOpen}>
+                    <Sparkles className="h-4 w-4" />
+                  </ToolbarButton>
                 </div>
 
                 {/* Area tulis */}
@@ -1325,6 +1367,139 @@ export function CreateArticleView({ onBack, articleId }: CreateArticleViewProps)
             >
               Sisipkan
             </button>
+          </div>
+        </div>
+      </div>
+    )}
+
+    {/* ── AI Generate Modal ── */}
+    {aiModalOpen && (
+      <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/70 px-4">
+        <div className="w-full max-w-lg rounded-xl border border-border bg-card shadow-2xl">
+          {/* Header */}
+          <div className="flex items-center justify-between border-b border-border px-6 py-4">
+            <div className="flex items-center gap-2">
+              <Sparkles className="h-5 w-5 text-primary" />
+              <h3 className="text-base font-bold text-foreground" style={{ fontFamily: "var(--font-oswald)" }}>
+                Generate Breaking News
+              </h3>
+            </div>
+            <button
+              onClick={() => { setAiModalOpen(false); setAiError(null) }}
+              className="text-muted-foreground hover:text-foreground"
+            >
+              <X className="h-4 w-4" />
+            </button>
+          </div>
+
+          {/* Body */}
+          <div className="space-y-4 px-6 py-5">
+            {/* Tipe Berita */}
+            <div>
+              <label className="mb-2 block text-xs font-semibold text-muted-foreground uppercase tracking-wide">
+                Tipe Berita
+              </label>
+              <div className="grid grid-cols-3 gap-2">
+                {([
+                  { value: "transfer", label: "🔄 Transfer", desc: "Rumor & konfirmasi" },
+                  { value: "konpers", label: "🎙️ Konpers", desc: "Konferensi pers" },
+                  { value: "cedera",  label: "🩹 Cedera",   desc: "Update kondisi pemain" },
+                ] as const).map((t) => (
+                  <button
+                    key={t.value}
+                    type="button"
+                    onClick={() => setAiNewsType(t.value)}
+                    className={[
+                      "rounded-lg border px-3 py-2.5 text-left transition-all",
+                      aiNewsType === t.value
+                        ? "border-primary bg-primary/10 ring-1 ring-primary"
+                        : "border-border bg-secondary/30 hover:bg-secondary/60",
+                    ].join(" ")}
+                  >
+                    <p className="text-xs font-bold text-foreground">{t.label}</p>
+                    <p className="mt-0.5 text-[10px] text-muted-foreground">{t.desc}</p>
+                  </button>
+                ))}
+              </div>
+            </div>
+
+            {/* Topik */}
+            <div>
+              <label className="mb-1.5 block text-xs font-semibold text-muted-foreground uppercase tracking-wide">
+                Topik <span className="text-destructive">*</span>
+              </label>
+              <input
+                type="text"
+                value={aiTopic}
+                onChange={(e) => setAiTopic(e.target.value)}
+                placeholder="Contoh: Marcus Rashford ke Barcelona, Victor Osimhen cedera paha"
+                className="w-full rounded-lg border border-border bg-secondary/50 px-3 py-2 text-sm text-foreground placeholder-muted-foreground focus:outline-none focus:ring-1 focus:ring-primary"
+                autoFocus
+              />
+            </div>
+
+            {/* Konteks */}
+            <div>
+              <label className="mb-1.5 block text-xs font-semibold text-muted-foreground uppercase tracking-wide">
+                Konteks & Fakta <span className="text-destructive">*</span>
+              </label>
+              <textarea
+                value={aiContext}
+                onChange={(e) => setAiContext(e.target.value)}
+                placeholder={
+                  aiNewsType === "transfer"
+                    ? "Contoh: Nilai transfer €45M, kontrak 4 tahun, sudah medical check-up hari ini, dikonfirmasi Romano. Rashford sudah tidak masuk skuat United 3 bulan terakhir."
+                    : aiNewsType === "konpers"
+                    ? "Contoh: Pep Guardiola bicara soal tekanan gelar liga: 'Kami tidak takut kalah, kami hanya fokus pada proses.' Disampaikan setelah kekalahan 0-2 dari Arsenal kemarin."
+                    : "Contoh: Cedera ligamen lutut kanan, absen 6-8 minggu, terjadi menit ke-34 lawan Chelsea. Ini cedera kedua di area yang sama musim ini."
+                }
+                rows={5}
+                className="w-full rounded-lg border border-border bg-secondary/50 px-3 py-2 text-sm text-foreground placeholder-muted-foreground focus:outline-none focus:ring-1 focus:ring-primary resize-none"
+              />
+              <p className="mt-1 text-[11px] text-muted-foreground">
+                Semakin detail konteks yang kamu berikan, semakin baik artikel yang dihasilkan.
+              </p>
+            </div>
+
+            {/* Error */}
+            {aiError && (
+              <p className="rounded-lg bg-destructive/10 px-3 py-2 text-xs text-destructive">
+                ⚠ {aiError}
+              </p>
+            )}
+          </div>
+
+          {/* Footer */}
+          <div className="flex items-center justify-between border-t border-border px-6 py-4">
+            <p className="text-[11px] text-muted-foreground">Powered by Groq · LLaMA 3.3 70B</p>
+            <div className="flex gap-3">
+              <button
+                onClick={() => { setAiModalOpen(false); setAiError(null) }}
+                className="rounded-lg border border-border px-4 py-2 text-sm text-foreground hover:bg-secondary"
+              >
+                Batal
+              </button>
+              <button
+                onClick={handleAiGenerate}
+                disabled={aiGenerating || !aiTopic.trim() || !aiContext.trim()}
+                className="flex items-center gap-2 rounded-lg bg-primary px-4 py-2 text-sm font-bold text-black hover:bg-primary/90 disabled:opacity-40"
+              >
+                {aiGenerating ? (
+                  <>
+                    <svg className="h-3.5 w-3.5 animate-spin" viewBox="0 0 24 24" fill="none">
+                      <circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4"/>
+                      <path className="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8v8z"/>
+                    </svg>
+                    Generating...
+                  </>
+                ) : (
+                  <>
+                    <Sparkles className="h-3.5 w-3.5" />
+                    Generate Artikel
+                  </>
+                )}
+              </button>
+            </div>
           </div>
         </div>
       </div>
