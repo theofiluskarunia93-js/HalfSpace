@@ -11,7 +11,7 @@
  *  perbandingan_tim | timeline_pertandingan   ← BARU
  */
 
-import { useState, useEffect, useRef, useCallback } from "react"
+import { useState, useEffect } from "react"
 import { createClient } from "@/lib/supabase/client"
 
 
@@ -815,80 +815,7 @@ function DaftarPemainForm({ widgetId, onSaved }: { widgetId: string; onSaved: ()
     posisi: "",
   }])
 
-  // ── Screenshot import state ──────────────────────────────────────────────
-  // Hanya tersedia di form DaftarPemain — tidak digunakan widget lain.
-  const [importing, setImporting]     = useState(false)
-  const [importError, setImportError] = useState<string | null>(null)
-  const [importCount, setImportCount] = useState<number | null>(null)
-  const screenshotInputRef            = useRef<HTMLInputElement>(null)
 
-  // Konversi file gambar → base64 string (tanpa prefix data:...)
-  const fileToBase64 = useCallback((file: File): Promise<string> => {
-    return new Promise((resolve, reject) => {
-      const reader = new FileReader()
-      reader.onload  = () => resolve((reader.result as string).split(",")[1])
-      reader.onerror = () => reject(new Error("Gagal membaca file."))
-      reader.readAsDataURL(file)
-    })
-  }, [])
-
-  // Kirim gambar ke /api/extract-players (proxy ke Gemini) → populate rows
-  const handleScreenshotImport = useCallback(async (e: React.ChangeEvent<HTMLInputElement>) => {
-    const file = e.target.files?.[0]
-    if (!file) return
-    e.target.value = "" // reset agar file sama bisa dipilih ulang
-
-    setImporting(true)
-    setImportError(null)
-    setImportCount(null)
-
-    try {
-      const imageBase64 = await fileToBase64(file)
-
-      const res = await fetch("/api/extract-players", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ imageBase64, mimeType: file.type }),
-      })
-
-      const data = await res.json()
-
-      if (!res.ok) {
-        throw new Error(data.error ?? `Server error ${res.status}`)
-      }
-
-      const players: {
-        nomor_punggung: number
-        nama_pemain: string
-        usia: number
-        posisi: string
-        asal_klub: string
-        nilai_pasar: string
-      }[] = data.players
-
-      if (!Array.isArray(players) || players.length === 0) {
-        throw new Error("Tidak ada data pemain yang berhasil diekstrak.")
-      }
-
-      // Konversi hasil API → format rows form
-      const newRows = players.map(p => ({
-        id:             crypto.randomUUID(),
-        nomor_punggung: p.nomor_punggung,
-        nama_pemain:    p.nama_pemain,
-        usia:           p.usia,
-        asal_klub:      p.asal_klub,
-        nilai_pasar:    p.nilai_pasar,
-        posisi:         p.posisi,
-      }))
-
-      setRows(newRows)
-      setImportCount(newRows.length)
-    } catch (err: any) {
-      setImportError(err.message ?? "Gagal memproses screenshot.")
-    } finally {
-      setImporting(false)
-    }
-  }, [fileToBase64])
 
   useEffect(() => {
     supabase.from("widget_daftar_pemain").select("*").eq("widget_id", widgetId)
@@ -959,52 +886,6 @@ function DaftarPemainForm({ widgetId, onSaved }: { widgetId: string; onSaved: ()
 
   return (
     <div className="space-y-3">
-
-      {/* ── Tombol Import Screenshot ── */}
-      <div className="rounded-lg border border-dashed border-primary/40 bg-primary/5 p-3">
-        <p className="mb-1.5 text-xs font-semibold text-primary/80">⚡ Import dari Screenshot</p>
-        <p className="mb-2.5 text-[11px] leading-relaxed text-muted-foreground">
-          Upload screenshot tabel pemain (Transfermarkt, Sofascore, dll.) — data diekstrak otomatis.
-        </p>
-        <input
-          ref={screenshotInputRef}
-          type="file"
-          accept="image/png,image/jpeg,image/webp"
-          className="hidden"
-          onChange={handleScreenshotImport}
-        />
-        <button
-          type="button"
-          onClick={() => screenshotInputRef.current?.click()}
-          disabled={importing}
-          className="flex w-full items-center justify-center gap-2 rounded-lg border border-primary/30 bg-primary/10 px-3 py-2 text-xs font-bold text-primary transition-colors hover:bg-primary/20 disabled:opacity-50"
-        >
-          {importing ? (
-            <>
-              <svg className="h-3.5 w-3.5 animate-spin" viewBox="0 0 24 24" fill="none">
-                <circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4"/>
-                <path className="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8v8z"/>
-              </svg>
-              Memproses gambar...
-            </>
-          ) : (
-            <>
-              <svg className="h-3.5 w-3.5" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
-                <path strokeLinecap="round" strokeLinejoin="round" d="M4 16l4.586-4.586a2 2 0 012.828 0L16 16m-2-2l1.586-1.586a2 2 0 012.828 0L20 14m-6-6h.01M6 20h12a2 2 0 002-2V6a2 2 0 00-2-2H6a2 2 0 00-2 2v12a2 2 0 002 2z"/>
-              </svg>
-              Upload Screenshot
-            </>
-          )}
-        </button>
-        {importError && (
-          <p className="mt-2 text-[11px] text-destructive">⚠ {importError}</p>
-        )}
-        {importCount !== null && !importError && (
-          <p className="mt-2 text-[11px] text-primary font-semibold">
-            ✓ {importCount} pemain berhasil diekstrak — periksa & koreksi data di bawah sebelum simpan.
-          </p>
-        )}
-      </div>
 
       {rows.map((row, i) => (
         <div key={row.id} className="relative rounded-lg border border-border bg-secondary/20 p-3 space-y-2">
