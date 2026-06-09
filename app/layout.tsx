@@ -130,7 +130,8 @@ export default function RootLayout({
           dangerouslySetInnerHTML={{ __html: JSON.stringify(organizationSchema) }}
         />
         {/* Subscribe with Google — Google Publisher */}
-        <script
+        {/* DINONAKTIFKAN SEMENTARA — uncomment kembali jika ingin diaktifkan */}
+        {/* <script
           async
           type="application/javascript"
           src="https://news.google.com/swg/js/v1/swg-basic.js"
@@ -146,7 +147,7 @@ export default function RootLayout({
     });
   });`,
           }}
-        />
+        /> */}
       </head>
       <body className={`${inter.variable} ${oswald.variable} font-sans antialiased`}>
         {children}
