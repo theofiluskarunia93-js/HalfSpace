@@ -1273,18 +1273,63 @@ export function ArticleDetail({ articleId, initialData }: ArticleDetailProps) {
                       className="w-full object-cover max-h-[480px] rounded-xl"
                       itemProp="url"
                     />
-                    {(article.featured_image_caption || article.featured_image_alt) && (
-                      <figcaption className="mt-2 flex items-start gap-1.5 rounded-b-lg bg-secondary/40 px-3 py-2 text-xs text-muted-foreground">
-                        <svg className="mt-0.5 h-3 w-3 flex-shrink-0 opacity-60" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2} aria-hidden="true">
-                          <path strokeLinecap="round" strokeLinejoin="round" d="M3 9a2 2 0 012-2h.93a2 2 0 001.664-.89l.812-1.22A2 2 0 0110.07 4h3.86a2 2 0 011.664.89l.812 1.22A2 2 0 0018.07 7H19a2 2 0 012 2v9a2 2 0 01-2 2H5a2 2 0 01-2-2V9z" />
-                          <path strokeLinecap="round" strokeLinejoin="round" d="M15 13a3 3 0 11-6 0 3 3 0 016 0z" />
-                        </svg>
-                        <span>
-                          <span className="font-semibold text-muted-foreground/80">Foto: </span>
-                          {article.featured_image_caption || article.featured_image_alt}
-                        </span>
-                      </figcaption>
-                    )}
+                    {(article.featured_image_caption || article.featured_image_alt) && (() => {
+                      // Coba parse sebagai JSON structured caption
+                      let structured: {
+                        photoTitle?: string; photoTitleUrl?: string
+                        photographer?: string; photographerUrl?: string
+                        source?: string; sourceUrl?: string
+                        license?: string; licenseUrl?: string
+                      } | null = null
+                      if (article.featured_image_caption) {
+                        try { structured = JSON.parse(article.featured_image_caption) } catch { /* plain text lama */ }
+                      }
+
+                      return (
+                        <figcaption className="mt-2 flex items-start gap-2 rounded-b-lg border border-t-0 border-primary/10 bg-[#0d1a0d]/80 px-3 py-2.5 text-xs text-muted-foreground backdrop-blur-sm">
+                          <svg className="mt-0.5 h-3.5 w-3.5 flex-shrink-0 text-primary/50" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2} aria-hidden="true">
+                            <path strokeLinecap="round" strokeLinejoin="round" d="M3 9a2 2 0 012-2h.93a2 2 0 001.664-.89l.812-1.22A2 2 0 0110.07 4h3.86a2 2 0 011.664.89l.812 1.22A2 2 0 0018.07 7H19a2 2 0 012 2v9a2 2 0 01-2 2H5a2 2 0 01-2-2V9z" />
+                            <path strokeLinecap="round" strokeLinejoin="round" d="M15 13a3 3 0 11-6 0 3 3 0 016 0z" />
+                          </svg>
+                          <span className="leading-relaxed">
+                            {structured ? (
+                              <>
+                                <span className="font-semibold text-muted-foreground/80">Foto: </span>
+                                {structured.photoTitle && (
+                                  structured.photoTitleUrl
+                                    ? <a href={structured.photoTitleUrl} target="_blank" rel="noopener noreferrer" className="text-primary/90 underline underline-offset-2 hover:text-primary transition-colors">{structured.photoTitle}</a>
+                                    : <span>{structured.photoTitle}</span>
+                                )}
+                                {structured.photographer && (
+                                  <>{structured.photoTitle ? " oleh " : ""}{structured.photographerUrl
+                                    ? <a href={structured.photographerUrl} target="_blank" rel="noopener noreferrer" className="text-primary/90 underline underline-offset-2 hover:text-primary transition-colors">{structured.photographer}</a>
+                                    : <span>{structured.photographer}</span>
+                                  }</>
+                                )}
+                                {structured.source && (
+                                  <>{(structured.photoTitle || structured.photographer) ? " / " : ""}{structured.sourceUrl
+                                    ? <a href={structured.sourceUrl} target="_blank" rel="noopener noreferrer" className="text-primary/90 underline underline-offset-2 hover:text-primary transition-colors">{structured.source}</a>
+                                    : <span>{structured.source}</span>
+                                  }</>
+                                )}
+                                {structured.license && (
+                                  <>{" — "}{structured.licenseUrl
+                                    ? <a href={structured.licenseUrl} target="_blank" rel="noopener noreferrer" className="inline-block rounded px-1.5 py-0.5 text-[10px] font-bold tracking-wider bg-primary/10 text-primary ring-1 ring-primary/30 hover:bg-primary/20 transition-colors no-underline">{structured.license}</a>
+                                    : <span className="inline-block rounded px-1.5 py-0.5 text-[10px] font-bold tracking-wider bg-secondary text-muted-foreground ring-1 ring-border">{structured.license}</span>
+                                  }</>
+                                )}
+                              </>
+                            ) : (
+                              // Fallback: plain text caption lama
+                              <>
+                                <span className="font-semibold text-muted-foreground/80">Foto: </span>
+                                {article.featured_image_caption || article.featured_image_alt}
+                              </>
+                            )}
+                          </span>
+                        </figcaption>
+                      )
+                    })()}
                     <meta itemProp="width" content="1200" />
                     <meta itemProp="height" content="630" />
                   </figure>

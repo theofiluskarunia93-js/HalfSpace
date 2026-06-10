@@ -365,7 +365,51 @@ export function CreateArticleView({ onBack, articleId }: CreateArticleViewProps)
   const [category,        setCategory]        = useState("")
   const [excerpt,         setExcerpt]         = useState("")
   const [contentType,     setContentType]     = useState("")
-  const [featuredImageCaption, setFeaturedImageCaption] = useState("")
+  // Structured caption fields — disimpan sebagai JSON di kolom featured_image_caption
+  const [captionPhotoTitle,       setCaptionPhotoTitle]       = useState("")
+  const [captionPhotoTitleUrl,    setCaptionPhotoTitleUrl]    = useState("")
+  const [captionPhotographer,     setCaptionPhotographer]     = useState("")
+  const [captionPhotographerUrl,  setCaptionPhotographerUrl]  = useState("")
+  const [captionSource,           setCaptionSource]           = useState("")
+  const [captionSourceUrl,        setCaptionSourceUrl]        = useState("")
+  const [captionLicense,          setCaptionLicense]          = useState("")
+  const [captionLicenseUrl,       setCaptionLicenseUrl]       = useState("")
+
+  // Helper: serialize structured caption ke JSON string (untuk disimpan ke DB)
+  function serializeCaption(): string | null {
+    const obj = {
+      photoTitle:       captionPhotoTitle      || undefined,
+      photoTitleUrl:    captionPhotoTitleUrl    || undefined,
+      photographer:     captionPhotographer     || undefined,
+      photographerUrl:  captionPhotographerUrl  || undefined,
+      source:           captionSource           || undefined,
+      sourceUrl:        captionSourceUrl        || undefined,
+      license:          captionLicense          || undefined,
+      licenseUrl:       captionLicenseUrl       || undefined,
+    }
+    const hasValue = Object.values(obj).some(Boolean)
+    if (!hasValue) return null
+    return JSON.stringify(obj)
+  }
+
+  // Helper: parse JSON caption dari DB ke state (edit mode)
+  function parseAndSetCaption(raw: string | null) {
+    if (!raw) return
+    try {
+      const obj = JSON.parse(raw)
+      setCaptionPhotoTitle(obj.photoTitle || "")
+      setCaptionPhotoTitleUrl(obj.photoTitleUrl || "")
+      setCaptionPhotographer(obj.photographer || "")
+      setCaptionPhotographerUrl(obj.photographerUrl || "")
+      setCaptionSource(obj.source || "")
+      setCaptionSourceUrl(obj.sourceUrl || "")
+      setCaptionLicense(obj.license || "")
+      setCaptionLicenseUrl(obj.licenseUrl || "")
+    } catch {
+      // Caption lama (plain text) — isi ke photoTitle saja
+      setCaptionPhotoTitle(raw)
+    }
+  }
   const [metaTitle,       setMetaTitle]       = useState("")
   const [metaDescription, setMetaDescription] = useState("")
   const [categories,      setCategories]      = useState<{ id: string; name: string }[]>([])
@@ -518,8 +562,7 @@ export function CreateArticleView({ onBack, articleId }: CreateArticleViewProps)
         setSavedSlug(data.slug || "")
         setExcerpt(data.excerpt || "")
         setContentType(data.content_type || "")
-        setFeaturedImageCaption(data.featured_image_caption || "")
-        setCategory(data.category_id || "")
+        parseAndSetCaption(data.featured_image_caption || null)        setCategory(data.category_id || "")
         setFeaturedImageUrl(data.featured_image_url || null)
         setFeaturedImagePreview(data.featured_image_url || null)
         setMetaTitle(data.meta_title || "")
@@ -852,7 +895,7 @@ export function CreateArticleView({ onBack, articleId }: CreateArticleViewProps)
       content: htmlContent,
       category_id: category || null,
       featured_image_url: featuredImageUrl,
-      featured_image_caption: featuredImageCaption || null,
+      featured_image_caption: serializeCaption(),
       meta_title: metaTitle || null,
       meta_description: metaDescription || null,
       status,
@@ -979,26 +1022,25 @@ export function CreateArticleView({ onBack, articleId }: CreateArticleViewProps)
               <label className="mb-1.5 block text-xs font-semibold uppercase tracking-wider text-muted-foreground">
                 Tipe Konten <span className="normal-case font-normal text-muted-foreground/60">(opsional — tampil sebagai badge di atas standfirst)</span>
               </label>
-              <div className="flex flex-wrap gap-2">
-                {["", "Analisis", "Opini", "Laporan", "Profil", "Sejarah", "Transfer", "Taktik"].map((opt) => (
-                  <button
-                    key={opt}
-                    type="button"
-                    onClick={() => setContentType(opt)}
-                    className={[
-                      "rounded-md px-3 py-1.5 text-xs font-semibold uppercase tracking-wider transition-all",
-                      contentType === opt
-                        ? "bg-primary text-black shadow-[0_0_8px_rgba(57,255,20,0.5)]"
-                        : "border border-border bg-secondary/50 text-muted-foreground hover:border-primary/50 hover:text-foreground",
-                    ].join(" ")}
-                  >
-                    {opt === "" ? "— Tidak ada —" : opt}
-                  </button>
-                ))}
-              </div>
+              <input
+                type="text"
+                placeholder="Contoh: Analisis, Opini, Laporan, Profil, Taktik, dll."
+                value={contentType}
+                onChange={(e) => setContentType(e.target.value)}
+                className={[
+                  "w-full rounded-md border border-border bg-secondary/50 px-3 py-2",
+                  "text-sm text-foreground placeholder:text-muted-foreground/40",
+                  "focus:border-primary focus:outline-none focus:ring-1 focus:ring-primary/30 transition-colors",
+                ].join(" ")}
+              />
               {contentType && (
                 <p className="mt-2 text-xs text-primary/70">
-                  Preview badge: <span className="font-bold uppercase">{contentType}</span>
+                  Preview badge:{" "}
+                  <span
+                    className="inline-block rounded px-2 py-0.5 text-[10px] font-bold uppercase tracking-wider bg-primary/15 text-primary ring-1 ring-primary/40"
+                  >
+                    {contentType}
+                  </span>
                 </p>
               )}
             </div>
@@ -1276,22 +1318,108 @@ export function CreateArticleView({ onBack, articleId }: CreateArticleViewProps)
               </button>
             )}
 
-            {/* Keterangan Gambar */}
-            <div className="mt-4">
-              <label className="mb-1.5 block text-xs font-semibold uppercase tracking-wider text-muted-foreground">
-                Keterangan Gambar <span className="normal-case font-normal text-muted-foreground/60">(opsional — kredit / sumber foto)</span>
-              </label>
-              <input
-                type="text"
-                placeholder="Contoh: Foto: Cristiano Ronaldo oleh John Smith / Getty Images — CC BY-SA 4.0"
-                value={featuredImageCaption}
-                onChange={(e) => setFeaturedImageCaption(e.target.value)}
-                className={[
-                  "w-full rounded-md border border-border bg-secondary/50 px-3 py-2",
-                  "text-sm text-foreground placeholder:text-muted-foreground/40",
-                  "focus:border-primary focus:outline-none focus:ring-1 focus:ring-primary/30 transition-colors",
-                ].join(" ")}
-              />
+            {/* Keterangan Gambar — Structured */}
+            <div className="mt-4 rounded-lg border border-border bg-secondary/20 p-4 space-y-3">
+              <p className="text-xs font-semibold uppercase tracking-wider text-muted-foreground">
+                Keterangan Gambar{" "}
+                <span className="normal-case font-normal text-muted-foreground/60">(opsional — kredit / sumber foto)</span>
+              </p>
+
+              {/* Row helper */}
+              {([
+                {
+                  label: "Judul / Deskripsi Foto",
+                  placeholder: "Contoh: FC Barcelona vs Real Madrid, Camp Nou 2024",
+                  val: captionPhotoTitle, setVal: setCaptionPhotoTitle,
+                  urlVal: captionPhotoTitleUrl, setUrlVal: setCaptionPhotoTitleUrl,
+                  urlPlaceholder: "Link ke halaman foto (opsional)",
+                },
+                {
+                  label: "Fotografer",
+                  placeholder: "Contoh: Joan Martínez",
+                  val: captionPhotographer, setVal: setCaptionPhotographer,
+                  urlVal: captionPhotographerUrl, setUrlVal: setCaptionPhotographerUrl,
+                  urlPlaceholder: "Link profil fotografer (opsional)",
+                },
+                {
+                  label: "Sumber / Platform",
+                  placeholder: "Contoh: Wikimedia Commons",
+                  val: captionSource, setVal: setCaptionSource,
+                  urlVal: captionSourceUrl, setUrlVal: setCaptionSourceUrl,
+                  urlPlaceholder: "Link sumber foto (opsional)",
+                },
+                {
+                  label: "Lisensi",
+                  placeholder: "Contoh: CC BY-SA 4.0",
+                  val: captionLicense, setVal: setCaptionLicense,
+                  urlVal: captionLicenseUrl, setUrlVal: setCaptionLicenseUrl,
+                  urlPlaceholder: "Link halaman lisensi (opsional)",
+                },
+              ] as const).map(({ label, placeholder, val, setVal, urlVal, setUrlVal, urlPlaceholder }) => (
+                <div key={label} className="space-y-1.5">
+                  <p className="text-[10px] font-semibold uppercase tracking-wider text-primary/70">{label}</p>
+                  <div className="flex gap-2">
+                    <input
+                      type="text"
+                      placeholder={placeholder}
+                      value={val}
+                      onChange={(e) => setVal(e.target.value)}
+                      className={[
+                        "flex-1 rounded-md border border-border bg-secondary/50 px-3 py-2",
+                        "text-sm text-foreground placeholder:text-muted-foreground/40",
+                        "focus:border-primary focus:outline-none focus:ring-1 focus:ring-primary/30 transition-colors",
+                      ].join(" ")}
+                    />
+                    <input
+                      type="url"
+                      placeholder={urlPlaceholder}
+                      value={urlVal}
+                      onChange={(e) => setUrlVal(e.target.value)}
+                      className={[
+                        "flex-1 rounded-md border border-border bg-secondary/50 px-3 py-2",
+                        "text-sm text-foreground placeholder:text-muted-foreground/40",
+                        "focus:border-primary/60 focus:outline-none focus:ring-1 focus:ring-primary/20 transition-colors",
+                      ].join(" ")}
+                    />
+                  </div>
+                </div>
+              ))}
+
+              {/* Live preview */}
+              {(captionPhotoTitle || captionPhotographer || captionSource || captionLicense) && (
+                <div className="mt-3 flex items-start gap-2 rounded-md border border-primary/20 bg-black/40 px-3 py-2.5 text-xs text-muted-foreground">
+                  <svg className="mt-0.5 h-3.5 w-3.5 flex-shrink-0 text-primary/60" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
+                    <path strokeLinecap="round" strokeLinejoin="round" d="M3 9a2 2 0 012-2h.93a2 2 0 001.664-.89l.812-1.22A2 2 0 0110.07 4h3.86a2 2 0 011.664.89l.812 1.22A2 2 0 0018.07 7H19a2 2 0 012 2v9a2 2 0 01-2 2H5a2 2 0 01-2-2V9z" />
+                    <path strokeLinecap="round" strokeLinejoin="round" d="M15 13a3 3 0 11-6 0 3 3 0 016 0z" />
+                  </svg>
+                  <span className="leading-relaxed">
+                    <span className="font-semibold text-muted-foreground/80">Foto: </span>
+                    {captionPhotoTitle && (
+                      captionPhotoTitleUrl
+                        ? <span className="text-primary/80 underline underline-offset-2">{captionPhotoTitle}</span>
+                        : <span>{captionPhotoTitle}</span>
+                    )}
+                    {captionPhotographer && (
+                      <>{captionPhotoTitle ? " oleh " : ""}{captionPhotographerUrl
+                        ? <span className="text-primary/80 underline underline-offset-2">{captionPhotographer}</span>
+                        : <span>{captionPhotographer}</span>
+                      }</>
+                    )}
+                    {captionSource && (
+                      <>{(captionPhotoTitle || captionPhotographer) ? " / " : ""}{captionSourceUrl
+                        ? <span className="text-primary/80 underline underline-offset-2">{captionSource}</span>
+                        : <span>{captionSource}</span>
+                      }</>
+                    )}
+                    {captionLicense && (
+                      <>{" — "}{captionLicenseUrl
+                        ? <span className="inline-block rounded px-1.5 py-0.5 text-[10px] font-bold tracking-wider bg-primary/15 text-primary ring-1 ring-primary/40">{captionLicense}</span>
+                        : <span className="inline-block rounded px-1.5 py-0.5 text-[10px] font-bold tracking-wider bg-secondary text-muted-foreground ring-1 ring-border">{captionLicense}</span>
+                      }</>
+                    )}
+                  </span>
+                </div>
+              )}
             </div>
           </div>
 
