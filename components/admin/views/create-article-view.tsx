@@ -1356,15 +1356,14 @@ export function CreateArticleView({ onBack, articleId }: CreateArticleViewProps)
               ] as const).map(({ label, placeholder, val, setVal, urlVal, setUrlVal, urlPlaceholder }) => (
                 <div key={label} className="space-y-1.5">
                   <p className="text-[10px] font-semibold uppercase tracking-wider text-primary/70">{label}</p>
-                  <div className="flex gap-2">
+                  <div className="flex flex-col gap-2">
                     <input
                       type="text"
                       placeholder={placeholder}
                       value={val}
                       onChange={(e) => setVal(e.target.value)}
                       className={[
-                        urlVal !== null ? "flex-1" : "w-full",
-                        "rounded-md border border-border bg-secondary/50 px-3 py-2",
+                        "w-full rounded-md border border-border bg-secondary/50 px-3 py-2",
                         "text-sm text-foreground placeholder:text-muted-foreground/40",
                         "focus:border-primary focus:outline-none focus:ring-1 focus:ring-primary/30 transition-colors",
                       ].join(" ")}
@@ -1376,7 +1375,7 @@ export function CreateArticleView({ onBack, articleId }: CreateArticleViewProps)
                         value={urlVal}
                         onChange={(e) => setUrlVal(e.target.value)}
                         className={[
-                          "flex-1 rounded-md border border-border bg-secondary/50 px-3 py-2",
+                          "w-full rounded-md border border-border bg-secondary/50 px-3 py-2",
                           "text-sm text-foreground placeholder:text-muted-foreground/40",
                           "focus:border-primary/60 focus:outline-none focus:ring-1 focus:ring-primary/20 transition-colors",
                         ].join(" ")}
