@@ -367,7 +367,6 @@ export function CreateArticleView({ onBack, articleId }: CreateArticleViewProps)
   const [contentType,     setContentType]     = useState("")
   // Structured caption fields — disimpan sebagai JSON di kolom featured_image_caption
   const [captionPhotoTitle,       setCaptionPhotoTitle]       = useState("")
-  const [captionPhotoTitleUrl,    setCaptionPhotoTitleUrl]    = useState("")
   const [captionPhotographer,     setCaptionPhotographer]     = useState("")
   const [captionPhotographerUrl,  setCaptionPhotographerUrl]  = useState("")
   const [captionSource,           setCaptionSource]           = useState("")
@@ -379,7 +378,6 @@ export function CreateArticleView({ onBack, articleId }: CreateArticleViewProps)
   function serializeCaption(): string | null {
     const obj = {
       photoTitle:       captionPhotoTitle      || undefined,
-      photoTitleUrl:    captionPhotoTitleUrl    || undefined,
       photographer:     captionPhotographer     || undefined,
       photographerUrl:  captionPhotographerUrl  || undefined,
       source:           captionSource           || undefined,
@@ -398,7 +396,6 @@ export function CreateArticleView({ onBack, articleId }: CreateArticleViewProps)
     try {
       const obj = JSON.parse(raw)
       setCaptionPhotoTitle(obj.photoTitle || "")
-      setCaptionPhotoTitleUrl(obj.photoTitleUrl || "")
       setCaptionPhotographer(obj.photographer || "")
       setCaptionPhotographerUrl(obj.photographerUrl || "")
       setCaptionSource(obj.source || "")
@@ -562,7 +559,8 @@ export function CreateArticleView({ onBack, articleId }: CreateArticleViewProps)
         setSavedSlug(data.slug || "")
         setExcerpt(data.excerpt || "")
         setContentType(data.content_type || "")
-        parseAndSetCaption(data.featured_image_caption || null)        setCategory(data.category_id || "")
+        parseAndSetCaption(data.featured_image_caption || null)
+        setCategory(data.category_id || "")
         setFeaturedImageUrl(data.featured_image_url || null)
         setFeaturedImagePreview(data.featured_image_url || null)
         setMetaTitle(data.meta_title || "")
@@ -1331,8 +1329,8 @@ export function CreateArticleView({ onBack, articleId }: CreateArticleViewProps)
                   label: "Judul / Deskripsi Foto",
                   placeholder: "Contoh: FC Barcelona vs Real Madrid, Camp Nou 2024",
                   val: captionPhotoTitle, setVal: setCaptionPhotoTitle,
-                  urlVal: captionPhotoTitleUrl, setUrlVal: setCaptionPhotoTitleUrl,
-                  urlPlaceholder: "Link ke halaman foto (opsional)",
+                  urlVal: null, setUrlVal: null,
+                  urlPlaceholder: null,
                 },
                 {
                   label: "Fotografer",
@@ -1365,22 +1363,25 @@ export function CreateArticleView({ onBack, articleId }: CreateArticleViewProps)
                       value={val}
                       onChange={(e) => setVal(e.target.value)}
                       className={[
-                        "flex-1 rounded-md border border-border bg-secondary/50 px-3 py-2",
+                        urlVal !== null ? "flex-1" : "w-full",
+                        "rounded-md border border-border bg-secondary/50 px-3 py-2",
                         "text-sm text-foreground placeholder:text-muted-foreground/40",
                         "focus:border-primary focus:outline-none focus:ring-1 focus:ring-primary/30 transition-colors",
                       ].join(" ")}
                     />
-                    <input
-                      type="url"
-                      placeholder={urlPlaceholder}
-                      value={urlVal}
-                      onChange={(e) => setUrlVal(e.target.value)}
-                      className={[
-                        "flex-1 rounded-md border border-border bg-secondary/50 px-3 py-2",
-                        "text-sm text-foreground placeholder:text-muted-foreground/40",
-                        "focus:border-primary/60 focus:outline-none focus:ring-1 focus:ring-primary/20 transition-colors",
-                      ].join(" ")}
-                    />
+                    {urlVal !== null && setUrlVal !== null && urlPlaceholder !== null && (
+                      <input
+                        type="url"
+                        placeholder={urlPlaceholder}
+                        value={urlVal}
+                        onChange={(e) => setUrlVal(e.target.value)}
+                        className={[
+                          "flex-1 rounded-md border border-border bg-secondary/50 px-3 py-2",
+                          "text-sm text-foreground placeholder:text-muted-foreground/40",
+                          "focus:border-primary/60 focus:outline-none focus:ring-1 focus:ring-primary/20 transition-colors",
+                        ].join(" ")}
+                      />
+                    )}
                   </div>
                 </div>
               ))}
@@ -1395,9 +1396,7 @@ export function CreateArticleView({ onBack, articleId }: CreateArticleViewProps)
                   <span className="leading-relaxed">
                     <span className="font-semibold text-muted-foreground/80">Foto: </span>
                     {captionPhotoTitle && (
-                      captionPhotoTitleUrl
-                        ? <span className="text-primary/80 underline underline-offset-2">{captionPhotoTitle}</span>
-                        : <span>{captionPhotoTitle}</span>
+                      <span>{captionPhotoTitle}</span>
                     )}
                     {captionPhotographer && (
                       <>{captionPhotoTitle ? " oleh " : ""}{captionPhotographerUrl

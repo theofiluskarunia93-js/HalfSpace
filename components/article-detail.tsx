@@ -1276,7 +1276,7 @@ export function ArticleDetail({ articleId, initialData }: ArticleDetailProps) {
                     {(article.featured_image_caption || article.featured_image_alt) && (() => {
                       // Coba parse sebagai JSON structured caption
                       let structured: {
-                        photoTitle?: string; photoTitleUrl?: string
+                        photoTitle?: string
                         photographer?: string; photographerUrl?: string
                         source?: string; sourceUrl?: string
                         license?: string; licenseUrl?: string
@@ -1296,9 +1296,7 @@ export function ArticleDetail({ articleId, initialData }: ArticleDetailProps) {
                               <>
                                 <span className="font-semibold text-muted-foreground/80">Foto: </span>
                                 {structured.photoTitle && (
-                                  structured.photoTitleUrl
-                                    ? <a href={structured.photoTitleUrl} target="_blank" rel="noopener noreferrer" className="text-primary/90 underline underline-offset-2 hover:text-primary transition-colors">{structured.photoTitle}</a>
-                                    : <span>{structured.photoTitle}</span>
+                                  <span>{structured.photoTitle}</span>
                                 )}
                                 {structured.photographer && (
                                   <>{structured.photoTitle ? " oleh " : ""}{structured.photographerUrl
