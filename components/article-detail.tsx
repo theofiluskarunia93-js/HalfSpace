@@ -20,9 +20,11 @@ interface Article {
   title: string
   slug: string
   excerpt: string | null
+  content_type: string | null
   content: string | null
   featured_image_url: string | null
   featured_image_alt: string | null
+  featured_image_caption: string | null
   author: string
   views: number
   published_at: string
@@ -1134,9 +1136,19 @@ export function ArticleDetail({ articleId, initialData }: ArticleDetailProps) {
                   </h1>
 
                   {article.excerpt && (
-                    <p className="mt-4 text-lg leading-relaxed text-muted-foreground sm:text-xl" itemProp="description">
-                      {article.excerpt}
-                    </p>
+                    <div className="mt-5 rounded-lg border border-border bg-card/60 p-4">
+                      {article.content_type && (
+                        <span className="mb-3 inline-block rounded bg-primary px-2.5 py-0.5 text-[10px] font-black uppercase tracking-widest text-black">
+                          {article.content_type}
+                        </span>
+                      )}
+                      <div className="flex gap-3">
+                        <div className="mt-0.5 w-1 flex-shrink-0 rounded-full bg-white" aria-hidden="true" />
+                        <p className="text-base italic leading-relaxed text-muted-foreground sm:text-lg" itemProp="description">
+                          {article.excerpt}
+                        </p>
+                      </div>
+                    </div>
                   )}
 
                   {/* Meta row */}
@@ -1261,9 +1273,16 @@ export function ArticleDetail({ articleId, initialData }: ArticleDetailProps) {
                       className="w-full object-cover max-h-[480px] rounded-xl"
                       itemProp="url"
                     />
-                    {article.featured_image_alt && (
-                      <figcaption className="mt-2 text-center text-xs italic text-muted-foreground">
-                        {article.featured_image_alt}
+                    {(article.featured_image_caption || article.featured_image_alt) && (
+                      <figcaption className="mt-2 flex items-start gap-1.5 rounded-b-lg bg-secondary/40 px-3 py-2 text-xs text-muted-foreground">
+                        <svg className="mt-0.5 h-3 w-3 flex-shrink-0 opacity-60" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2} aria-hidden="true">
+                          <path strokeLinecap="round" strokeLinejoin="round" d="M3 9a2 2 0 012-2h.93a2 2 0 001.664-.89l.812-1.22A2 2 0 0110.07 4h3.86a2 2 0 011.664.89l.812 1.22A2 2 0 0018.07 7H19a2 2 0 012 2v9a2 2 0 01-2 2H5a2 2 0 01-2-2V9z" />
+                          <path strokeLinecap="round" strokeLinejoin="round" d="M15 13a3 3 0 11-6 0 3 3 0 016 0z" />
+                        </svg>
+                        <span>
+                          <span className="font-semibold text-muted-foreground/80">Foto: </span>
+                          {article.featured_image_caption || article.featured_image_alt}
+                        </span>
                       </figcaption>
                     )}
                     <meta itemProp="width" content="1200" />

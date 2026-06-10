@@ -364,6 +364,8 @@ export function CreateArticleView({ onBack, articleId }: CreateArticleViewProps)
   const [savedSlug,       setSavedSlug]       = useState("")   // slug yang sudah tersimpan di DB (edit mode)
   const [category,        setCategory]        = useState("")
   const [excerpt,         setExcerpt]         = useState("")
+  const [contentType,     setContentType]     = useState("")
+  const [featuredImageCaption, setFeaturedImageCaption] = useState("")
   const [metaTitle,       setMetaTitle]       = useState("")
   const [metaDescription, setMetaDescription] = useState("")
   const [categories,      setCategories]      = useState<{ id: string; name: string }[]>([])
@@ -515,6 +517,8 @@ export function CreateArticleView({ onBack, articleId }: CreateArticleViewProps)
         setTitle(data.title || "")
         setSavedSlug(data.slug || "")
         setExcerpt(data.excerpt || "")
+        setContentType(data.content_type || "")
+        setFeaturedImageCaption(data.featured_image_caption || "")
         setCategory(data.category_id || "")
         setFeaturedImageUrl(data.featured_image_url || null)
         setFeaturedImagePreview(data.featured_image_url || null)
@@ -844,9 +848,11 @@ export function CreateArticleView({ onBack, articleId }: CreateArticleViewProps)
       title,
       slug: articleSlug,
       excerpt,
+      content_type: contentType || null,
       content: htmlContent,
       category_id: category || null,
       featured_image_url: featuredImageUrl,
+      featured_image_caption: featuredImageCaption || null,
       meta_title: metaTitle || null,
       meta_description: metaDescription || null,
       status,
@@ -966,6 +972,35 @@ export function CreateArticleView({ onBack, articleId }: CreateArticleViewProps)
                   "focus:border-primary focus:outline-none focus:ring-1 focus:ring-primary/30 transition-colors",
                 ].join(" ")}
               />
+            </div>
+
+            {/* Tipe Konten — badge standfirst */}
+            <div>
+              <label className="mb-1.5 block text-xs font-semibold uppercase tracking-wider text-muted-foreground">
+                Tipe Konten <span className="normal-case font-normal text-muted-foreground/60">(opsional — tampil sebagai badge di atas standfirst)</span>
+              </label>
+              <div className="flex flex-wrap gap-2">
+                {["", "Analisis", "Opini", "Laporan", "Profil", "Sejarah", "Transfer", "Taktik"].map((opt) => (
+                  <button
+                    key={opt}
+                    type="button"
+                    onClick={() => setContentType(opt)}
+                    className={[
+                      "rounded-md px-3 py-1.5 text-xs font-semibold uppercase tracking-wider transition-all",
+                      contentType === opt
+                        ? "bg-primary text-black shadow-[0_0_8px_rgba(57,255,20,0.5)]"
+                        : "border border-border bg-secondary/50 text-muted-foreground hover:border-primary/50 hover:text-foreground",
+                    ].join(" ")}
+                  >
+                    {opt === "" ? "— Tidak ada —" : opt}
+                  </button>
+                ))}
+              </div>
+              {contentType && (
+                <p className="mt-2 text-xs text-primary/70">
+                  Preview badge: <span className="font-bold uppercase">{contentType}</span>
+                </p>
+              )}
             </div>
           </div>
 
@@ -1240,6 +1275,24 @@ export function CreateArticleView({ onBack, articleId }: CreateArticleViewProps)
                 Hapus gambar
               </button>
             )}
+
+            {/* Keterangan Gambar */}
+            <div className="mt-4">
+              <label className="mb-1.5 block text-xs font-semibold uppercase tracking-wider text-muted-foreground">
+                Keterangan Gambar <span className="normal-case font-normal text-muted-foreground/60">(opsional — kredit / sumber foto)</span>
+              </label>
+              <input
+                type="text"
+                placeholder="Contoh: Foto: Cristiano Ronaldo oleh John Smith / Getty Images — CC BY-SA 4.0"
+                value={featuredImageCaption}
+                onChange={(e) => setFeaturedImageCaption(e.target.value)}
+                className={[
+                  "w-full rounded-md border border-border bg-secondary/50 px-3 py-2",
+                  "text-sm text-foreground placeholder:text-muted-foreground/40",
+                  "focus:border-primary focus:outline-none focus:ring-1 focus:ring-primary/30 transition-colors",
+                ].join(" ")}
+              />
+            </div>
           </div>
 
           {/* Schedule Publish */}
