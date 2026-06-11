@@ -19,9 +19,11 @@ interface ArticleSSR {
   title: string
   slug: string
   excerpt: string | null
+  content_type: string | null
   content: string | null
   featured_image_url: string | null
   featured_image_alt: string | null
+  featured_image_caption: string | null
   author: string
   views: number
   published_at: string
@@ -35,7 +37,7 @@ async function fetchArticleFull(id: string): Promise<ArticleSSR | null> {
   const supabaseKey = process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY!
 
   const res = await fetch(
-    `${supabaseUrl}/rest/v1/articles?id=eq.${encodeURIComponent(id)}&status=eq.published&select=id,title,slug,excerpt,content,featured_image_url,featured_image_alt,author,views,published_at,created_at,updated_at,categories(name,slug),article_tags(tags(name,slug))`,
+    `${supabaseUrl}/rest/v1/articles?id=eq.${encodeURIComponent(id)}&status=eq.published&select=id,title,slug,excerpt,content_type,content,featured_image_url,featured_image_alt,featured_image_caption,author,views,published_at,created_at,updated_at,categories(name,slug),article_tags(tags(name,slug))`,
     {
       headers: {
         apikey: supabaseKey,

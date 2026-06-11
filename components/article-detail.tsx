@@ -512,12 +512,13 @@ function ExcerptMarqueeCard({
   contentType?: string | null
 }) {
   // Build marquee items: category + contentType + HalfSpace brand, repeat for seamless loop
+  const topicLabel = contentType || category || "ARTIKEL"
   const marqueeItems = [
-    category,
-    contentType,
+    topicLabel,
     "HALFSPACE",
-    category,
-    contentType,
+    topicLabel,
+    "HALFSPACE",
+    topicLabel,
     "HALFSPACE",
   ].filter(Boolean) as string[]
 
@@ -1259,10 +1260,6 @@ export function ArticleDetail({ articleId, initialData }: ArticleDetailProps) {
                       <Clock className="h-3.5 w-3.5 flex-shrink-0" aria-hidden="true" />
                       {readingTime} menit baca
                     </span>
-                    <span className="flex items-center gap-1.5">
-                      <Eye className="h-3.5 w-3.5 flex-shrink-0" aria-hidden="true" />
-                      {(article.views || 0).toLocaleString("id-ID")} views
-                    </span>
                   </div>
 
                   {/* Share + Font Size control — top */}
@@ -1312,21 +1309,6 @@ export function ArticleDetail({ articleId, initialData }: ArticleDetailProps) {
                     </div>
                   </div>
 
-                  {/* Tags */}
-                  {article.article_tags && article.article_tags.length > 0 && (
-                    <div className="mt-4 flex flex-wrap items-center gap-2">
-                      <Tag className="h-3.5 w-3.5 text-muted-foreground flex-shrink-0" aria-hidden="true" />
-                      {article.article_tags.map(({ tags: tag }) => tag && (
-                        <a
-                          key={tag.slug}
-                          href={`/tag/${tag.slug}`}
-                          className="rounded-full border border-border bg-secondary px-3 py-1 text-xs font-medium text-muted-foreground transition-colors hover:border-primary hover:text-primary"
-                        >
-                          #{tag.name}
-                        </a>
-                      ))}
-                    </div>
-                  )}
                 </header>
 
                 {/* TOC mobile */}
@@ -1338,7 +1320,7 @@ export function ArticleDetail({ articleId, initialData }: ArticleDetailProps) {
 
                 {/* Featured image */}
                 {article.featured_image_url && (
-                  <figure className="mb-8 overflow-hidden rounded-xl" itemProp="image" itemScope itemType="https://schema.org/ImageObject">
+                  <figure className="mb-8 rounded-xl" itemProp="image" itemScope itemType="https://schema.org/ImageObject">
                     <Image
                       src={article.featured_image_url}
                       alt={article.featured_image_alt || article.title}
