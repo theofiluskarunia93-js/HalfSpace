@@ -570,7 +570,7 @@ function ExcerptMarqueeCard({
         <p
           style={{
             fontFamily: "var(--font-oswald)",
-            fontSize: "clamp(1.6rem, 5vw, 2.8rem)",
+            fontSize: "clamp(1rem, 2.5vw, 1.35rem)",
             fontWeight: 700,
             lineHeight: 1.15,
             color: "#ffffff",
