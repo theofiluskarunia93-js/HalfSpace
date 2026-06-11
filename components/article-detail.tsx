@@ -501,6 +501,89 @@ function ShareButtons({ title }: { title: string }) {
   )
 }
 
+// ─── Excerpt Marquee Card ──────────────────────────────────────────────────
+function ExcerptMarqueeCard({
+  excerpt,
+  category,
+  contentType,
+}: {
+  excerpt: string
+  category?: string
+  contentType?: string | null
+}) {
+  // Build marquee items: category + contentType + HalfSpace brand, repeat for seamless loop
+  const marqueeItems = [
+    category,
+    contentType,
+    "HALFSPACE",
+    category,
+    contentType,
+    "HALFSPACE",
+  ].filter(Boolean) as string[]
+
+  return (
+    <div className="mt-5 overflow-hidden rounded-xl" style={{ background: "#0a0a0a", border: "1px solid #1a1a1a" }}>
+      {/* Marquee Label Bar */}
+      <div
+        className="relative overflow-hidden"
+        style={{
+          background: "#c8ff00",
+          padding: "10px 0",
+        }}
+        aria-hidden="true"
+      >
+        <div
+          className="flex gap-8 whitespace-nowrap"
+          style={{
+            animation: "marquee-scroll 18s linear infinite",
+            width: "max-content",
+          }}
+        >
+          {[...marqueeItems, ...marqueeItems].map((item, i) => (
+            <span
+              key={i}
+              className="flex items-center gap-6"
+              style={{
+                fontFamily: "var(--font-oswald)",
+                fontSize: "0.75rem",
+                fontWeight: 900,
+                letterSpacing: "0.15em",
+                color: "#0a0a0a",
+                textTransform: "uppercase",
+              }}
+            >
+              {item}
+              <span style={{ fontSize: "0.6rem", opacity: 0.7 }}>◆</span>
+            </span>
+          ))}
+        </div>
+        <style>{`
+          @keyframes marquee-scroll {
+            0% { transform: translateX(0); }
+            100% { transform: translateX(-50%); }
+          }
+        `}</style>
+      </div>
+
+      {/* Display Quote Body */}
+      <div className="px-6 py-8 sm:px-10 sm:py-12" itemProp="description">
+        <p
+          style={{
+            fontFamily: "var(--font-oswald)",
+            fontSize: "clamp(1.6rem, 5vw, 2.8rem)",
+            fontWeight: 700,
+            lineHeight: 1.15,
+            color: "#ffffff",
+            textAlign: "center",
+          }}
+        >
+          <span style={{ color: "#c8ff00" }}>{excerpt}</span>
+        </p>
+      </div>
+    </div>
+  )
+}
+
 // ─── Author Card ───────────────────────────────────────────────────────────
 function AuthorCard() {
   const router = useRouter()
@@ -1136,19 +1219,11 @@ export function ArticleDetail({ articleId, initialData }: ArticleDetailProps) {
                   </h1>
 
                   {article.excerpt && (
-                    <div className="mt-5 rounded-lg border border-border bg-card/60 p-4">
-                      {article.content_type && (
-                        <span className="mb-3 inline-block rounded bg-primary px-2.5 py-0.5 text-[10px] font-black uppercase tracking-widest text-black">
-                          {article.content_type}
-                        </span>
-                      )}
-                      <div className="flex gap-3">
-                        <div className="mt-0.5 w-1 flex-shrink-0 rounded-full bg-white" aria-hidden="true" />
-                        <p className="text-base italic leading-relaxed text-muted-foreground sm:text-lg" itemProp="description">
-                          {article.excerpt}
-                        </p>
-                      </div>
-                    </div>
+                    <ExcerptMarqueeCard
+                      excerpt={article.excerpt}
+                      category={article.categories?.name}
+                      contentType={article.content_type}
+                    />
                   )}
 
                   {/* Meta row */}
