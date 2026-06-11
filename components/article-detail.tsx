@@ -527,7 +527,7 @@ function ExcerptMarqueeCard({
       <div
         className="relative overflow-hidden"
         style={{
-          background: "#c8ff00",
+          background: "#00ff6a",
           padding: "10px 0",
         }}
         aria-hidden="true"
@@ -577,7 +577,7 @@ function ExcerptMarqueeCard({
             textAlign: "center",
           }}
         >
-          <span style={{ color: "#c8ff00" }}>{excerpt}</span>
+          <span style={{ color: "#d1d5db" }}>{excerpt}</span>
         </p>
       </div>
     </div>
