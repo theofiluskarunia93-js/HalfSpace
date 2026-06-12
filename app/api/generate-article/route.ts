@@ -1,20 +1,51 @@
 // app/api/generate-article/route.ts
 //
-// Proxy ke Groq API — generate artikel breaking news bergaya The Athletic.
-// Input: tipe berita + topik + konteks
-// Output: { title, content } — content dalam HTML siap pakai TipTap
+// Generate artikel sepak bola bergaya The Athletic — powered by Gemini 3.5 Flash.
+// Mendukung 6 tipe berita + URL sumber opsional + implicit context caching otomatis.
+//
+// Context Caching di Gemini 3.5 Flash:
+// - IMPLICIT caching aktif otomatis — tidak perlu setup manual.
+// - Google otomatis cache prefix prompt yang identik lintas request.
+// - Setiap kali BASE_SYSTEM dikirim berulang (yang terjadi di setiap generate),
+//   Google mendeteksi prefix yang sama dan mengenakan biaya cached rate ($0.15/1M)
+//   bukan standard rate ($1.50/1M) → hemat 90% untuk token system prompt.
+// - Cache tersimpan selama ada traffic; tidak ada konfigurasi TTL yang diperlukan.
+//
+// Input : newsType + topic + context + sourceUrl (opsional)
+// Output: { title, content } — content HTML siap pakai TipTap
 
 import { NextRequest, NextResponse } from "next/server"
 
-export type NewsType = "transfer" | "konpers" | "cedera"
+export type NewsType =
+  | "transfer"
+  | "konpers"
+  | "cedera"
+  | "preview"
+  | "hasil"
+  | "trivia"
 
 interface RequestBody {
   newsType: NewsType
-  topic: string
-  context: string
+  topic:    string
+  context:  string
+  sourceUrl?: string   // opsional — jika diisi, Gemini fetch & baca URL
 }
 
-// ─── System prompt per tipe berita ───────────────────────────────────────────
+// ─── Validasi URL sederhana ───────────────────────────────────────────────────
+
+function isValidUrl(url: string): boolean {
+  try {
+    const u = new URL(url)
+    return u.protocol === "https:" || u.protocol === "http:"
+  } catch {
+    return false
+  }
+}
+
+// ─── BASE SYSTEM PROMPT ───────────────────────────────────────────────────────
+// Ini adalah prefix yang di-cache secara implisit oleh Gemini.
+// Selalu letakkan instruksi panjang & stabil di sini — jangan di userPrompt.
+// Semakin konsisten teks ini antar request, semakin tinggi cache-hit rate-nya.
 
 const BASE_SYSTEM = `Kamu adalah jurnalis olahraga senior di media sepak bola premium Indonesia.
 Gaya penulisanmu mengikuti The Athletic: naratif, mendalam, mengutamakan konteks dan human story, tidak sensasional.
@@ -28,13 +59,16 @@ ATURAN WAJIB:
 - Gunakan kutipan (blockquote) jika ada pernyataan langsung dari narasumber di konteks
 - Tutup dengan paragraf yang memberikan konteks lebih luas atau dampak ke depan
 - JANGAN tambahkan judul/heading di dalam konten — hanya paragraf dan blockquote
+- Jika ada URL sumber yang diberikan: gunakan fakta dari sumber tersebut, tapi TULIS ULANG sepenuhnya dengan sudut pandang dan gaya naratif sendiri. JANGAN terjemahkan langsung. Tambahkan konteks lokal yang relevan untuk pembaca Indonesia.
 - Output HANYA JSON murni, tanpa markdown fence, tanpa komentar`
+
+// ─── System prompt per tipe berita ───────────────────────────────────────────
 
 const TYPE_INSTRUCTION: Record<NewsType, string> = {
   transfer: `Tipe: BERITA TRANSFER
 Struktur artikel:
 1. Lead: konfirmasi atau perkembangan terbaru transfer (1 paragraf)
-2. Detail negosiasi / status terkini (1-2 paragraf)  
+2. Detail negosiasi / status terkini (1-2 paragraf)
 3. Konteks: performa pemain, kebutuhan klub, atau kenapa transfer ini penting (1-2 paragraf)
 4. Dampak: apa artinya bagi kedua klub / liga (1 paragraf)
 Panjang: 500-700 kata`,
@@ -56,15 +90,45 @@ Struktur artikel:
 4. Rekam jejak cedera pemain (jika relevan) atau konteks medis singkat (1 paragraf)
 5. Penutup: update terbaru / prognosis (1 paragraf)
 Panjang: 400-500 kata`,
+
+  preview: `Tipe: PREVIEW PERTANDINGAN
+Struktur artikel:
+1. Lead: konteks dan taruhan dari pertandingan ini (1 paragraf)
+2. Analisis kekuatan & kelemahan tim tuan rumah (1-2 paragraf)
+3. Analisis kekuatan & kelemahan tim tamu (1-2 paragraf)
+4. Head-to-head dan tren performa terkini kedua tim (1 paragraf)
+5. Prediksi taktis dan pemain kunci yang patut diperhatikan (1 paragraf)
+6. Penutup: prediksi dan skor yang mungkin terjadi (1 paragraf)
+Panjang: 600-800 kata`,
+
+  hasil: `Tipe: LAPORAN HASIL PERTANDINGAN
+Struktur artikel:
+1. Lead: hasil akhir, siapa mencetak gol, momen penting (1 paragraf)
+2. Jalannya pertandingan babak pertama — poin-poin kunci (1-2 paragraf)
+3. Jalannya pertandingan babak kedua — poin-poin kunci (1-2 paragraf)
+4. Analisis taktis: apa yang membuat pemenang tampil dominan atau kenapa yang kalah gagal (1-2 paragraf)
+5. Pemain terbaik dan momen penting yang patut disorot (1 paragraf)
+6. Implikasi hasil ini ke klasemen atau perjalanan kompetisi (1 paragraf)
+Panjang: 700-900 kata`,
+
+  trivia: `Tipe: ARTIKEL TRIVIA SEPAK BOLA
+Struktur artikel:
+1. Lead: fakta mengejutkan atau hook yang membuat pembaca penasaran (1 paragraf)
+2. Pendalaman fakta utama dengan konteks sejarah (2-3 paragraf)
+3. Fakta-fakta pendukung yang memperkaya narasi (2-3 paragraf)
+4. Koneksi ke era modern atau relevansi saat ini (1-2 paragraf)
+5. Penutup: perspektif yang membekas di benak pembaca (1 paragraf)
+Gaya: ringan tapi berisi, boleh sedikit humor, gunakan angka & statistik untuk memperkuat
+Panjang: 400-600 kata`,
 }
 
 // ─── POST handler ─────────────────────────────────────────────────────────────
 
 export async function POST(req: NextRequest) {
-  const apiKey = process.env.GROQ_API_KEY
+  const apiKey = process.env.GEMINI_API_KEY
   if (!apiKey) {
     return NextResponse.json(
-      { error: "GROQ_API_KEY belum dikonfigurasi di environment variables." },
+      { error: "GEMINI_API_KEY belum dikonfigurasi di environment variables." },
       { status: 500 }
     )
   }
@@ -76,7 +140,7 @@ export async function POST(req: NextRequest) {
     return NextResponse.json({ error: "Request body tidak valid." }, { status: 400 })
   }
 
-  const { newsType, topic, context } = body
+  const { newsType, topic, context, sourceUrl } = body
 
   if (!newsType || !topic?.trim() || !context?.trim()) {
     return NextResponse.json(
@@ -85,12 +149,29 @@ export async function POST(req: NextRequest) {
     )
   }
 
-  if (!["transfer", "konpers", "cedera"].includes(newsType)) {
+  const validTypes: NewsType[] = ["transfer", "konpers", "cedera", "preview", "hasil", "trivia"]
+  if (!validTypes.includes(newsType)) {
     return NextResponse.json({ error: "newsType tidak valid." }, { status: 400 })
   }
 
-  const userPrompt = `${TYPE_INSTRUCTION[newsType]}
+  // Validasi URL jika diisi
+  if (sourceUrl && !isValidUrl(sourceUrl)) {
+    return NextResponse.json(
+      { error: "URL sumber tidak valid. Pastikan format https://..." },
+      { status: 400 }
+    )
+  }
 
+  // ── Susun user prompt ──────────────────────────────────────────────────────
+  // BASE_SYSTEM dipisah ke systemInstruction agar Gemini bisa cache prefix-nya.
+  // userPrompt hanya berisi instruksi yang unik per request.
+
+  const urlSection = sourceUrl?.trim()
+    ? `\nURL SUMBER (baca dan gunakan faktanya, jangan copy-paste):\n${sourceUrl.trim()}\n`
+    : ""
+
+  const userPrompt = `${TYPE_INSTRUCTION[newsType]}
+${urlSection}
 TOPIK: ${topic.trim()}
 
 KONTEKS / FAKTA YANG DIKETAHUI:
@@ -104,53 +185,88 @@ Kembalikan HANYA JSON dengan format:
   "content": "<konten artikel dalam HTML — gunakan tag <p> untuk paragraf biasa dan <blockquote> untuk kutipan langsung. JANGAN gunakan tag lain.>"
 }`
 
-  try {
-    const res = await fetch("https://api.groq.com/openai/v1/chat/completions", {
-      method: "POST",
-      headers: {
-        "Authorization": `Bearer ${apiKey}`,
-        "Content-Type": "application/json",
+  // ── Build request body ─────────────────────────────────────────────────────
+  // Implicit caching bekerja otomatis karena systemInstruction (BASE_SYSTEM)
+  // identik di setiap request. Gemini mendeteksi prefix yang sama dan
+  // menerapkan cached rate tanpa perlu konfigurasi tambahan.
+  //
+  // url_context tool diaktifkan hanya jika ada sourceUrl.
+
+  const tools = sourceUrl?.trim()
+    ? [{ url_context: {} }]  // aktifkan URL reading jika ada sumber
+    : []
+
+  const requestBody: Record<string, unknown> = {
+    system_instruction: {
+      parts: [{ text: BASE_SYSTEM }],
+    },
+    contents: [
+      {
+        role: "user",
+        parts: [{ text: userPrompt }],
       },
-      body: JSON.stringify({
-        model: "llama-3.3-70b-versatile",
-        temperature: 0.7,
-        max_tokens: 2048,
-        messages: [
-          { role: "system", content: BASE_SYSTEM },
-          { role: "user",   content: userPrompt },
-        ],
-        response_format: { type: "json_object" },
-      }),
+    ],
+    generationConfig: {
+      temperature:      0.7,
+      maxOutputTokens:  2048,
+      responseMimeType: "application/json",
+    },
+  }
+
+  if (tools.length > 0) {
+    requestBody.tools = tools
+  }
+
+  // ── Kirim ke Gemini 3.5 Flash ──────────────────────────────────────────────
+
+  try {
+    const endpoint = `https://generativelanguage.googleapis.com/v1beta/models/gemini-3.5-flash:generateContent?key=${apiKey}`
+
+    const res = await fetch(endpoint, {
+      method:  "POST",
+      headers: { "Content-Type": "application/json" },
+      body:    JSON.stringify(requestBody),
     })
 
     if (!res.ok) {
       const errText = await res.text()
-      // Tangani rate limit secara spesifik
       if (res.status === 429) {
         return NextResponse.json(
-          { error: "Groq API rate limit tercapai. Tunggu beberapa detik lalu coba lagi." },
+          { error: "Gemini API rate limit tercapai. Tunggu beberapa detik lalu coba lagi." },
           { status: 429 }
         )
       }
-      throw new Error(`Groq API error ${res.status}: ${errText.slice(0, 200)}`)
+      if (res.status === 400) {
+        // Biasanya URL tidak bisa diakses atau konten diblokir
+        return NextResponse.json(
+          { error: "Gagal memproses request. Jika pakai URL, pastikan URL bisa diakses publik." },
+          { status: 400 }
+        )
+      }
+      throw new Error(`Gemini API error ${res.status}: ${errText.slice(0, 200)}`)
     }
 
     const data = await res.json()
-    const raw  = data.choices?.[0]?.message?.content ?? ""
+
+    // Gemini response structure: candidates[0].content.parts[0].text
+    const raw = data.candidates?.[0]?.content?.parts?.[0]?.text ?? ""
 
     if (!raw.trim()) {
       return NextResponse.json(
-        { error: "Groq tidak menghasilkan output. Coba lagi." },
+        { error: "Gemini tidak menghasilkan output. Coba lagi." },
         { status: 422 }
       )
     }
 
+    // Bersihkan jika ada markdown fence yang lolos (seharusnya tidak karena responseMimeType)
+    const cleaned = raw.replace(/^```json\s*/i, "").replace(/\s*```$/i, "").trim()
+
     let parsed: { title: string; content: string }
     try {
-      parsed = JSON.parse(raw)
+      parsed = JSON.parse(cleaned)
     } catch {
       return NextResponse.json(
-        { error: "Gagal parse hasil Groq. Coba lagi." },
+        { error: "Gagal parse hasil Gemini. Coba lagi." },
         { status: 422 }
       )
     }
@@ -162,16 +278,24 @@ Kembalikan HANYA JSON dengan format:
       )
     }
 
+    // Log cache usage ke console (opsional, untuk monitoring)
+    const usage = data.usageMetadata
+    if (usage) {
+      const cached = usage.cachedContentTokenCount ?? 0
+      const total  = usage.promptTokenCount ?? 0
+      if (cached > 0) {
+        console.log(`[generate-article] Cache hit: ${cached}/${total} tokens cached (hemat ~${Math.round(cached/total*100)}%)`)
+      }
+    }
+
     return NextResponse.json({
       title:   parsed.title.trim(),
       content: parsed.content.trim(),
     })
 
-  } catch (err: any) {
+  } catch (err: unknown) {
+    const message = err instanceof Error ? err.message : "Terjadi error. Coba lagi."
     console.error("[generate-article] Error:", err)
-    return NextResponse.json(
-      { error: err.message ?? "Terjadi error. Coba lagi." },
-      { status: 500 }
-    )
+    return NextResponse.json({ error: message }, { status: 500 })
   }
 }

@@ -445,9 +445,10 @@ export function CreateArticleView({ onBack, articleId }: CreateArticleViewProps)
 
   // ── AI Generate state ────────────────────────────────────────────────────────────
   const [aiModalOpen,   setAiModalOpen]   = useState(false)
-  const [aiNewsType,    setAiNewsType]    = useState<"transfer" | "konpers" | "cedera">("transfer")
+  const [aiNewsType,    setAiNewsType]    = useState<"transfer" | "konpers" | "cedera" | "preview" | "hasil" | "trivia">("transfer")
   const [aiTopic,       setAiTopic]       = useState("")
   const [aiContext,     setAiContext]     = useState("")
+  const [aiSourceUrl,   setAiSourceUrl]   = useState("")
   const [aiGenerating,  setAiGenerating]  = useState(false)
   const [aiError,       setAiError]       = useState<string | null>(null)
 
@@ -746,7 +747,12 @@ export function CreateArticleView({ onBack, articleId }: CreateArticleViewProps)
       const res = await fetch("/api/generate-article", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ newsType: aiNewsType, topic: aiTopic, context: aiContext }),
+        body: JSON.stringify({
+          newsType:  aiNewsType,
+          topic:     aiTopic,
+          context:   aiContext,
+          sourceUrl: aiSourceUrl.trim() || undefined,
+        }),
       })
       const data = await res.json()
       if (!res.ok) throw new Error(data.error ?? `Error ${res.status}`)
@@ -755,6 +761,7 @@ export function CreateArticleView({ onBack, articleId }: CreateArticleViewProps)
       setAiModalOpen(false)
       setAiTopic("")
       setAiContext("")
+      setAiSourceUrl("")
       setAiError(null)
     } catch (err: any) {
       setAiError(err.message ?? "Gagal generate artikel. Coba lagi.")
@@ -1580,9 +1587,12 @@ export function CreateArticleView({ onBack, articleId }: CreateArticleViewProps)
               </label>
               <div className="grid grid-cols-3 gap-2">
                 {([
-                  { value: "transfer", label: "🔄 Transfer", desc: "Rumor & konfirmasi" },
-                  { value: "konpers", label: "🎙️ Konpers", desc: "Konferensi pers" },
-                  { value: "cedera",  label: "🩹 Cedera",   desc: "Update kondisi pemain" },
+                  { value: "transfer", label: "🔄 Transfer",  desc: "Rumor & konfirmasi" },
+                  { value: "konpers",  label: "🎙️ Konpers",   desc: "Konferensi pers" },
+                  { value: "cedera",   label: "🩹 Cedera",    desc: "Update kondisi pemain" },
+                  { value: "preview",  label: "🔍 Preview",   desc: "Pratinjau pertandingan" },
+                  { value: "hasil",    label: "📊 Hasil",     desc: "Laporan hasil laga" },
+                  { value: "trivia",   label: "🧠 Trivia",    desc: "Fakta unik sepak bola" },
                 ] as const).map((t) => (
                   <button
                     key={t.value}
@@ -1602,6 +1612,23 @@ export function CreateArticleView({ onBack, articleId }: CreateArticleViewProps)
               </div>
             </div>
 
+            {/* URL Sumber (opsional) */}
+            <div>
+              <label className="mb-1.5 block text-xs font-semibold text-muted-foreground uppercase tracking-wide">
+                URL Sumber <span className="text-muted-foreground font-normal normal-case">(opsional)</span>
+              </label>
+              <input
+                type="url"
+                value={aiSourceUrl}
+                onChange={(e) => setAiSourceUrl(e.target.value)}
+                placeholder="https://www.bbc.com/sport/football/..."
+                className="w-full rounded-lg border border-border bg-secondary/50 px-3 py-2 text-sm text-foreground placeholder-muted-foreground focus:outline-none focus:ring-1 focus:ring-primary"
+              />
+              <p className="mt-1 text-[11px] text-muted-foreground">
+                Gemini akan membaca isi halaman ini sebagai referensi tambahan.
+              </p>
+            </div>
+
             {/* Topik */}
             <div>
               <label className="mb-1.5 block text-xs font-semibold text-muted-foreground uppercase tracking-wide">
@@ -1611,7 +1638,14 @@ export function CreateArticleView({ onBack, articleId }: CreateArticleViewProps)
                 type="text"
                 value={aiTopic}
                 onChange={(e) => setAiTopic(e.target.value)}
-                placeholder="Contoh: Marcus Rashford ke Barcelona, Victor Osimhen cedera paha"
+                placeholder={
+                  aiNewsType === "transfer" ? "Contoh: Marcus Rashford ke Barcelona" :
+                  aiNewsType === "konpers"  ? "Contoh: Konpers Pep Guardiola setelah kekalahan dari Arsenal" :
+                  aiNewsType === "cedera"   ? "Contoh: Victor Osimhen cedera paha" :
+                  aiNewsType === "preview"  ? "Contoh: Manchester City vs Real Madrid, UCL Semifinal" :
+                  aiNewsType === "hasil"    ? "Contoh: Barcelona 3-1 Atletico Madrid, La Liga pekan 34" :
+                                             "Contoh: Fakta unik hat-trick tercepat di sejarah Premier League"
+                }
                 className="w-full rounded-lg border border-border bg-secondary/50 px-3 py-2 text-sm text-foreground placeholder-muted-foreground focus:outline-none focus:ring-1 focus:ring-primary"
                 autoFocus
               />
@@ -1630,9 +1664,15 @@ export function CreateArticleView({ onBack, articleId }: CreateArticleViewProps)
                     ? "Contoh: Nilai transfer €45M, kontrak 4 tahun, sudah medical check-up hari ini, dikonfirmasi Romano. Rashford sudah tidak masuk skuat United 3 bulan terakhir."
                     : aiNewsType === "konpers"
                     ? "Contoh: Pep Guardiola bicara soal tekanan gelar liga: 'Kami tidak takut kalah, kami hanya fokus pada proses.' Disampaikan setelah kekalahan 0-2 dari Arsenal kemarin."
-                    : "Contoh: Cedera ligamen lutut kanan, absen 6-8 minggu, terjadi menit ke-34 lawan Chelsea. Ini cedera kedua di area yang sama musim ini."
+                    : aiNewsType === "cedera"
+                    ? "Contoh: Cedera ligamen lutut kanan, absen 6-8 minggu, terjadi menit ke-34 lawan Chelsea. Ini cedera kedua di area yang sama musim ini."
+                    : aiNewsType === "preview"
+                    ? "Contoh: City unbeaten 8 laga terakhir, Haaland kembali dari cedera. Real tanpa Bellingham yang suspensi. Leg pertama berakhir 1-1 di Bernabeu."
+                    : aiNewsType === "hasil"
+                    ? "Contoh: Yamal 2 gol (23', 67'), Lewandowski 1 gol (45'). Atletico gol lewat Griezmann (55'). Barca dominan penguasaan bola 63%, 18 tembakan."
+                    : "Contoh: Sadio Mane mencetak hat-trick dalam 2 menit 56 detik lawan Aston Villa (2015). Rekor ini masih bertahan hingga hari ini di Premier League."
                 }
-                rows={5}
+                rows={4}
                 className="w-full rounded-lg border border-border bg-secondary/50 px-3 py-2 text-sm text-foreground placeholder-muted-foreground focus:outline-none focus:ring-1 focus:ring-primary resize-none"
               />
               <p className="mt-1 text-[11px] text-muted-foreground">
@@ -1650,7 +1690,7 @@ export function CreateArticleView({ onBack, articleId }: CreateArticleViewProps)
 
           {/* Footer */}
           <div className="flex items-center justify-between border-t border-border px-6 py-4">
-            <p className="text-[11px] text-muted-foreground">Powered by Groq · LLaMA 3.3 70B</p>
+            <p className="text-[11px] text-muted-foreground">Powered by Gemini 3.5 Flash · Google AI</p>
             <div className="flex gap-3">
               <button
                 onClick={() => { setAiModalOpen(false); setAiError(null) }}
