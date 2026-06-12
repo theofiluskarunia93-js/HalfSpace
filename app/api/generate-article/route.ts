@@ -218,13 +218,18 @@ Kembalikan HANYA JSON dengan format:
   }
 
   // ── Kirim ke Gemini 3.5 Flash ──────────────────────────────────────────────
+  // Menggunakan header x-goog-api-key (bukan ?key= di URL) agar kompatibel
+  // dengan Auth Key format baru Google AI Studio (AQ.Ab8... maupun AIzaSy...).
 
   try {
-    const endpoint = `https://generativelanguage.googleapis.com/v1beta/models/gemini-3.5-flash:generateContent?key=${apiKey}`
+    const endpoint = `https://generativelanguage.googleapis.com/v1beta/models/gemini-3.5-flash:generateContent`
 
     const res = await fetch(endpoint, {
       method:  "POST",
-      headers: { "Content-Type": "application/json" },
+      headers: {
+        "Content-Type":   "application/json",
+        "x-goog-api-key": apiKey,
+      },
       body:    JSON.stringify(requestBody),
     })
 
