@@ -222,7 +222,7 @@ Kembalikan HANYA JSON dengan format:
   // dengan Auth Key format baru Google AI Studio (AQ.Ab8... maupun AIzaSy...).
 
   try {
-    const endpoint = `https://generativelanguage.googleapis.com/v1beta/models/gemini-3.5-flash:generateContent`
+    const endpoint = `https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-flash:generateContent`
 
     const res = await fetch(endpoint, {
       method:  "POST",
@@ -233,12 +233,21 @@ Kembalikan HANYA JSON dengan format:
       body:    JSON.stringify(requestBody),
     })
 
+    // Baca response sebagai text dulu — kalau Gemini return HTML (error page),
+    // langsung res.json() akan throw "Unexpected token '<'" yang membingungkan.
+    const resText = await res.text()
+
     if (!res.ok) {
-      const errText = await res.text()
       if (res.status === 429) {
         return NextResponse.json(
           { error: "Gemini API rate limit tercapai. Tunggu beberapa detik lalu coba lagi." },
           { status: 429 }
+        )
+      }
+      if (res.status === 404) {
+        return NextResponse.json(
+          { error: "Model Gemini tidak ditemukan. Hubungi administrator." },
+          { status: 500 }
         )
       }
       if (res.status === 400) {
@@ -248,13 +257,31 @@ Kembalikan HANYA JSON dengan format:
           { status: 400 }
         )
       }
-      throw new Error(`Gemini API error ${res.status}: ${errText.slice(0, 200)}`)
+      // Kalau response adalah HTML (bukan JSON error dari Gemini), beri pesan yang jelas
+      if (resText.trimStart().startsWith("<")) {
+        throw new Error(`Gemini API error ${res.status}: server mengembalikan HTML, bukan JSON. Periksa API key.`)
+      }
+      throw new Error(`Gemini API error ${res.status}: ${resText.slice(0, 200)}`)
     }
 
-    const data = await res.json()
+    // Kalau res.ok tapi isinya HTML (edge case: proxy/CDN error)
+    if (resText.trimStart().startsWith("<")) {
+      throw new Error("Response dari Gemini bukan JSON (HTML diterima). Periksa API key dan koneksi.")
+    }
 
-    // Gemini response structure: candidates[0].content.parts[0].text
-    const raw = data.candidates?.[0]?.content?.parts?.[0]?.text ?? ""
+    let data: Record<string, unknown>
+    try {
+      data = JSON.parse(resText)
+    } catch {
+      throw new Error(`Gagal parse response Gemini: ${resText.slice(0, 200)}`)
+    }
+
+    // Gemini response structure: candidates[0].content.parts[N].text
+    // Saat url_context tool aktif, parts bisa berisi mixed types (tool_result + text).
+    // Cari part yang punya field "text", bukan langsung ambil index [0].
+    type GeminiPart = { text?: string; [key: string]: unknown }
+    const parts: GeminiPart[] = (data.candidates as { content?: { parts?: GeminiPart[] } }[])?.[0]?.content?.parts ?? []
+    const raw = parts.find(p => typeof p.text === "string")?.text ?? ""
 
     if (!raw.trim()) {
       return NextResponse.json(
@@ -284,7 +311,8 @@ Kembalikan HANYA JSON dengan format:
     }
 
     // Log cache usage ke console (opsional, untuk monitoring)
-    const usage = data.usageMetadata
+    type UsageMeta = { cachedContentTokenCount?: number; promptTokenCount?: number }
+    const usage = data.usageMetadata as UsageMeta | undefined
     if (usage) {
       const cached = usage.cachedContentTokenCount ?? 0
       const total  = usage.promptTokenCount ?? 0
