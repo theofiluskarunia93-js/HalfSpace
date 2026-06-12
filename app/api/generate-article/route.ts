@@ -209,7 +209,8 @@ Kembalikan HANYA JSON dengan format:
     generationConfig: {
       temperature:      0.7,
       maxOutputTokens:  2048,
-      responseMimeType: "application/json",
+      // responseMimeType tidak kompatibel saat url_context tool aktif
+      ...(tools.length === 0 ? { responseMimeType: "application/json" } : {}),
     },
   }
 
@@ -290,13 +291,21 @@ Kembalikan HANYA JSON dengan format:
       )
     }
 
-    // Bersihkan jika ada markdown fence yang lolos (seharusnya tidak karena responseMimeType)
-    const cleaned = raw.replace(/^```json\s*/i, "").replace(/\s*```$/i, "").trim()
+    // Bersihkan markdown fence jika ada (terjadi saat url_context aktif)
+    let cleaned = raw.replace(/^```json\s*/i, "").replace(/^```\s*/i, "").replace(/\s*```$/i, "").trim()
+
+    // Fallback: ekstrak blok JSON pertama dari teks jika masih ada teks di luar JSON
+    if (!cleaned.startsWith("{")) {
+      const jsonMatch = cleaned.match(/\{[\s\S]*\}/)
+      if (jsonMatch) cleaned = jsonMatch[0]
+    }
 
     let parsed: { title: string; content: string }
     try {
       parsed = JSON.parse(cleaned)
     } catch {
+      // Log raw output untuk debugging
+      console.error("[generate-article] Raw output tidak bisa di-parse:", raw.slice(0, 500))
       return NextResponse.json(
         { error: "Gagal parse hasil Gemini. Coba lagi." },
         { status: 422 }
