@@ -448,7 +448,6 @@ export function CreateArticleView({ onBack, articleId }: CreateArticleViewProps)
   const [aiNewsType,    setAiNewsType]    = useState<"transfer" | "konpers" | "cedera" | "preview" | "hasil" | "trivia">("transfer")
   const [aiTopic,       setAiTopic]       = useState("")
   const [aiContext,     setAiContext]     = useState("")
-  const [aiSourceUrl,   setAiSourceUrl]   = useState("")
   const [aiGenerating,  setAiGenerating]  = useState(false)
   const [aiError,       setAiError]       = useState<string | null>(null)
 
@@ -751,7 +750,6 @@ export function CreateArticleView({ onBack, articleId }: CreateArticleViewProps)
           newsType:  aiNewsType,
           topic:     aiTopic,
           context:   aiContext,
-          sourceUrl: aiSourceUrl.trim() || undefined,
         }),
       })
       const data = await res.json()
@@ -761,7 +759,6 @@ export function CreateArticleView({ onBack, articleId }: CreateArticleViewProps)
       setAiModalOpen(false)
       setAiTopic("")
       setAiContext("")
-      setAiSourceUrl("")
       setAiError(null)
     } catch (err: any) {
       setAiError(err.message ?? "Gagal generate artikel. Coba lagi.")
@@ -1612,23 +1609,6 @@ export function CreateArticleView({ onBack, articleId }: CreateArticleViewProps)
               </div>
             </div>
 
-            {/* URL Sumber (opsional) */}
-            <div>
-              <label className="mb-1.5 block text-xs font-semibold text-muted-foreground uppercase tracking-wide">
-                URL Sumber <span className="text-muted-foreground font-normal normal-case">(opsional)</span>
-              </label>
-              <input
-                type="url"
-                value={aiSourceUrl}
-                onChange={(e) => setAiSourceUrl(e.target.value)}
-                placeholder="https://www.bbc.com/sport/football/..."
-                className="w-full rounded-lg border border-border bg-secondary/50 px-3 py-2 text-sm text-foreground placeholder-muted-foreground focus:outline-none focus:ring-1 focus:ring-primary"
-              />
-              <p className="mt-1 text-[11px] text-muted-foreground">
-                Gemini akan membaca isi halaman ini sebagai referensi tambahan.
-              </p>
-            </div>
-
             {/* Topik */}
             <div>
               <label className="mb-1.5 block text-xs font-semibold text-muted-foreground uppercase tracking-wide">
@@ -1690,7 +1670,7 @@ export function CreateArticleView({ onBack, articleId }: CreateArticleViewProps)
 
           {/* Footer */}
           <div className="flex items-center justify-between border-t border-border px-6 py-4">
-            <p className="text-[11px] text-muted-foreground">Powered by Gemini 3.5 Flash · Google AI</p>
+            <p className="text-[11px] text-muted-foreground">Powered by Groq · Llama 3.3 70B</p>
             <div className="flex gap-3">
               <button
                 onClick={() => { setAiModalOpen(false); setAiError(null) }}
