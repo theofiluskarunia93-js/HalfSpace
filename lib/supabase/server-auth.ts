@@ -1,7 +1,11 @@
 // lib/supabase/server-auth.ts
 //
-// Helper untuk validasi sesi admin di API routes (server-side).
-// Pastikan tabel "profiles" punya kolom "role" (mis. "admin" / "editor").
+// Versi simpel: hanya memastikan user sudah login via Supabase session.
+// Tidak cek tabel "profiles" / role — cocok untuk CMS single-admin
+// atau yang belum punya sistem role.
+//
+// Kalau nanti mau tambah role-based access, tambahkan lagi
+// pengecekan ke tabel profiles di sini.
 
 import { createServerClient } from "@supabase/ssr"
 import { cookies } from "next/headers"
@@ -24,16 +28,6 @@ export async function requireAdmin() {
 
   const { data: { user }, error } = await supabase.auth.getUser()
   if (error || !user) return null
-
-  const { data: profile } = await supabase
-    .from("profiles")
-    .select("role")
-    .eq("id", user.id)
-    .single()
-
-  if (!profile || (profile.role !== "admin" && profile.role !== "editor")) {
-    return null
-  }
 
   return user
 }
