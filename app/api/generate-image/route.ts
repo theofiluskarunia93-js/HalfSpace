@@ -18,7 +18,6 @@ import { NextRequest, NextResponse } from "next/server"
 import { requireAdmin } from "@/lib/supabase/server-auth"
 import { imageRateLimit } from "@/lib/rate-limit"
 import satori from "satori"
-import { Resvg } from "@resvg/resvg-js"
 import sharp from "sharp"
 import fs from "fs"
 import path from "path"
@@ -659,8 +658,11 @@ async function buildOverlaySVG(overlay: OverlayData): Promise<string> {
 
 async function compositeImage(backgroundBuf: Buffer, overlay: OverlayData): Promise<Buffer> {
   const svgString = await buildOverlaySVG(overlay)
-  const resvg = new Resvg(svgString, { fitTo: { mode: "width", value: IMG_SIZE } })
-  const overlayBuf = Buffer.from(resvg.render().asPng())
+  // sharp can render SVG natively (via libvips/librsvg) — no native addon needed
+  const overlayBuf = await sharp(Buffer.from(svgString))
+    .resize(IMG_SIZE, IMG_SIZE)
+    .png()
+    .toBuffer()
 
   return sharp(backgroundBuf)
     .resize(IMG_SIZE, IMG_SIZE, { fit: "cover" })
