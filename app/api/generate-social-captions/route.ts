@@ -1,4 +1,6 @@
 import { NextRequest, NextResponse } from "next/server"
+import { requireAdmin } from "@/lib/supabase/server-auth"
+import { captionRateLimit } from "@/lib/rate-limit"
 
 // ─── Model list yang tersedia via OpenRouter ───────────────────────────────────
 // Tambah / hapus sesuai kebutuhan. id = model string OpenRouter.
@@ -21,6 +23,21 @@ interface GenerateCaptionsRequest {
 }
 
 export async function POST(request: NextRequest) {
+  // ── Auth check ──────────────────────────────────────────────────────────
+  const user = await requireAdmin()
+  if (!user) {
+    return NextResponse.json({ error: "Unauthorized" }, { status: 401 })
+  }
+
+  // ── Rate limit ──────────────────────────────────────────────────────────
+  const { success } = await captionRateLimit.limit(user.id)
+  if (!success) {
+    return NextResponse.json(
+      { error: "Terlalu banyak request generate caption. Tunggu sebentar lalu coba lagi." },
+      { status: 429 }
+    )
+  }
+
   try {
     const { title, excerpt, model }: GenerateCaptionsRequest = await request.json()
 

@@ -1,10 +1,27 @@
 import { NextRequest, NextResponse } from "next/server"
 import { TwitterApi } from "twitter-api-v2"
+import { requireAdmin } from "@/lib/supabase/server-auth"
+import { publishXRateLimit } from "@/lib/rate-limit"
 
 // Pastikan env vars ini sudah di .env.local:
 // X_API_KEY, X_API_SECRET, X_ACCESS_TOKEN, X_ACCESS_TOKEN_SECRET
 
 export async function POST(request: NextRequest) {
+  // ── Auth check ──────────────────────────────────────────────────────────
+  const user = await requireAdmin()
+  if (!user) {
+    return NextResponse.json({ error: "Unauthorized" }, { status: 401 })
+  }
+
+  // ── Rate limit (lebih ketat — ini posting publik & kena limit API X juga) ─
+  const { success } = await publishXRateLimit.limit(user.id)
+  if (!success) {
+    return NextResponse.json(
+      { error: "Terlalu banyak request publish ke X. Tunggu sebentar lalu coba lagi." },
+      { status: 429 }
+    )
+  }
+
   try {
     const { text, articleSlug } = await request.json()
 

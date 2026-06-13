@@ -21,6 +21,8 @@
 // Output: { title, content } — content HTML siap pakai TipTap
 
 import { NextRequest, NextResponse } from "next/server"
+import { requireAdmin } from "@/lib/supabase/server-auth"
+import { articleRateLimit } from "@/lib/rate-limit"
 
 export type NewsType =
   | "transfer"
@@ -208,6 +210,21 @@ Panjang: 450–600 kata`,
 // ─── POST handler ─────────────────────────────────────────────────────────────
 
 export async function POST(req: NextRequest) {
+  // ── Auth check ──────────────────────────────────────────────────────────
+  const user = await requireAdmin()
+  if (!user) {
+    return NextResponse.json({ error: "Unauthorized" }, { status: 401 })
+  }
+
+  // ── Rate limit ──────────────────────────────────────────────────────────
+  const { success } = await articleRateLimit.limit(user.id)
+  if (!success) {
+    return NextResponse.json(
+      { error: "Terlalu banyak request generate artikel. Tunggu sebentar lalu coba lagi." },
+      { status: 429 }
+    )
+  }
+
   const apiKey = process.env.GROQ_API_KEY
   if (!apiKey) {
     return NextResponse.json(

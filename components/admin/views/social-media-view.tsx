@@ -406,13 +406,22 @@ export function SocialMediaView({ onBack, articleId }: SocialMediaViewProps) {
     setGeneratedImageUrl(null)
 
     try {
-      const encoded = encodeURIComponent(
-        `${imagePrompt}, infografis, desain modern, warna kontras, tipografi jelas, gaya editorial olahraga`
-      )
-      const url = `https://image.pollinations.ai/prompt/${encoded}?width=1080&height=1080&seed=${Date.now()}&nologo=true`
-      setGeneratedImageUrl(url)
-    } catch {
-      setImageError("Gagal generate gambar. Coba lagi.")
+      const response = await fetch("/api/generate-image", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ prompt: imagePrompt }),
+      })
+
+      if (!response.ok) {
+        const err = await response.json().catch(() => ({}))
+        throw new Error(err.error || "Gagal generate gambar")
+      }
+
+      const blob = await response.blob()
+      const objectUrl = URL.createObjectURL(blob)
+      setGeneratedImageUrl(objectUrl)
+    } catch (err: any) {
+      setImageError(err.message || "Gagal generate gambar. Coba lagi.")
     } finally {
       setGeneratingImage(false)
     }
@@ -420,10 +429,8 @@ export function SocialMediaView({ onBack, articleId }: SocialMediaViewProps) {
 
   async function handleDownloadImage() {
     if (!generatedImageUrl) return
-    const response = await fetch(generatedImageUrl)
-    const blob = await response.blob()
     const a = document.createElement("a")
-    a.href = URL.createObjectURL(blob)
+    a.href = generatedImageUrl
     a.download = `halfspace-infografis-${Date.now()}.jpg`
     a.click()
   }
