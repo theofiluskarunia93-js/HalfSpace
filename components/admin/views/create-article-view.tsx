@@ -451,6 +451,10 @@ export function CreateArticleView({ onBack, articleId }: CreateArticleViewProps)
   const [aiGenerating,  setAiGenerating]  = useState(false)
   const [aiError,       setAiError]       = useState<string | null>(null)
 
+  // ── Humanizer state ───────────────────────────────────────────────────────────────
+  const [isHumanizing,  setIsHumanizing]  = useState(false)
+  const [humanizeToast, setHumanizeToast] = useState<{ type: "success" | "error"; msg: string } | null>(null)
+
   // ── Pre-loaded widgets (untuk artikel lama dari Posts → Edit) ──────────────
   // Diisi setelah fetchArticle parse shortcode dari konten artikel.
   const [preloadedWidgets, setPreloadedWidgets] = useState<{ widgetId: string; widgetType: WidgetType }[]>([])
@@ -764,6 +768,42 @@ export function CreateArticleView({ onBack, articleId }: CreateArticleViewProps)
       setAiError(err.message ?? "Gagal generate artikel. Coba lagi.")
     } finally {
       setAiGenerating(false)
+    }
+  }
+
+  // ── Humanizer handler ─────────────────────────────────────────────────────────────
+  // Alur: ambil konten editor saat ini → kirim ke /api/humanize-article → replace konten
+  async function handleHumanize() {
+    if (!editor) return
+    const currentHtml = editor.getHTML()
+    const plainText = editor.getText()
+    if (!plainText.trim() || plainText.trim().length < 50) {
+      setHumanizeToast({ type: "error", msg: "Konten editor terlalu pendek untuk di-humanize. Generate artikel dulu." })
+      setTimeout(() => setHumanizeToast(null), 4000)
+      return
+    }
+    setIsHumanizing(true)
+    setHumanizeToast(null)
+    try {
+      const res = await fetch("/api/humanize-article", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          html:     currentHtml,
+          newsType: aiNewsType,
+        }),
+      })
+      const data = await res.json()
+      if (!res.ok) throw new Error(data.error ?? `Error ${res.status}`)
+      // Ganti konten editor dengan hasil humanizer
+      editor.commands.setContent(data.content)
+      setHumanizeToast({ type: "success", msg: "✨ Artikel berhasil di-humanize oleh Gemini!" })
+      setTimeout(() => setHumanizeToast(null), 4000)
+    } catch (err: any) {
+      setHumanizeToast({ type: "error", msg: err.message ?? "Humanize gagal. Coba lagi." })
+      setTimeout(() => setHumanizeToast(null), 5000)
+    } finally {
+      setIsHumanizing(false)
     }
   }
 
@@ -1144,7 +1184,34 @@ export function CreateArticleView({ onBack, articleId }: CreateArticleViewProps)
                   <ToolbarButton onClick={() => { setAiModalOpen(true); setAiError(null) }} title="Generate Breaking News dengan AI" active={aiModalOpen}>
                     <Sparkles className="h-4 w-4" />
                   </ToolbarButton>
+                  <ToolbarButton
+                    onClick={handleHumanize}
+                    disabled={isHumanizing}
+                    title="Humanize artikel dengan Gemini (⭐ → ganti draft menjadi lebih natural)"
+                    active={isHumanizing}
+                  >
+                    {isHumanizing ? (
+                      <svg className="h-4 w-4 animate-spin" viewBox="0 0 24 24" fill="none">
+                        <circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4"/>
+                        <path className="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8v8z"/>
+                      </svg>
+                    ) : (
+                      <Star className="h-4 w-4 text-yellow-400" />
+                    )}
+                  </ToolbarButton>
                 </div>
+
+                {/* Humanize Toast */}
+                {humanizeToast && (
+                  <div className={[
+                    "flex items-center gap-2 px-4 py-2 text-xs font-medium border-b border-border transition-all",
+                    humanizeToast.type === "success"
+                      ? "bg-primary/10 text-primary border-primary/20"
+                      : "bg-destructive/10 text-destructive border-destructive/20",
+                  ].join(" ")}>
+                    {humanizeToast.msg}
+                  </div>
+                )}
 
                 {/* Area tulis */}
                 <div className="h-[640px] overflow-y-auto bg-card px-10 py-8 scroll-smooth">
