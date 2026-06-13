@@ -12,6 +12,7 @@ import {
   ChevronLeft,
   ChevronRight,
   MessageSquare,
+  Share2,
   X,
 } from "lucide-react"
 import { Button } from "@/components/ui/button"
@@ -35,6 +36,7 @@ const menuItems = [
   { id: "comments" as CMSView, label: "Komentar", icon: MessageSquare },
   { id: "users" as CMSView, label: "Users", icon: Users },
   { id: "settings" as CMSView, label: "Settings", icon: Settings },
+  { id: "social-media" as CMSView, label: "Social Media", icon: Share2 },
 ]
 
 function SidebarContent({
@@ -95,7 +97,8 @@ function SidebarContent({
           const Icon = item.icon
           const isActive =
             currentView === item.id ||
-            (currentView === "create-article" && item.id === "posts")
+            (currentView === "create-article" && item.id === "posts") ||
+            (currentView === "social-media" && item.id === "social-media")
 
           return (
             <button

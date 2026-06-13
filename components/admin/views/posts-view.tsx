@@ -1,7 +1,7 @@
 "use client"
 
 import { useState, useEffect } from "react"
-import { Plus, Search, Edit, Trash2, Filter, Tag } from "lucide-react"
+import { Plus, Search, Edit, Trash2, Filter, Tag, Share2 } from "lucide-react"
 import { Button } from "@/components/ui/button"
 import { Input } from "@/components/ui/input"
 import { createClient } from "@/lib/supabase/client"
@@ -9,6 +9,7 @@ import { createClient } from "@/lib/supabase/client"
 interface PostsViewProps {
   onCreateArticle: () => void
   onEditArticle: (id: string) => void
+  onOpenSocialMedia: (id: string) => void
 }
 
 const categories = [
@@ -28,7 +29,7 @@ const categories = [
   "Transfer",
 ]
 
-export function PostsView({ onCreateArticle, onEditArticle }: PostsViewProps) {
+export function PostsView({ onCreateArticle, onEditArticle, onOpenSocialMedia }: PostsViewProps) {
   const [selectedCategory, setSelectedCategory] = useState("All")
   const [searchQuery, setSearchQuery] = useState("")
   const [posts, setPosts] = useState<any[]>([])
@@ -184,6 +185,15 @@ export function PostsView({ onCreateArticle, onEditArticle }: PostsViewProps) {
                       </td>
                       <td className="px-6 py-4">
                         <div className="flex items-center justify-end gap-2">
+                          <Button
+                            variant="ghost"
+                            size="icon"
+                            className="h-8 w-8 text-muted-foreground hover:text-primary"
+                            title="Social Media"
+                            onClick={() => onOpenSocialMedia(post.id)}
+                          >
+                            <Share2 className="h-4 w-4" />
+                          </Button>
                           <Button
                             variant="ghost"
                             size="icon"

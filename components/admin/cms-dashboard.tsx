@@ -9,10 +9,11 @@ import { UsersView } from "./views/users-view"
 import { SettingsView } from "./views/settings-view"
 import { CreateArticleView } from "./views/create-article-view"
 import { CommentsView } from "./views/comments-view"
+import { SocialMediaView } from "./views/social-media-view"
 import { Menu } from "lucide-react"
 import { Button } from "@/components/ui/button"
 
-export type CMSView = "dashboard" | "posts" | "analytics" | "comments" | "users" | "settings" | "create-article" | "edit-article"
+export type CMSView = "dashboard" | "posts" | "analytics" | "comments" | "users" | "settings" | "create-article" | "edit-article" | "social-media"
 
 interface CMSDashboardProps {
   onLogout: () => void
@@ -24,6 +25,7 @@ export function CMSDashboard({ onLogout, onGoToPublic }: CMSDashboardProps) {
   const [isSidebarCollapsed, setIsSidebarCollapsed] = useState(false)
   const [isMobileSidebarOpen, setIsMobileSidebarOpen] = useState(false)
   const [editArticleId, setEditArticleId] = useState<string | null>(null)
+  const [socialArticleId, setSocialArticleId] = useState<string | null>(null)
 
   const handleCreateArticle = () => {
     setCurrentView("create-article")
@@ -39,12 +41,22 @@ export function CMSDashboard({ onLogout, onGoToPublic }: CMSDashboardProps) {
     setCurrentView("posts")
   }
 
+  const handleOpenSocialMedia = (id: string) => {
+    setSocialArticleId(id)
+    setCurrentView("social-media")
+  }
+
+  const handleBackFromSocial = () => {
+    setSocialArticleId(null)
+    setCurrentView("posts")
+  }
+
   const renderView = () => {
     switch (currentView) {
       case "dashboard":
         return <DashboardView onCreateArticle={handleCreateArticle} />
       case "posts":
-        return <PostsView onCreateArticle={handleCreateArticle} onEditArticle={handleEditArticle} />
+        return <PostsView onCreateArticle={handleCreateArticle} onEditArticle={handleEditArticle} onOpenSocialMedia={handleOpenSocialMedia} />
       case "analytics":
         return <AnalyticsView />
       case "comments":
@@ -57,6 +69,10 @@ export function CMSDashboard({ onLogout, onGoToPublic }: CMSDashboardProps) {
         return <CreateArticleView onBack={handleBackFromCreate} />
       case "edit-article":
         return <CreateArticleView key={editArticleId ?? "edit"} articleId={editArticleId} onBack={handleBackFromCreate} />
+      case "social-media":
+        return socialArticleId
+          ? <SocialMediaView articleId={socialArticleId} onBack={handleBackFromSocial} />
+          : <PostsView onCreateArticle={handleCreateArticle} onEditArticle={handleEditArticle} onOpenSocialMedia={handleOpenSocialMedia} />
       default:
         return <DashboardView onCreateArticle={handleCreateArticle} />
     }
