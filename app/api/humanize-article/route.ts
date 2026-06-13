@@ -169,7 +169,7 @@ PENTING: Kembalikan HANYA objek JSON berikut, tanpa teks apapun sebelum atau ses
       config: {
         systemInstruction: HUMANIZER_SYSTEM,
         temperature:       0.8,
-        maxOutputTokens:   3000,
+        maxOutputTokens:   8192,
       },
     })
 
