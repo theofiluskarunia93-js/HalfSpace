@@ -27,9 +27,7 @@ export function CMSDashboard({ onLogout, onGoToPublic }: CMSDashboardProps) {
   const [editArticleId, setEditArticleId] = useState<string | null>(null)
   const [socialArticleId, setSocialArticleId] = useState<string | null>(null)
 
-  const handleCreateArticle = () => {
-    setCurrentView("create-article")
-  }
+  const handleCreateArticle = () => setCurrentView("create-article")
 
   const handleEditArticle = (id: string) => {
     setEditArticleId(id)
