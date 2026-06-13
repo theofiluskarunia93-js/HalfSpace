@@ -18,6 +18,7 @@ import { NextRequest, NextResponse } from "next/server"
 import { requireAdmin } from "@/lib/supabase/server-auth"
 import { imageRateLimit } from "@/lib/rate-limit"
 import satori from "satori"
+import { Resvg } from "@resvg/resvg-js"
 import sharp from "sharp"
 import fs from "fs"
 import path from "path"
@@ -658,11 +659,8 @@ async function buildOverlaySVG(overlay: OverlayData): Promise<string> {
 
 async function compositeImage(backgroundBuf: Buffer, overlay: OverlayData): Promise<Buffer> {
   const svgString = await buildOverlaySVG(overlay)
-  // sharp can render SVG natively (via libvips/librsvg) — no native addon needed
-  const overlayBuf = await sharp(Buffer.from(svgString))
-    .resize(IMG_SIZE, IMG_SIZE)
-    .png()
-    .toBuffer()
+  const resvg = new Resvg(svgString, { fitTo: { mode: "width", value: IMG_SIZE } })
+  const overlayBuf = Buffer.from(resvg.render().asPng())
 
   return sharp(backgroundBuf)
     .resize(IMG_SIZE, IMG_SIZE, { fit: "cover" })
@@ -746,7 +744,17 @@ export async function POST(req: NextRequest) {
       }
 
       const backgroundBuf = Buffer.from(base64, "base64")
-      const finalBuf = await compositeImage(backgroundBuf, overlay)
+
+      let finalBuf: Buffer
+      try {
+        finalBuf = await compositeImage(backgroundBuf, overlay)
+      } catch (compErr) {
+        console.error("[generate-image] compositeImage error:", compErr)
+        return NextResponse.json(
+          { error: "Gagal memproses gambar: " + (compErr instanceof Error ? compErr.message : String(compErr)) },
+          { status: 500 }
+        )
+      }
 
       return new NextResponse(new Uint8Array(finalBuf), {
         status: 200,
@@ -756,11 +764,11 @@ export async function POST(req: NextRequest) {
         },
       })
     } catch (err) {
-      lastError =
-        err instanceof Error && err.name === "TimeoutError"
-          ? "Cloudflare timeout — server terlalu lama merespons."
-          : "Gagal menghubungi Cloudflare Workers AI."
-      console.error("[generate-image] fetch error:", err)
+      const isTimeout = err instanceof Error && err.name === "TimeoutError"
+      lastError = isTimeout
+        ? "Cloudflare timeout — server terlalu lama merespons."
+        : "Gagal menghubungi Cloudflare Workers AI."
+      console.error("[generate-image] CF fetch error:", err)
     }
   }
 
