@@ -138,8 +138,8 @@ ${structuredText}
 Tulis ulang artikel ini agar jauh lebih manusiawi, natural, dan kuat secara naratif.
 Pertahankan semua fakta. Buat versi yang lebih baik dari yang asli.
 
-Kembalikan HANYA JSON dengan format:
-{ "content": "<html artikel yang sudah ditulis ulang>" }`
+PENTING: Kembalikan HANYA objek JSON berikut, tanpa teks apapun sebelum atau sesudahnya, tanpa markdown fence:
+{"content":"<seluruh HTML artikel di sini>"}`
 
   try {
     // Gunakan @google/genai SDK dengan GoogleGenAI class
@@ -166,40 +166,74 @@ Kembalikan HANYA JSON dengan format:
       )
     }
 
-    // Bersihkan markdown fence jika ada
+    // ── Robust parsing: beberapa strategi fallback ────────────────────────
+    let finalContent = ""
+
+    // Strategi 1: bersihkan markdown fence lalu parse JSON
     let cleaned = raw
       .replace(/^```json\s*/i, "")
+      .replace(/^```html\s*/i, "")
       .replace(/^```\s*/i, "")
       .replace(/\s*```$/i, "")
       .trim()
 
-    // Fallback: ekstrak blok JSON pertama jika ada teks di luar JSON
-    if (!cleaned.startsWith("{")) {
-      const jsonMatch = cleaned.match(/\{[\s\S]*\}/)
-      if (jsonMatch) cleaned = jsonMatch[0]
+    if (cleaned.startsWith("{")) {
+      try {
+        const parsed = JSON.parse(cleaned)
+        if (parsed.content?.trim()) finalContent = parsed.content.trim()
+      } catch {
+        // lanjut ke strategi berikutnya
+      }
     }
 
-    let parsed: { content: string }
-    try {
-      parsed = JSON.parse(cleaned)
-    } catch {
-      console.error("[humanize-article] Raw output tidak bisa di-parse:", raw.slice(0, 500))
-      return NextResponse.json(
-        { error: "Gagal parse hasil Gemini. Coba lagi." },
-        { status: 422 }
-      )
+    // Strategi 2: ekstrak blok JSON dari dalam teks (ada teks sebelum/sesudah JSON)
+    if (!finalContent) {
+      const jsonMatch = cleaned.match(/\{[\s\S]*"content"\s*:\s*"([\s\S]*?)"\s*\}/)
+      if (jsonMatch?.[1]) {
+        try {
+          // Unescape string JSON
+          finalContent = JSON.parse(`"${jsonMatch[1]}"`)
+        } catch {
+          finalContent = jsonMatch[1]
+        }
+      }
     }
 
-    if (!parsed.content?.trim()) {
+    // Strategi 3: coba JSON.parse pada seluruh match { ... }
+    if (!finalContent) {
+      const fullJsonMatch = cleaned.match(/\{[\s\S]*\}/)
+      if (fullJsonMatch) {
+        try {
+          const parsed = JSON.parse(fullJsonMatch[0])
+          if (parsed.content?.trim()) finalContent = parsed.content.trim()
+        } catch {
+          // lanjut ke strategi berikutnya
+        }
+      }
+    }
+
+    // Strategi 4: Gemini mengembalikan HTML langsung tanpa JSON wrapper
+    if (!finalContent && (cleaned.startsWith("<p>") || cleaned.startsWith("<blockquote>"))) {
+      finalContent = cleaned
+    }
+
+    // Strategi 5: cari tag <p> pertama dan ambil semua HTML dari sana
+    if (!finalContent) {
+      const htmlMatch = cleaned.match(/(<p>[\s\S]*)/i)
+      if (htmlMatch?.[1]) finalContent = htmlMatch[1]
+    }
+
+    if (!finalContent) {
+      console.error("[humanize-article] Semua strategi parse gagal. Raw:", raw.slice(0, 800))
       return NextResponse.json(
-        { error: "Hasil humanize kosong. Coba lagi." },
+        { error: "Gagal memproses hasil Gemini. Coba lagi dalam beberapa detik." },
         { status: 422 }
       )
     }
 
     console.log(`[humanize-article] Berhasil humanize artikel tipe "${newsType}" (${plainText.length} karakter input)`)
 
-    return NextResponse.json({ content: parsed.content.trim() })
+    return NextResponse.json({ content: finalContent })
 
   } catch (err: unknown) {
     const message = err instanceof Error ? err.message : "Terjadi error tidak terduga."
