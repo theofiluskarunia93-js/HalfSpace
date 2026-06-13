@@ -1,52 +1,66 @@
 // lib/rate-limit.ts
 //
-// Rate limiter berbasis Upstash Redis (gratis tier cukup untuk CMS internal).
-// Tambahkan env vars: UPSTASH_REDIS_REST_URL, UPSTASH_REDIS_REST_TOKEN
-// (otomatis terisi kalau pakai Vercel Upstash integration).
-//
-// npm install @upstash/ratelimit @upstash/redis
+// Rate limiter in-memory sederhana — TIDAK butuh Upstash/Redis/env var apapun.
+// Cocok untuk single-instance / CMS internal. Limit reset tiap restart server,
+// dan tidak akurat 100% di environment serverless multi-instance — tapi cukup
+// untuk mencegah penyalahgunaan tombol generate berulang-ulang.
 
-import { Ratelimit } from "@upstash/ratelimit"
-import { Redis } from "@upstash/redis"
+interface Bucket {
+  count: number
+  resetAt: number
+}
 
-const redis = Redis.fromEnv()
+const store = new Map<string, Bucket>()
 
-// Limit berbeda per jenis route — sesuaikan cost API masing-masing.
-export const articleRateLimit = new Ratelimit({
-  redis,
-  prefix: "ratelimit:generate-article",
-  limiter: Ratelimit.slidingWindow(8, "1 m"),
-})
+// Bersihkan entry expired sesekali biar Map tidak membengkak
+function cleanup() {
+  const now = Date.now()
+  for (const [key, bucket] of store.entries()) {
+    if (now > bucket.resetAt) store.delete(key)
+  }
+}
 
-export const humanizeRateLimit = new Ratelimit({
-  redis,
-  prefix: "ratelimit:humanize-article",
-  limiter: Ratelimit.slidingWindow(8, "1 m"),
-})
+/**
+ * @param key        identifier unik (mis. user.id + nama route)
+ * @param limit      jumlah request maksimum
+ * @param windowMs   durasi window dalam milidetik
+ */
+function limit(key: string, limit: number, windowMs: number): { success: boolean } {
+  cleanup()
+  const now = Date.now()
+  const bucket = store.get(key)
 
-export const captionRateLimit = new Ratelimit({
-  redis,
-  prefix: "ratelimit:generate-social-captions",
-  limiter: Ratelimit.slidingWindow(10, "1 m"),
-})
+  if (!bucket || now > bucket.resetAt) {
+    store.set(key, { count: 1, resetAt: now + windowMs })
+    return { success: true }
+  }
 
-export const publishXRateLimit = new Ratelimit({
-  redis,
-  prefix: "ratelimit:publish-to-x",
-  limiter: Ratelimit.slidingWindow(5, "1 m"),
-})
+  if (bucket.count >= limit) {
+    return { success: false }
+  }
 
-export const imageRateLimit = new Ratelimit({
-  redis,
-  prefix: "ratelimit:generate-image",
-  limiter: Ratelimit.slidingWindow(10, "1 m"),
-})
+  bucket.count += 1
+  return { success: true }
+}
 
-// Helper kecil agar pemanggilan di route seragam
-export async function checkRateLimit(
-  limiter: Ratelimit,
-  identifier: string
-): Promise<{ success: boolean; remaining: number; reset: number }> {
-  const result = await limiter.limit(identifier)
-  return result
+const MINUTE = 60_000
+
+export const articleRateLimit = {
+  limit: async (id: string) => limit(`generate-article:${id}`, 8, MINUTE),
+}
+
+export const humanizeRateLimit = {
+  limit: async (id: string) => limit(`humanize-article:${id}`, 8, MINUTE),
+}
+
+export const captionRateLimit = {
+  limit: async (id: string) => limit(`generate-social-captions:${id}`, 10, MINUTE),
+}
+
+export const publishXRateLimit = {
+  limit: async (id: string) => limit(`publish-to-x:${id}`, 5, MINUTE),
+}
+
+export const imageRateLimit = {
+  limit: async (id: string) => limit(`generate-image:${id}`, 10, MINUTE),
 }
