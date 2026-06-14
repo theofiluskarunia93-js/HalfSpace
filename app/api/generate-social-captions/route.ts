@@ -1,6 +1,5 @@
 import { NextRequest, NextResponse } from "next/server"
 import { requireAdmin } from "@/lib/supabase/server-auth"
-import { captionRateLimit } from "@/lib/rate-limit"
 
 // ─── Model list yang tersedia via OpenRouter ───────────────────────────────────
 // Tambah / hapus sesuai kebutuhan. id = model string OpenRouter.
@@ -27,15 +26,6 @@ export async function POST(request: NextRequest) {
   const user = await requireAdmin()
   if (!user) {
     return NextResponse.json({ error: "Unauthorized" }, { status: 401 })
-  }
-
-  // ── Rate limit ──────────────────────────────────────────────────────────
-  const { success } = await captionRateLimit.limit(user.id)
-  if (!success) {
-    return NextResponse.json(
-      { error: "Terlalu banyak request generate caption. Tunggu sebentar lalu coba lagi." },
-      { status: 429 }
-    )
   }
 
   try {

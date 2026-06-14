@@ -1,26 +1,21 @@
 // app/api/generate-article/route.ts
 //
 // Generate artikel sepak bola bergaya The Athletic — powered by Groq (llama-3.3-70b-versatile).
+// + Tavily fact-check integration (4-step pipeline)
+// + Auth-only (no rate limit)
 //
-// Catatan migrasi dari Gemini ke Groq:
-// - Groq tidak mendukung URL reading/context tool, field sourceUrl dihapus.
-// - Response JSON langsung dari Groq tanpa perlu handle mixed parts (tool_result + text).
-// - Groq menggunakan OpenAI-compatible API format (messages array dengan role system/user).
-// - Caching: artikel hasil generate di-cache di server (Map) per kombinasi newsType+topic+context
-//   selama 5 menit untuk menghindari request duplikat.
+// Pipeline:
+//   Step 1 : Groq tulis draft dari konteks
+//   Step 2 : Tavily fact-check klaim dari draft
+//   Step 3 : Groq sisipkan fakta inline ke draft
+//   Step 4 : Output muncul di editor
 //
-// Changelog v2 — Human-first prompt rewrite:
-// - BASE_SYSTEM diperluas: blacklist frasa klise AI, instruksi hook naratif + contoh konkret,
-//   aturan suara jurnalis, larangan kalimat pembuka dengan nama subjek.
-// - TYPE_INSTRUCTION diperbarui: struktur diubah dari checklist kaku ke panduan naratif
-//   yang memberi ruang artikel "bernafas" alami.
-// - temperature dinaikkan dari 0.7 → 0.85 untuk output yang lebih variatif dan tidak template.
-// - max_tokens dinaikkan dari 2048 → 2800 untuk memberikan ruang artikel panjang yang utuh.
-//
+// Streaming progress via SSE (Server-Sent Events) ke client.
 // Input : newsType + topic + context
-// Output: { title, content } — content HTML siap pakai TipTap
+// Output: SSE stream → { event: "progress"|"done"|"error", data: ... }
 
 import { NextRequest, NextResponse } from "next/server"
+import { requireAdmin } from "@/lib/supabase/server-auth"
 
 export type NewsType =
   | "transfer"
@@ -36,47 +31,7 @@ interface RequestBody {
   context:  string
 }
 
-// ─── Simple in-memory cache ───────────────────────────────────────────────────
-// Cache artikel yang sudah di-generate untuk menghindari request duplikat.
-// Key: hash dari newsType+topic+context. TTL: 5 menit.
-
-interface CacheEntry {
-  title:   string
-  content: string
-  expiry:  number
-}
-
-const articleCache = new Map<string, CacheEntry>()
-const CACHE_TTL_MS = 5 * 60 * 1000 // 5 menit
-
-function makeCacheKey(newsType: string, topic: string, context: string): string {
-  return `${newsType}::${topic.trim().toLowerCase()}::${context.trim().toLowerCase()}`
-}
-
-function getCached(key: string): { title: string; content: string } | null {
-  const entry = articleCache.get(key)
-  if (!entry) return null
-  if (Date.now() > entry.expiry) {
-    articleCache.delete(key)
-    return null
-  }
-  return { title: entry.title, content: entry.content }
-}
-
-function setCache(key: string, title: string, content: string): void {
-  for (const [k, v] of articleCache.entries()) {
-    if (Date.now() > v.expiry) articleCache.delete(k)
-  }
-  articleCache.set(key, { title, content, expiry: Date.now() + CACHE_TTL_MS })
-}
-
 // ─── BASE SYSTEM PROMPT ───────────────────────────────────────────────────────
-//
-// Fix #1 — Hook naratif dengan contoh konkret (bukan instruksi abstrak)
-// Fix #2 — Blacklist frasa klise AI yang paling sering muncul di Llama
-// Fix #3 — Instruksi suara narator: jurnalis dengan sudut pandang, bukan pelapor fakta
-// Fix #4 — Aturan variasi ritme kalimat agar tidak monoton
-// Fix #5 — Larangan eksplisit membuka kalimat dengan nama subjek
 
 const BASE_SYSTEM = `Kamu adalah jurnalis olahraga senior di media sepak bola premium Indonesia bernama HalfSpace.id.
 Gaya penulisanmu mengikuti The Athletic: naratif, mendalam, mengutamakan konteks dan human story.
@@ -129,11 +84,6 @@ Jangan gunakan frasa-frasa berikut dalam bentuk apapun — ini adalah fingerprin
 - Output HANYA JSON murni, tanpa markdown fence, tanpa komentar`
 
 // ─── System prompt per tipe berita ───────────────────────────────────────────
-//
-// Fix untuk TYPE_INSTRUCTION:
-// - Struktur diubah dari checklist kaku menjadi panduan naratif dengan kebebasan
-// - Tambahan contoh konkret untuk setiap tipe
-// - Panjang artikel disesuaikan ulang agar realistis
 
 const TYPE_INSTRUCTION: Record<NewsType, string> = {
   transfer: `Tipe: BERITA TRANSFER
@@ -205,11 +155,90 @@ Boleh gunakan satu atau dua kalimat pendek yang menghentak sebagai penekanan.
 Panjang: 450–600 kata`,
 }
 
+// ─── Helpers ──────────────────────────────────────────────────────────────────
+
+function sseEvent(event: string, data: unknown): string {
+  return `event: ${event}\ndata: ${JSON.stringify(data)}\n\n`
+}
+
+async function groqChat(apiKey: string, systemPrompt: string, userPrompt: string): Promise<string> {
+  const res = await fetch("https://api.groq.com/openai/v1/chat/completions", {
+    method:  "POST",
+    headers: {
+      "Content-Type":  "application/json",
+      "Authorization": `Bearer ${apiKey}`,
+    },
+    body: JSON.stringify({
+      model:       "llama-3.3-70b-versatile",
+      temperature: 0.85,
+      max_tokens:  2800,
+      messages: [
+        { role: "system", content: systemPrompt },
+        { role: "user",   content: userPrompt },
+      ],
+      response_format: { type: "json_object" },
+    }),
+  })
+
+  if (!res.ok) {
+    const errText = await res.text()
+    if (res.status === 429) throw new Error("Groq API rate limit tercapai. Tunggu beberapa detik lalu coba lagi.")
+    if (res.status === 401) throw new Error("GROQ_API_KEY tidak valid. Hubungi administrator.")
+    if (res.status === 400) throw new Error("Request ke Groq gagal. Coba kurangi panjang konteks.")
+    throw new Error(`Groq API error ${res.status}: ${errText.slice(0, 200)}`)
+  }
+
+  const data = await res.json() as { choices?: { message?: { content?: string } }[] }
+  return (data.choices?.[0]?.message?.content ?? "").trim()
+}
+
+async function tavilySearch(apiKey: string, query: string): Promise<string> {
+  const res = await fetch("https://api.tavily.com/search", {
+    method:  "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({
+      api_key:        apiKey,
+      query:          query,
+      search_depth:   "basic",
+      max_results:    5,
+      include_answer: true,
+    }),
+  })
+
+  if (!res.ok) {
+    // Tavily gagal → lanjutkan tanpa fact-check (non-fatal)
+    console.warn("[generate-article] Tavily error:", res.status)
+    return ""
+  }
+
+  const data = await res.json() as {
+    answer?: string
+    results?: { title?: string; content?: string; url?: string }[]
+  }
+
+  const parts: string[] = []
+  if (data.answer) parts.push(`Ringkasan: ${data.answer}`)
+  if (data.results) {
+    data.results.slice(0, 3).forEach((r, i) => {
+      parts.push(`[${i + 1}] ${r.title ?? ""}: ${(r.content ?? "").slice(0, 300)}`)
+    })
+  }
+  return parts.join("\n")
+}
+
 // ─── POST handler ─────────────────────────────────────────────────────────────
 
 export async function POST(req: NextRequest) {
-  const apiKey = process.env.GROQ_API_KEY
-  if (!apiKey) {
+  // ── Auth check ──────────────────────────────────────────────────────────────
+  const user = await requireAdmin()
+  if (!user) {
+    return NextResponse.json({ error: "Unauthorized" }, { status: 401 })
+  }
+
+  const groqKey   = process.env.GROQ_API_KEY
+  const tavilyKey = process.env.TAVILY_API_KEY
+
+  if (!groqKey) {
     return NextResponse.json(
       { error: "GROQ_API_KEY belum dikonfigurasi di environment variables." },
       { status: 500 }
@@ -237,17 +266,20 @@ export async function POST(req: NextRequest) {
     return NextResponse.json({ error: "newsType tidak valid." }, { status: 400 })
   }
 
-  // ── Cek cache dulu ─────────────────────────────────────────────────────────
-  const cacheKey = makeCacheKey(newsType, topic, context)
-  const cached = getCached(cacheKey)
-  if (cached) {
-    console.log(`[generate-article] Cache hit untuk topik: "${topic.trim()}"`)
-    return NextResponse.json({ title: cached.title, content: cached.content })
-  }
+  // ── SSE Stream ───────────────────────────────────────────────────────────────
+  const encoder = new TextEncoder()
 
-  // ── Susun user prompt ──────────────────────────────────────────────────────
+  const stream = new ReadableStream({
+    async start(controller) {
+      const send = (event: string, data: unknown) => {
+        controller.enqueue(encoder.encode(sseEvent(event, data)))
+      }
 
-  const userPrompt = `${TYPE_INSTRUCTION[newsType]}
+      try {
+        // ── STEP 1: Groq tulis draft ────────────────────────────────────────
+        send("progress", { step: 1, label: "Menulis Draft" })
+
+        const userPromptDraft = `${TYPE_INSTRUCTION[newsType]}
 
 TOPIK: ${topic.trim()}
 
@@ -263,118 +295,108 @@ Kembalikan HANYA JSON dengan format berikut (tidak ada teks di luar JSON):
   "content": "<konten artikel dalam HTML — gunakan <p> untuk paragraf dan <blockquote> untuk kutipan langsung dari narasumber. JANGAN gunakan tag HTML lain apapun.>"
 }`
 
-  // ── Kirim ke Groq API ──────────────────────────────────────────────────────
-  // Fix #4: temperature dinaikkan ke 0.85 untuk output lebih variatif dan tidak template-ish
-  // Fix #5: max_tokens dinaikkan ke 2800 agar artikel panjang tidak terpotong
+        const draftRaw = await groqChat(groqKey, BASE_SYSTEM, userPromptDraft)
 
-  try {
-    const res = await fetch("https://api.groq.com/openai/v1/chat/completions", {
-      method:  "POST",
-      headers: {
-        "Content-Type":  "application/json",
-        "Authorization": `Bearer ${apiKey}`,
-      },
-      body: JSON.stringify({
-        model:       "llama-3.3-70b-versatile",
-        temperature: 0.85,  // dinaikkan dari 0.7 → lebih variatif, lebih humanis
-        max_tokens:  2800,  // dinaikkan dari 2048 → ruang lebih untuk artikel panjang
-        messages: [
-          { role: "system", content: BASE_SYSTEM },
-          { role: "user",   content: userPrompt },
-        ],
-        response_format: { type: "json_object" },
-      }),
-    })
+        let draftCleaned = draftRaw
+          .replace(/^```json\s*/i, "").replace(/^```\s*/i, "").replace(/\s*```$/i, "").trim()
+        if (!draftCleaned.startsWith("{")) {
+          const m = draftCleaned.match(/\{[\s\S]*\}/)
+          if (m) draftCleaned = m[0]
+        }
 
-    const resText = await res.text()
+        let draft: { title: string; content: string }
+        try {
+          draft = JSON.parse(draftCleaned)
+        } catch {
+          throw new Error("Gagal parse draft dari Groq. Coba lagi.")
+        }
 
-    if (!res.ok) {
-      if (res.status === 429) {
-        return NextResponse.json(
-          { error: "Groq API rate limit tercapai. Tunggu beberapa detik lalu coba lagi." },
-          { status: 429 }
-        )
+        if (!draft.title?.trim() || !draft.content?.trim()) {
+          throw new Error("Draft Groq tidak lengkap. Tambahkan konteks lebih detail.")
+        }
+
+        // ── STEP 2: Tavily fact-check ───────────────────────────────────────
+        send("progress", { step: 2, label: "Memverifikasi Fakta" })
+
+        let factContext = ""
+        if (tavilyKey) {
+          // Buat query dari topik + judul draft
+          const searchQuery = `${topic.trim()} ${draft.title}`.slice(0, 200)
+          factContext = await tavilySearch(tavilyKey, searchQuery)
+        }
+
+        // ── STEP 3: Groq sisipkan fakta inline ─────────────────────────────
+        send("progress", { step: 3, label: "Menyempurnakan Konten" })
+
+        let finalDraft = draft
+
+        if (factContext.trim()) {
+          const refinementPrompt = `Kamu adalah editor jurnalistik senior di HalfSpace.id.
+
+Kamu menerima sebuah draft artikel dan hasil riset terbaru dari web. Tugasmu adalah menyisipkan fakta-fakta yang relevan dari hasil riset ke dalam draft secara INLINE dan NATURAL — bukan menambah section baru, bukan mengubah struktur, dan TIDAK mengubah gaya penulisan yang sudah ada.
+
+ATURAN PENYISIPAN:
+- Sisipkan fakta hanya jika benar-benar memperkuat narasi yang sudah ada
+- Pertahankan gaya jurnalistik, hook pembuka, dan penutup artikel
+- Jangan ubah judul
+- Jangan tambahkan heading atau subheading baru
+- Output tetap HANYA JSON murni: { "title": "...", "content": "..." }
+
+DRAFT ARTIKEL:
+${JSON.stringify(draft)}
+
+HASIL RISET TERBARU (gunakan jika relevan):
+${factContext}
+
+Kembalikan artikel yang telah disempurnakan dalam format JSON yang sama.`
+
+          const refinedRaw = await groqChat(
+            groqKey,
+            "Kamu adalah editor jurnalistik senior. Output HANYA JSON murni, tanpa markdown fence, tanpa komentar.",
+            refinementPrompt
+          )
+
+          let refinedCleaned = refinedRaw
+            .replace(/^```json\s*/i, "").replace(/^```\s*/i, "").replace(/\s*```$/i, "").trim()
+          if (!refinedCleaned.startsWith("{")) {
+            const m = refinedCleaned.match(/\{[\s\S]*\}/)
+            if (m) refinedCleaned = m[0]
+          }
+
+          try {
+            const refined = JSON.parse(refinedCleaned) as { title: string; content: string }
+            if (refined.title?.trim() && refined.content?.trim()) {
+              finalDraft = refined
+            }
+          } catch {
+            // Gagal refine → gunakan draft awal (non-fatal)
+            console.warn("[generate-article] Refinement parse failed, using original draft")
+          }
+        }
+
+        // ── STEP 4: Done ────────────────────────────────────────────────────
+        send("progress", { step: 4, label: "Draft Selesai" })
+
+        send("done", {
+          title:   finalDraft.title.trim(),
+          content: finalDraft.content.trim(),
+        })
+
+      } catch (err: unknown) {
+        const message = err instanceof Error ? err.message : "Terjadi error. Coba lagi."
+        console.error("[generate-article] Error:", err)
+        send("error", { error: message })
+      } finally {
+        controller.close()
       }
-      if (res.status === 401) {
-        return NextResponse.json(
-          { error: "GROQ_API_KEY tidak valid. Hubungi administrator." },
-          { status: 500 }
-        )
-      }
-      if (res.status === 400) {
-        return NextResponse.json(
-          { error: "Request ke Groq gagal. Coba kurangi panjang konteks." },
-          { status: 400 }
-        )
-      }
-      throw new Error(`Groq API error ${res.status}: ${resText.slice(0, 200)}`)
-    }
+    },
+  })
 
-    let data: Record<string, unknown>
-    try {
-      data = JSON.parse(resText)
-    } catch {
-      throw new Error(`Gagal parse response Groq: ${resText.slice(0, 200)}`)
-    }
-
-    type GroqChoice = { message?: { content?: string } }
-    const raw = ((data.choices as GroqChoice[])?.[0]?.message?.content ?? "").trim()
-
-    if (!raw) {
-      return NextResponse.json(
-        { error: "Groq tidak menghasilkan output. Coba lagi." },
-        { status: 422 }
-      )
-    }
-
-    // Bersihkan markdown fence jika ada (paranoid check)
-    let cleaned = raw.replace(/^```json\s*/i, "").replace(/^```\s*/i, "").replace(/\s*```$/i, "").trim()
-
-    // Fallback: ekstrak blok JSON pertama jika ada teks di luar JSON
-    if (!cleaned.startsWith("{")) {
-      const jsonMatch = cleaned.match(/\{[\s\S]*\}/)
-      if (jsonMatch) cleaned = jsonMatch[0]
-    }
-
-    let parsed: { title: string; content: string }
-    try {
-      parsed = JSON.parse(cleaned)
-    } catch {
-      console.error("[generate-article] Raw output tidak bisa di-parse:", raw.slice(0, 500))
-      return NextResponse.json(
-        { error: "Gagal parse hasil Groq. Coba lagi." },
-        { status: 422 }
-      )
-    }
-
-    if (!parsed.title?.trim() || !parsed.content?.trim()) {
-      return NextResponse.json(
-        { error: "Hasil generate tidak lengkap. Coba tambahkan konteks lebih detail." },
-        { status: 422 }
-      )
-    }
-
-    const result = {
-      title:   parsed.title.trim(),
-      content: parsed.content.trim(),
-    }
-
-    setCache(cacheKey, result.title, result.content)
-
-    type GroqUsage = { prompt_tokens?: number; completion_tokens?: number; total_tokens?: number }
-    const usage = data.usage as GroqUsage | undefined
-    if (usage) {
-      console.log(
-        `[generate-article] Groq usage — prompt: ${usage.prompt_tokens ?? 0}, ` +
-        `completion: ${usage.completion_tokens ?? 0}, total: ${usage.total_tokens ?? 0}`
-      )
-    }
-
-    return NextResponse.json(result)
-
-  } catch (err: unknown) {
-    const message = err instanceof Error ? err.message : "Terjadi error. Coba lagi."
-    console.error("[generate-article] Error:", err)
-    return NextResponse.json({ error: message }, { status: 500 })
-  }
+  return new Response(stream, {
+    headers: {
+      "Content-Type":  "text/event-stream",
+      "Cache-Control": "no-cache",
+      "Connection":    "keep-alive",
+    },
+  })
 }

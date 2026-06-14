@@ -507,7 +507,7 @@ export function SocialMediaView({ onBack, articleId }: SocialMediaViewProps) {
   // ── Caption ────────────────────────────────────────────────────────────────
 
   async function handleGenerateCaptions() {
-    if (!article) return
+    if (!article || generatingCaptions) return
     setGeneratingCaptions(true)
     setCaptionError(null)
     try {
@@ -538,7 +538,7 @@ export function SocialMediaView({ onBack, articleId }: SocialMediaViewProps) {
   // ── Image ──────────────────────────────────────────────────────────────────
 
   async function handleGenerateImage() {
-    if (!imagePrompt.trim()) return
+    if (!imagePrompt.trim() || generatingImage) return
     setGeneratingImage(true)
     setImageError(null)
     setGeneratedImageUrl(null)

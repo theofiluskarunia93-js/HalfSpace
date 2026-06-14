@@ -22,7 +22,6 @@
 import { NextRequest, NextResponse } from "next/server"
 import { GoogleGenAI } from "@google/genai"
 import { requireAdmin } from "@/lib/supabase/server-auth"
-import { humanizeRateLimit } from "@/lib/rate-limit"
 
 export type NewsType =
   | "transfer"
@@ -100,15 +99,6 @@ export async function POST(req: NextRequest) {
   const user = await requireAdmin()
   if (!user) {
     return NextResponse.json({ error: "Unauthorized" }, { status: 401 })
-  }
-
-  // ── Rate limit ──────────────────────────────────────────────────────────
-  const { success } = await humanizeRateLimit.limit(user.id)
-  if (!success) {
-    return NextResponse.json(
-      { error: "Terlalu banyak request humanize. Tunggu sebentar lalu coba lagi." },
-      { status: 429 }
-    )
   }
 
   const apiKey = process.env.GEMINI_API_KEY

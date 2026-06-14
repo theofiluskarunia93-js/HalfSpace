@@ -450,6 +450,7 @@ export function CreateArticleView({ onBack, articleId }: CreateArticleViewProps)
   const [aiContext,     setAiContext]     = useState("")
   const [aiGenerating,  setAiGenerating]  = useState(false)
   const [aiError,       setAiError]       = useState<string | null>(null)
+  const [aiProgress,    setAiProgress]    = useState<{ step: number; label: string } | null>(null)
 
   // ── Humanizer state ───────────────────────────────────────────────────────────────
   const [isHumanizing,  setIsHumanizing]  = useState(false)
@@ -746,28 +747,74 @@ export function CreateArticleView({ onBack, articleId }: CreateArticleViewProps)
     }
     setAiGenerating(true)
     setAiError(null)
+    setAiProgress({ step: 1, label: "Menulis Draft" })
+
     try {
       const res = await fetch("/api/generate-article", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
-          newsType:  aiNewsType,
-          topic:     aiTopic,
-          context:   aiContext,
+          newsType: aiNewsType,
+          topic:    aiTopic,
+          context:  aiContext,
         }),
       })
-      const data = await res.json()
-      if (!res.ok) throw new Error(data.error ?? `Error ${res.status}`)
-      setTitle(data.title)
-      if (editor) editor.commands.setContent(data.content)
-      setAiModalOpen(false)
-      setAiTopic("")
-      setAiContext("")
-      setAiError(null)
+
+      if (!res.ok) {
+        // Non-SSE error (auth, config, etc.)
+        const data = await res.json().catch(() => ({})) as { error?: string }
+        throw new Error(data.error ?? `Error ${res.status}`)
+      }
+
+      // Parse SSE stream
+      const reader  = res.body?.getReader()
+      const decoder = new TextDecoder()
+      if (!reader) throw new Error("Gagal membaca stream dari server.")
+
+      let buffer = ""
+      while (true) {
+        const { done, value } = await reader.read()
+        if (done) break
+        buffer += decoder.decode(value, { stream: true })
+
+        // Process complete SSE messages
+        const messages = buffer.split("\n\n")
+        buffer = messages.pop() ?? ""
+
+        for (const msg of messages) {
+          const lines = msg.split("\n")
+          let event = "message"
+          let dataStr = ""
+          for (const line of lines) {
+            if (line.startsWith("event: ")) event = line.slice(7).trim()
+            if (line.startsWith("data: "))  dataStr = line.slice(6).trim()
+          }
+          if (!dataStr) continue
+
+          const payload = JSON.parse(dataStr)
+
+          if (event === "progress") {
+            setAiProgress({ step: payload.step, label: payload.label })
+          } else if (event === "done") {
+            setTitle(payload.title)
+            if (editor) editor.commands.setContent(payload.content)
+            setAiProgress({ step: 4, label: "Draft Selesai" })
+            // Small delay to show "Draft Selesai" before closing
+            await new Promise(r => setTimeout(r, 900))
+            setAiModalOpen(false)
+            setAiTopic("")
+            setAiContext("")
+            setAiError(null)
+          } else if (event === "error") {
+            throw new Error(payload.error ?? "Gagal generate artikel. Coba lagi.")
+          }
+        }
+      }
     } catch (err: any) {
       setAiError(err.message ?? "Gagal generate artikel. Coba lagi.")
     } finally {
       setAiGenerating(false)
+      setAiProgress(null)
     }
   }
 
@@ -1181,7 +1228,7 @@ export function CreateArticleView({ onBack, articleId }: CreateArticleViewProps)
                     <Redo2 className="h-4 w-4" />
                   </ToolbarButton>
                   <ToolbarSeparator />
-                  <ToolbarButton onClick={() => { setAiModalOpen(true); setAiError(null) }} title="Generate Breaking News dengan AI" active={aiModalOpen}>
+                  <ToolbarButton onClick={() => { if (!aiGenerating) { setAiModalOpen(true); setAiError(null) } }} title="Generate Breaking News dengan AI" active={aiModalOpen} disabled={aiGenerating}>
                     <Sparkles className="h-4 w-4" />
                   </ToolbarButton>
                   <ToolbarButton
@@ -1733,22 +1780,67 @@ export function CreateArticleView({ onBack, articleId }: CreateArticleViewProps)
                 ⚠ {aiError}
               </p>
             )}
+
+            {/* Progress Steps */}
+            {aiGenerating && aiProgress && (
+              <div className="rounded-xl border border-primary/30 bg-primary/5 px-4 py-3">
+                <div className="mb-2.5 flex items-center gap-2">
+                  <svg className="h-3.5 w-3.5 animate-spin text-primary" viewBox="0 0 24 24" fill="none">
+                    <circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4"/>
+                    <path className="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8v8z"/>
+                  </svg>
+                  <span className="text-xs font-semibold text-primary">Memproses artikel…</span>
+                </div>
+                <div className="flex flex-col gap-1.5">
+                  {[
+                    { step: 1, label: "Menulis Draft" },
+                    { step: 2, label: "Memverifikasi Fakta" },
+                    { step: 3, label: "Menyempurnakan Konten" },
+                    { step: 4, label: "Draft Selesai" },
+                  ].map(({ step, label }) => {
+                    const isDone    = aiProgress.step > step
+                    const isActive  = aiProgress.step === step
+                    return (
+                      <div key={step} className="flex items-center gap-2">
+                        <div className={[
+                          "flex h-4 w-4 items-center justify-center rounded-full text-[10px] font-bold flex-shrink-0",
+                          isDone   ? "bg-primary text-black" :
+                          isActive ? "bg-primary/30 text-primary ring-1 ring-primary animate-pulse" :
+                                     "bg-secondary text-muted-foreground",
+                        ].join(" ")}>
+                          {isDone ? "✓" : step}
+                        </div>
+                        <span className={[
+                          "text-xs",
+                          isDone   ? "text-primary/70 line-through" :
+                          isActive ? "text-foreground font-semibold" :
+                                     "text-muted-foreground",
+                        ].join(" ")}>
+                          {label}
+                        </span>
+                      </div>
+                    )
+                  })}
+                </div>
+              </div>
+            )}
           </div>
 
           {/* Footer */}
           <div className="flex items-center justify-between border-t border-border px-6 py-4">
-            <p className="text-[11px] text-muted-foreground">Powered by Groq · Llama 3.3 70B</p>
+            <p className="text-[11px] text-muted-foreground">Powered by Groq · Llama 3.3 70B · Tavily</p>
             <div className="flex gap-3">
               <button
                 onClick={() => { setAiModalOpen(false); setAiError(null) }}
-                className="rounded-lg border border-border px-4 py-2 text-sm text-foreground hover:bg-secondary"
+                disabled={aiGenerating}
+                className="rounded-lg border border-border px-4 py-2 text-sm text-foreground hover:bg-secondary disabled:opacity-40 disabled:pointer-events-none"
               >
                 Batal
               </button>
               <button
                 onClick={handleAiGenerate}
                 disabled={aiGenerating || !aiTopic.trim() || !aiContext.trim()}
-                className="flex items-center gap-2 rounded-lg bg-primary px-4 py-2 text-sm font-bold text-black hover:bg-primary/90 disabled:opacity-40"
+                className="flex items-center gap-2 rounded-lg bg-primary px-4 py-2 text-sm font-bold text-black hover:bg-primary/90 disabled:opacity-40 disabled:pointer-events-none"
               >
                 {aiGenerating ? (
                   <>
@@ -1756,7 +1848,7 @@ export function CreateArticleView({ onBack, articleId }: CreateArticleViewProps)
                       <circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4"/>
                       <path className="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8v8z"/>
                     </svg>
-                    Generating...
+                    Generating…
                   </>
                 ) : (
                   <>

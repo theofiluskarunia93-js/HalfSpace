@@ -25,7 +25,6 @@
 import type React from "react"
 import { NextRequest, NextResponse } from "next/server"
 import { requireAdmin } from "@/lib/supabase/server-auth"
-import { imageRateLimit } from "@/lib/rate-limit"
 import satori from "satori"
 import { Resvg } from "@resvg/resvg-js"
 import fs from "fs"
@@ -712,15 +711,6 @@ export async function POST(req: NextRequest) {
   const user = await requireAdmin()
   if (!user) {
     return NextResponse.json({ error: "Unauthorized" }, { status: 401 })
-  }
-
-  // Rate limit
-  const { success } = await imageRateLimit.limit(user.id)
-  if (!success) {
-    return NextResponse.json(
-      { error: "Terlalu banyak request generate gambar. Tunggu sebentar lalu coba lagi." },
-      { status: 429 }
-    )
   }
 
   const accountId = process.env.CF_ACCOUNT_ID
