@@ -602,7 +602,7 @@ async function buildCompositeSVG(backgroundDataURI: string, overlay: OverlayData
               style: {
                 position: "absolute",
                 inset: 0,
-                background: `linear-gradient(to top, ${bg} 0%, rgba(0,0,0,0.45) 55%, rgba(0,0,0,0.15) 100%)`,
+                background: `linear-gradient(to top, ${bg} 0%, rgba(0,0,0,0.65) 55%, rgba(0,0,0,0.35) 100%)`,
               },
             },
           },
@@ -657,7 +657,7 @@ async function buildCompositeSVG(backgroundDataURI: string, overlay: OverlayData
                       letterSpacing: 3,
                       textTransform: "uppercase",
                     },
-                    children: "HALFSPACE.ID",
+                    children: "HALFSPACESPORT.COM",
                   },
                 },
               ],
