@@ -107,20 +107,21 @@ export function detectContentType(title: string): ContentType {
 function buildCFPrompt(contentType: ContentType, userPrompt: string): string {
   const base = userPrompt.slice(0, MAX_PROMPT_LENGTH)
 
+  // Semua style: gelap dramatis, fokus stadion / siluet / penonton — TANPA pemain AI
   const styleMap: Record<ContentType, string> = {
-    match_preview:    "stadium aerial view at night, floodlights, dramatic atmosphere, football pitch",
-    match_result:     "football stadium celebration, confetti, crowd, dramatic lighting",
-    schedule:         "calendar planning abstract, sports schedule, clean geometric shapes",
-    squad:            "football team formation diagram, tactical board, green pitch top view",
-    prediction:       "trophy spotlight, golden light, dramatic podium, champions atmosphere",
-    transfer:         "contract signing abstract, financial district blur, movement blur",
-    press_conference: "press conference room blur, microphones, podium lights, bokeh",
-    injury:           "medical room abstract, clinical blue tones, recovery atmosphere",
-    general:          "sports infographic background, modern editorial design, bold contrast",
+    match_preview:    "dark dramatic football stadium at night, floodlights blazing, packed crowd silhouettes, atmospheric fog, deep shadows, cinematic wide angle, no people faces",
+    match_result:     "football stadium celebration night, confetti falling, crowd silhouettes cheering, dramatic dark atmosphere, spotlights, no faces visible",
+    schedule:         "empty football stadium aerial view dusk, floodlights on, green pitch glowing, dark dramatic sky, no people",
+    squad:            "dark football locker room atmosphere, silhouettes of players standing, dramatic backlight, cinematic moody, no faces",
+    prediction:       "world cup trophy dramatic dark spotlight, gold glowing on black background, stadium blurred dark background, cinematic dramatic",
+    transfer:         "dark abstract football training ground night, stadium lights distant blur, dramatic moody atmosphere, no people",
+    press_conference: "dark press conference room, microphones podium, dramatic spotlight, bokeh background, moody atmosphere, no faces",
+    injury:           "dark medical room abstract, blue clinical tones, dramatic shadows, recovery atmosphere, no people",
+    general:          "dark dramatic football stadium panoramic, crowd silhouettes, floodlights, atmospheric fog, cinematic editorial, no faces",
   }
 
   const style = styleMap[contentType]
-  return `${base}, ${style}, absolutely no text, no letters, no numbers, no watermark, no typography, pure visual background only, high quality, editorial photography style`
+  return `${base}, ${style}, absolutely no text, no letters, no numbers, no watermark, no typography, no identifiable faces, pure dark cinematic background, high quality, editorial photography style`
 }
 
 // ─── Load font ────────────────────────────────────────────────────────────────
@@ -153,16 +154,19 @@ function getFonts(): { bold: Buffer; medium: Buffer } {
 
 // ─── Color themes per content type ────────────────────────────────────────────
 
+// Semua tipe pakai neon green sebagai accent warna utama
+const NEON = "#39FF14"
+
 const THEMES: Record<ContentType, { accent: string; bg: string; text: string }> = {
-  match_preview:    { accent: "#00D4FF", bg: "rgba(0,0,0,0.72)", text: "#FFFFFF" },
-  match_result:     { accent: "#00FF87", bg: "rgba(0,0,0,0.75)", text: "#FFFFFF" },
-  schedule:         { accent: "#FF6B35", bg: "rgba(0,0,0,0.70)", text: "#FFFFFF" },
-  squad:            { accent: "#A78BFA", bg: "rgba(0,0,0,0.72)", text: "#FFFFFF" },
-  prediction:       { accent: "#FFD700", bg: "rgba(0,0,0,0.75)", text: "#FFFFFF" },
-  transfer:         { accent: "#34D399", bg: "rgba(0,0,0,0.72)", text: "#FFFFFF" },
-  press_conference: { accent: "#60A5FA", bg: "rgba(0,0,0,0.70)", text: "#FFFFFF" },
-  injury:           { accent: "#F87171", bg: "rgba(0,0,0,0.72)", text: "#FFFFFF" },
-  general:          { accent: "#E879F9", bg: "rgba(0,0,0,0.70)", text: "#FFFFFF" },
+  match_preview:    { accent: NEON, bg: "rgba(0,0,0,0.82)", text: "#FFFFFF" },
+  match_result:     { accent: NEON, bg: "rgba(0,0,0,0.85)", text: "#FFFFFF" },
+  schedule:         { accent: NEON, bg: "rgba(0,0,0,0.82)", text: "#FFFFFF" },
+  squad:            { accent: NEON, bg: "rgba(0,0,0,0.82)", text: "#FFFFFF" },
+  prediction:       { accent: NEON, bg: "rgba(0,0,0,0.85)", text: "#FFFFFF" },
+  transfer:         { accent: NEON, bg: "rgba(0,0,0,0.82)", text: "#FFFFFF" },
+  press_conference: { accent: NEON, bg: "rgba(0,0,0,0.82)", text: "#FFFFFF" },
+  injury:           { accent: NEON, bg: "rgba(0,0,0,0.82)", text: "#FFFFFF" },
+  general:          { accent: NEON, bg: "rgba(0,0,0,0.82)", text: "#FFFFFF" },
 }
 
 const TYPE_LABELS: Record<ContentType, string> = {
@@ -273,7 +277,7 @@ async function buildCompositeSVG(backgroundDataURI: string, overlay: OverlayData
                       style: {
                         fontSize: isResult ? 14 : 20,
                         fontWeight: 700,
-                        color: "rgba(255,255,255,0.5)",
+                        color: "rgba(57,255,20,0.45)",
                         paddingLeft: 8,
                         paddingRight: 8,
                       },
@@ -308,7 +312,7 @@ async function buildCompositeSVG(backgroundDataURI: string, overlay: OverlayData
             (overlay.matchDate || overlay.venue) && {
               type: "div",
               props: {
-                style: { fontSize: 12, color: "rgba(255,255,255,0.6)", marginTop: 4, textAlign: "center" },
+                style: { fontSize: 12, color: "rgba(57,255,20,0.55)", marginTop: 4, textAlign: "center" },
                 children: [overlay.matchDate, overlay.venue].filter(Boolean).join(" · "),
               },
             },
@@ -340,7 +344,7 @@ async function buildCompositeSVG(backgroundDataURI: string, overlay: OverlayData
             overlay.dateRange && {
               type: "div",
               props: {
-                style: { fontSize: 14, color: "rgba(255,255,255,0.65)", textAlign: "center" },
+                style: { fontSize: 14, color: "rgba(57,255,20,0.55)", textAlign: "center" },
                 children: overlay.dateRange,
               },
             },
@@ -372,7 +376,7 @@ async function buildCompositeSVG(backgroundDataURI: string, overlay: OverlayData
             overlay.playerCount && {
               type: "div",
               props: {
-                style: { fontSize: 13, color: "rgba(255,255,255,0.6)" },
+                style: { fontSize: 13, color: "rgba(57,255,20,0.50)" },
                 children: `${overlay.playerCount} Pemain`,
               },
             },
@@ -397,7 +401,7 @@ async function buildCompositeSVG(backgroundDataURI: string, overlay: OverlayData
             {
               type: "div",
               props: {
-                style: { fontSize: 15, color: "rgba(255,255,255,0.6)", marginTop: 2 },
+                style: { fontSize: 15, color: "rgba(57,255,20,0.50)", marginTop: 2 },
                 children: "Favorit Juara",
               },
             },
@@ -439,7 +443,7 @@ async function buildCompositeSVG(backgroundDataURI: string, overlay: OverlayData
                   {
                     type: "div",
                     props: {
-                      style: { fontSize: 16, color: "rgba(255,255,255,0.7)" },
+                      style: { fontSize: 16, color: "rgba(57,255,20,0.60)" },
                       children: overlay.fromClub,
                     },
                   },
@@ -533,9 +537,9 @@ async function buildCompositeSVG(backgroundDataURI: string, overlay: OverlayData
               props: {
                 style: {
                   marginTop: 4,
-                  backgroundColor: "rgba(248,113,113,0.25)",
-                  border: "1px solid rgba(248,113,113,0.5)",
-                  color: "#F87171",
+                  backgroundColor: "rgba(57,255,20,0.15)",
+                  border: "1px solid rgba(57,255,20,0.5)",
+                  color: "#39FF14",
                   fontWeight: 600,
                   fontSize: 13,
                   paddingLeft: 14,
@@ -568,7 +572,7 @@ async function buildCompositeSVG(backgroundDataURI: string, overlay: OverlayData
           overlay.subheadline && {
             type: "div",
             props: {
-              style: { fontSize: 14, color: "rgba(255,255,255,0.65)", textAlign: "center", maxWidth: 340 },
+              style: { fontSize: 14, color: "rgba(57,255,20,0.55)", textAlign: "center", maxWidth: 340 },
               children: overlay.subheadline,
             },
           },
@@ -594,14 +598,14 @@ async function buildCompositeSVG(backgroundDataURI: string, overlay: OverlayData
           backgroundPosition: "center",
         },
         children: [
-          // Semi-transparent gradient overlay
+          // Semi-transparent gradient overlay — sangat gelap seperti referensi
           {
             type: "div",
             props: {
               style: {
                 position: "absolute",
                 inset: 0,
-                background: `linear-gradient(to top, ${bg} 0%, rgba(0,0,0,0.65) 55%, rgba(0,0,0,0.35) 100%)`,
+                background: `linear-gradient(to top, ${bg} 0%, rgba(0,0,0,0.80) 50%, rgba(0,0,0,0.60) 100%)`,
               },
             },
           },
@@ -652,11 +656,12 @@ async function buildCompositeSVG(backgroundDataURI: string, overlay: OverlayData
                     style: {
                       marginTop: 8,
                       fontSize: 11,
-                      color: "rgba(255,255,255,0.4)",
+                      color: "rgba(57,255,20,0.6)",
                       letterSpacing: 3,
                       textTransform: "uppercase",
+                      fontWeight: 700,
                     },
-                    children: "HALFSPACESPORT.COM",
+                    children: "HALFSPACE.ID",
                   },
                 },
               ],
