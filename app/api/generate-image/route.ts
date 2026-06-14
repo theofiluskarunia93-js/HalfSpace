@@ -233,7 +233,7 @@ async function buildCompositeSVG(backgroundDataURI: string, overlay: OverlayData
             overlay.competition && {
               type: "div",
               props: {
-                style: { fontSize: 13, color: accent, fontWeight: 700, letterSpacing: 2, textTransform: "uppercase" },
+                style: { fontSize: 13, color: "#FFFFFF", fontWeight: 700, letterSpacing: 2, textTransform: "uppercase" },
                 children: overlay.competition,
               },
             },
@@ -312,7 +312,7 @@ async function buildCompositeSVG(backgroundDataURI: string, overlay: OverlayData
             (overlay.matchDate || overlay.venue) && {
               type: "div",
               props: {
-                style: { fontSize: 12, color: "rgba(57,255,20,0.55)", marginTop: 4, textAlign: "center" },
+                style: { fontSize: 12, color: "#FFFFFF", marginTop: 4, textAlign: "center" },
                 children: [overlay.matchDate, overlay.venue].filter(Boolean).join(" · "),
               },
             },
@@ -330,7 +330,7 @@ async function buildCompositeSVG(backgroundDataURI: string, overlay: OverlayData
             overlay.competition && {
               type: "div",
               props: {
-                style: { fontSize: 13, color: accent, fontWeight: 700, letterSpacing: 2 },
+                style: { fontSize: 13, color: "#FFFFFF", fontWeight: 700, letterSpacing: 2 },
                 children: overlay.competition,
               },
             },
@@ -656,12 +656,12 @@ async function buildCompositeSVG(backgroundDataURI: string, overlay: OverlayData
                     style: {
                       marginTop: 8,
                       fontSize: 11,
-                      color: "rgba(57,255,20,0.6)",
+                      color: "rgba(255,255,255,0.75)",
                       letterSpacing: 3,
                       textTransform: "uppercase",
                       fontWeight: 700,
                     },
-                    children: "HALFSPACE.ID",
+                    children: "HALFSPACESPORT.COM",
                   },
                 },
               ],
