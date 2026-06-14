@@ -1,818 +1,380 @@
-// app/api/generate-image/route.ts
+// app/api/generate-article/route.ts
 //
-// Flow:
-//   1. Cloudflare Workers AI (FLUX.1-schnell) → pure background image (base64 PNG/JPEG)
-//   2. Background dikonversi ke WebP data-URI (pure JS, tanpa sharp/canvas)
-//   3. Satori → render overlay teks sebagai SVG dengan background ter-embed sebagai <image>
-//   4. @resvg/resvg-js → render SVG final (background + teks) → PNG buffer
+// Generate artikel sepak bola bergaya The Athletic — powered by Groq (llama-3.3-70b-versatile).
 //
-// Tidak ada sharp, tidak ada canvas — aman di Vercel & Edge.
+// Catatan migrasi dari Gemini ke Groq:
+// - Groq tidak mendukung URL reading/context tool, field sourceUrl dihapus.
+// - Response JSON langsung dari Groq tanpa perlu handle mixed parts (tool_result + text).
+// - Groq menggunakan OpenAI-compatible API format (messages array dengan role system/user).
+// - Caching: artikel hasil generate di-cache di server (Map) per kombinasi newsType+topic+context
+//   selama 5 menit untuk menghindari request duplikat.
 //
-// Env vars yang dibutuhkan:
-//   CF_ACCOUNT_ID
-//   CF_API_TOKEN  (permission: Workers AI - Read)
+// Changelog v2 — Human-first prompt rewrite:
+// - BASE_SYSTEM diperluas: blacklist frasa klise AI, instruksi hook naratif + contoh konkret,
+//   aturan suara jurnalis, larangan kalimat pembuka dengan nama subjek.
+// - TYPE_INSTRUCTION diperbarui: struktur diubah dari checklist kaku ke panduan naratif
+//   yang memberi ruang artikel "bernafas" alami.
+// - temperature dinaikkan dari 0.7 → 0.85 untuk output yang lebih variatif dan tidak template.
+// - max_tokens dinaikkan dari 2048 → 2800 untuk memberikan ruang artikel panjang yang utuh.
 //
-// Install dependencies:
-//   npm install satori @resvg/resvg-js
-//   npm uninstall sharp canvas   ← hapus ini
-//
-// Font yang dibutuhkan (taruh di public/fonts/):
-//   Inter-Bold.ttf
-//   Inter-Medium.ttf
-//   Download dari: https://fonts.google.com/specimen/Inter
-//   atau: https://github.com/rsms/inter/releases
+// Input : newsType + topic + context
+// Output: { title, content } — content HTML siap pakai TipTap
 
-import type React from "react"
 import { NextRequest, NextResponse } from "next/server"
-import { requireAdmin } from "@/lib/supabase/server-auth"
-import { imageRateLimit } from "@/lib/rate-limit"
-import satori from "satori"
-import { Resvg } from "@resvg/resvg-js"
-import fs from "fs"
-import path from "path"
 
-// ─── Constants ────────────────────────────────────────────────────────────────
+export type NewsType =
+  | "transfer"
+  | "konpers"
+  | "cedera"
+  | "preview"
+  | "hasil"
+  | "trivia"
 
-const MAX_PROMPT_LENGTH = 300
-const FETCH_TIMEOUT_MS = 30_000
-const MAX_RETRIES = 2
-const IMG_SIZE = 512
-
-// ─── Content Types ────────────────────────────────────────────────────────────
-
-export type ContentType =
-  | "match_preview"    // Preview Pertandingan
-  | "match_result"     // Hasil Pertandingan
-  | "schedule"         // Jadwal Lengkap
-  | "squad"            // Daftar Skuad
-  | "prediction"       // Prediksi Juara
-  | "transfer"         // Transfer Rumor
-  | "press_conference" // Konferensi Pers
-  | "injury"           // Update Cedera
-  | "general"          // Fallback
-
-// Data overlay per tipe konten
-export interface OverlayData {
-  contentType: ContentType
-  // match_preview / match_result
-  teamHome?: string
-  teamAway?: string
-  scoreHome?: string
-  scoreAway?: string
-  matchDate?: string
-  venue?: string
-  competition?: string
-  // schedule
-  matchCount?: string
-  dateRange?: string
-  // squad
-  teamName?: string
-  playerCount?: string
-  season?: string
-  // prediction
-  tournament?: string
-  favorite?: string
-  // transfer
-  playerName?: string
-  fromClub?: string
-  toClub?: string
-  transferFee?: string
-  // press_conference / injury
-  clubName?: string
-  managerName?: string
-  playerStatus?: string
-  // general fallback
-  headline?: string
-  subheadline?: string
+interface RequestBody {
+  newsType: NewsType
+  topic:    string
+  context:  string
 }
 
-// ─── Detect content type from title ──────────────────────────────────────────
+// ─── Simple in-memory cache ───────────────────────────────────────────────────
+// Cache artikel yang sudah di-generate untuk menghindari request duplikat.
+// Key: hash dari newsType+topic+context. TTL: 5 menit.
 
-export function detectContentType(title: string): ContentType {
-  const t = title.toLowerCase()
-
-  if (/hasil|skor|menang|kalah|imbang|gol|FT|HT/.test(t)) return "match_result"
-  if (/preview|prediksi laga|head.to.head|pertemuan|lawan/.test(t)) return "match_preview"
-  if (/jadwal|fixture|schedule/.test(t)) return "schedule"
-  if (/skuad|squad|daftar pemain|lineup/.test(t)) return "squad"
-  if (/prediksi juara|favorit juara|peluang juara|odds/.test(t)) return "prediction"
-  if (/transfer|rumor|kabar|pindah|rekrut|kontrak|bursa/.test(t)) return "transfer"
-  if (/konferensi pers|press conference|manajer bicara|pelatih bicara/.test(t)) return "press_conference"
-  if (/cedera|injury|absen|pulih|kondisi/.test(t)) return "injury"
-
-  return "general"
+interface CacheEntry {
+  title:   string
+  content: string
+  expiry:  number
 }
 
-// ─── Build Cloudflare prompt per content type ─────────────────────────────────
+const articleCache = new Map<string, CacheEntry>()
+const CACHE_TTL_MS = 5 * 60 * 1000 // 5 menit
 
-function buildCFPrompt(contentType: ContentType, userPrompt: string): string {
-  const base = userPrompt.slice(0, MAX_PROMPT_LENGTH)
+function makeCacheKey(newsType: string, topic: string, context: string): string {
+  return `${newsType}::${topic.trim().toLowerCase()}::${context.trim().toLowerCase()}`
+}
 
-  const styleMap: Record<ContentType, string> = {
-    match_preview:    "stadium aerial view at night, floodlights, dramatic atmosphere, football pitch",
-    match_result:     "football stadium celebration, confetti, crowd, dramatic lighting",
-    schedule:         "calendar planning abstract, sports schedule, clean geometric shapes",
-    squad:            "football team formation diagram, tactical board, green pitch top view",
-    prediction:       "trophy spotlight, golden light, dramatic podium, champions atmosphere",
-    transfer:         "contract signing abstract, financial district blur, movement blur",
-    press_conference: "press conference room blur, microphones, podium lights, bokeh",
-    injury:           "medical room abstract, clinical blue tones, recovery atmosphere",
-    general:          "sports infographic background, modern editorial design, bold contrast",
+function getCached(key: string): { title: string; content: string } | null {
+  const entry = articleCache.get(key)
+  if (!entry) return null
+  if (Date.now() > entry.expiry) {
+    articleCache.delete(key)
+    return null
   }
-
-  const style = styleMap[contentType]
-  return `${base}, ${style}, absolutely no text, no letters, no numbers, no watermark, no typography, pure visual background only, high quality, editorial photography style`
+  return { title: entry.title, content: entry.content }
 }
 
-// ─── Load font ────────────────────────────────────────────────────────────────
-// Font harus ada di public/fonts/Inter-Bold.ttf dan public/fonts/Inter-Medium.ttf
-// Download: https://fonts.google.com/specimen/Inter → klik "Download family"
-// Ekstrak lalu ambil file dari folder "static/"
-
-let _fontBoldCache: Buffer | null = null
-let _fontMediumCache: Buffer | null = null
-
-function loadFont(name: string): Buffer {
-  const fontPath = path.join(process.cwd(), "public", "fonts", name)
-
-  if (!fs.existsSync(fontPath)) {
-    throw new Error(
-      `Font tidak ditemukan: public/fonts/${name}\n` +
-      `Download Inter dari https://fonts.google.com/specimen/Inter lalu taruh file .ttf di public/fonts/`
-    )
+function setCache(key: string, title: string, content: string): void {
+  for (const [k, v] of articleCache.entries()) {
+    if (Date.now() > v.expiry) articleCache.delete(k)
   }
-
-  return fs.readFileSync(fontPath)
+  articleCache.set(key, { title, content, expiry: Date.now() + CACHE_TTL_MS })
 }
 
-function getFonts(): { bold: Buffer; medium: Buffer } {
-  // Cache font agar tidak re-read setiap request
-  if (!_fontBoldCache)   _fontBoldCache   = loadFont("Inter-Bold.ttf")
-  if (!_fontMediumCache) _fontMediumCache = loadFont("Inter-Medium.ttf")
-  return { bold: _fontBoldCache, medium: _fontMediumCache }
-}
+// ─── BASE SYSTEM PROMPT ───────────────────────────────────────────────────────
+//
+// Fix #1 — Hook naratif dengan contoh konkret (bukan instruksi abstrak)
+// Fix #2 — Blacklist frasa klise AI yang paling sering muncul di Llama
+// Fix #3 — Instruksi suara narator: jurnalis dengan sudut pandang, bukan pelapor fakta
+// Fix #4 — Aturan variasi ritme kalimat agar tidak monoton
+// Fix #5 — Larangan eksplisit membuka kalimat dengan nama subjek
 
-// ─── Color themes per content type ────────────────────────────────────────────
+const BASE_SYSTEM = `Kamu adalah jurnalis olahraga senior di media sepak bola premium Indonesia bernama HalfSpace.id.
+Gaya penulisanmu mengikuti The Athletic: naratif, mendalam, mengutamakan konteks dan human story.
+Kamu bukan robot yang melaporkan fakta — kamu punya sudut pandang, kamu mengamati, dan sesekali kamu menyisipkan observasi yang tajam.
 
-const THEMES: Record<ContentType, { accent: string; bg: string; text: string }> = {
-  match_preview:    { accent: "#00D4FF", bg: "rgba(0,0,0,0.72)", text: "#FFFFFF" },
-  match_result:     { accent: "#00FF87", bg: "rgba(0,0,0,0.75)", text: "#FFFFFF" },
-  schedule:         { accent: "#FF6B35", bg: "rgba(0,0,0,0.70)", text: "#FFFFFF" },
-  squad:            { accent: "#A78BFA", bg: "rgba(0,0,0,0.72)", text: "#FFFFFF" },
-  prediction:       { accent: "#FFD700", bg: "rgba(0,0,0,0.75)", text: "#FFFFFF" },
-  transfer:         { accent: "#34D399", bg: "rgba(0,0,0,0.72)", text: "#FFFFFF" },
-  press_conference: { accent: "#60A5FA", bg: "rgba(0,0,0,0.70)", text: "#FFFFFF" },
-  injury:           { accent: "#F87171", bg: "rgba(0,0,0,0.72)", text: "#FFFFFF" },
-  general:          { accent: "#E879F9", bg: "rgba(0,0,0,0.70)", text: "#FFFFFF" },
-}
+━━━ ATURAN BAHASA ━━━
+- Tulis dalam Bahasa Indonesia yang benar-benar natural — seperti penulis Indonesia terbaik, bukan terjemahan dari bahasa Inggris
+- Variasikan penyebutan: "pemain berusia 28 tahun itu", "sang kapten", "gelandang asal Prancis itu", "dia", "sosok itu" — jangan ulang nama lebih dari 2x per paragraf
+- Ritme kalimat harus bervariasi. Sesekali satu kalimat pendek yang menghentak. Kemudian paragraf yang mengalir panjang dan hangat. Jangan monoton.
+- Gunakan angka dengan konteks emosional, bukan sekadar statistik telanjang.
+  BURUK: "Ia mencetak 18 gol musim ini."
+  BAIK:  "Delapan belas gol. Di musim lain, angka itu lebih dari cukup. Musim ini terasa seperti bayangan dari versi terbaiknya."
 
-const TYPE_LABELS: Record<ContentType, string> = {
-  match_preview:    "PREVIEW PERTANDINGAN",
-  match_result:     "HASIL PERTANDINGAN",
-  schedule:         "JADWAL LENGKAP",
-  squad:            "DAFTAR SKUAD",
-  prediction:       "PREDIKSI JUARA",
-  transfer:         "TRANSFER RUMOR",
-  press_conference: "KONFERENSI PERS",
-  injury:           "UPDATE CEDERA",
-  general:          "BERITA",
-}
+━━━ ATURAN HOOK PEMBUKA ━━━
+- Paragraf pertama adalah nyawa artikel. Buat pembaca tidak bisa berhenti.
+- DILARANG KERAS membuka kalimat pertama dengan nama pemain, nama klub, atau tanggal.
+- Hook terbaik: mulai dengan situasi, tegangan, angka yang mengejutkan, atau pertanyaan yang menggantung.
+  BURUK: "Marcus Rashford resmi bergabung dengan Barcelona setelah..."
+  BAIK:  "Tiga bulan tanpa menit bermain. Itulah yang akhirnya memaksa semua pihak bergerak."
+  BURUK: "Pada hari Selasa, Pep Guardiola menghadiri konferensi pers..."
+  BAIK:  "Ada ketenangan yang tidak biasa di ruang konferensi itu. Pep Guardiola duduk, dan sebelum satu pun pertanyaan dilontarkan, dia sudah tahu apa yang akan ditanyakan."
 
-// ─── Satori node helper ───────────────────────────────────────────────────────
+━━━ SUARA NARATOR ━━━
+- Kamu boleh — dan harus — sesekali menyisipkan analisis atau observasi singkat sebagai jurnalis.
+  Contoh: "Dan itulah yang membuat keputusan ini terasa aneh." atau "Angka-angka itu menceritakan kisah yang berbeda."
+- Jangan selalu netral. Jurnalis The Athletic punya pendapat yang ditopang fakta.
+- Tunjukkan bahwa kamu memahami konteks lebih dalam dari sekadar kejadian permukaannya.
 
-// eslint-disable-next-line @typescript-eslint/no-explicit-any
-type SNode = Record<string, any>
+━━━ FRASA YANG DILARANG KERAS ━━━
+Jangan gunakan frasa-frasa berikut dalam bentuk apapun — ini adalah fingerprint tulisan AI:
+- "Hal ini tentu saja" / "Sudah tentu" / "Tentu saja"
+- "Tidak dapat dipungkiri" / "Tak dapat dipungkiri"
+- "Menarik untuk dinantikan" / "Menarik untuk disimak"
+- "Sebuah langkah yang" / "Sebuah keputusan yang"
+- "Perlu dicatat bahwa" / "Patut dicatat"
+- "Dalam konteks ini" / "Dalam hal ini"
+- "Terlepas dari itu semua" / "Lepas dari itu"
+- "Pada akhirnya" sebagai pembuka kalimat
+- "Tak pelak" / "Tak ayal"
+- "Patut diakui" / "Harus diakui" / "Harus dikatakan"
+- "Hanya waktu yang akan menjawab..." (DILARANG MUTLAK sebagai penutup)
+- "Satu hal yang pasti..." sebagai pembuka penutup
+- "Yang jelas," sebagai pembuka kalimat
 
-/** Type-safe .filter(Boolean) untuk SNode arrays */
-function compact(arr: (SNode | string | number | null | undefined | false | 0 | "")[]): SNode[] {
-  return arr.filter((x): x is SNode => Boolean(x))
-}
+━━━ ATURAN STRUKTUR ━━━
+- Setiap paragraf maksimal 4 kalimat
+- Gunakan <blockquote> HANYA untuk kutipan langsung dari narasumber yang ada di konteks
+- JANGAN tambahkan heading, subheading, atau judul di dalam konten — hanya <p> dan <blockquote>
+- Tutup artikel dengan paragraf yang memperluas perspektif, bukan meringkas ulang apa yang sudah ditulis
+- Output HANYA JSON murni, tanpa markdown fence, tanpa komentar`
 
-// ─── Konversi base64 CF response → data URI untuk <image> di SVG ──────────────
-// Cloudflare FLUX mengembalikan base64 PNG.
-// Kita embed langsung sebagai data URI — tidak perlu sharp atau canvas.
+// ─── System prompt per tipe berita ───────────────────────────────────────────
+//
+// Fix untuk TYPE_INSTRUCTION:
+// - Struktur diubah dari checklist kaku menjadi panduan naratif dengan kebebasan
+// - Tambahan contoh konkret untuk setiap tipe
+// - Panjang artikel disesuaikan ulang agar realistis
 
-function cfBase64ToDataURI(base64: string): string {
-  // Deteksi format dari magic bytes (PNG: iVBOR, JPEG: /9j/, WebP: UklGR)
-  const header = base64.slice(0, 12)
-  let mimeType = "image/png" // default
-  if (header.startsWith("/9j/"))   mimeType = "image/jpeg"
-  if (header.startsWith("UklGR")) mimeType = "image/webp"
+const TYPE_INSTRUCTION: Record<NewsType, string> = {
+  transfer: `Tipe: BERITA TRANSFER
+Panduan narasi (bukan checklist kaku — biarkan cerita mengalir secara alami):
+• Buka dengan tegangan atau situasi yang menggambarkan "mengapa ini terjadi sekarang" — bukan dengan mengumumkan nama dan klub tujuan
+• Masuk ke detail transfer: nilai, durasi kontrak, siapa yang mengonfirmasi, bagaimana prosesnya berjalan
+• Berikan konteks yang membuat pembaca benar-benar mengerti: performa pemain belakangan ini, kebutuhan klub yang merekrut, apa yang membuat transfer ini masuk akal (atau mengejutkan)
+• Tutup dengan apa artinya ini ke depan — bagi pemain, bagi kedua klub, atau bagi persaingan di liga
 
-  return `data:${mimeType};base64,${base64}`
-}
+Nada: serius tapi tidak kering. Ini bukan siaran pers — ini narasi tentang karier seorang manusia dan keputusan besar yang menyertainya.
+Panjang: 500–700 kata`,
 
-// ─── Satori overlay builder ───────────────────────────────────────────────────
-// Background di-embed sebagai <image> di root SVG agar tidak perlu sharp composite.
+  konpers: `Tipe: KONFERENSI PERS
+Panduan narasi:
+• Buka dengan atmosfer atau momen paling signifikan dari konpers — bukan dengan "Pelatih X menghadiri konferensi pers"
+• Hadirkan kutipan terkuat sebagai blockquote setelah konteks awal dibangun, bukan di awal artikel
+• Elaborasi apa yang sesungguhnya ada di balik kata-kata tersebut — apa yang tidak dikatakan sama pentingnya dengan apa yang dikatakan
+• Tunjukkan mengapa pernyataan ini penting di titik waktu ini, bukan sekadar merangkum ulang ucapannya
+• Tutup dengan implikasi: apa yang berubah setelah konpers ini, apa yang masih menggantung
 
-async function buildCompositeSVG(backgroundDataURI: string, overlay: OverlayData): Promise<string> {
-  const { bold: fontBold, medium: fontMedium } = getFonts()
-  const { accent, bg, text } = THEMES[overlay.contentType]
-  const label = TYPE_LABELS[overlay.contentType]
+Nada: seperti jurnalis yang ada di ruangan itu dan membaca lebih dari sekadar transkrip.
+Panjang: 600–800 kata`,
 
-  // ── Build inner content per type ──
-  const renderContent = (): SNode => {
-    const ct = overlay.contentType
+  cedera: `Tipe: BERITA CEDERA
+Panduan narasi:
+• Buka dengan dampak atau kehilangan yang ditimbulkan — bukan dengan nama pemain dan diagnosis medis
+• Jelaskan kronologi: kapan, di pertandingan mana, bagaimana momen itu terjadi
+• Bahas apa artinya ini bagi tim: jadwal ke depan, pengganti yang mungkin, posisi di klasemen
+• Jika relevan, beri konteks riwayat cedera pemain — apakah ini pola yang mengkhawatirkan?
+• Tutup dengan prognosis terbaru dan apa yang ditunggu semua pihak
 
-    if (ct === "match_preview" || ct === "match_result") {
-      const isResult = ct === "match_result"
-      return {
-        type: "div",
-        props: {
-          style: {
-            display: "flex",
-            flexDirection: "column",
-            alignItems: "center",
-            gap: 8,
-            width: "100%",
-          },
-          children: compact([
-            overlay.competition && {
-              type: "div",
-              props: {
-                style: { fontSize: 13, color: accent, fontWeight: 700, letterSpacing: 2, textTransform: "uppercase" },
-                children: overlay.competition,
-              },
-            },
-            {
-              type: "div",
-              props: {
-                style: {
-                  display: "flex",
-                  alignItems: "center",
-                  justifyContent: "center",
-                  gap: 16,
-                  width: "100%",
-                  marginTop: 4,
-                },
-                children: [
-                  {
-                    type: "div",
-                    props: {
-                      style: { display: "flex", flexDirection: "column", alignItems: "center", gap: 4, flex: 1 },
-                      children: compact([
-                        {
-                          type: "div",
-                          props: {
-                            style: { fontSize: isResult ? 22 : 26, fontWeight: 700, color: text, textAlign: "center", lineHeight: 1.1 },
-                            children: overlay.teamHome || "Home",
-                          },
-                        },
-                        isResult && overlay.scoreHome !== undefined && {
-                          type: "div",
-                          props: {
-                            style: { fontSize: 48, fontWeight: 700, color: accent, lineHeight: 1 },
-                            children: overlay.scoreHome,
-                          },
-                        },
-                      ]),
-                    },
-                  },
-                  {
-                    type: "div",
-                    props: {
-                      style: {
-                        fontSize: isResult ? 14 : 20,
-                        fontWeight: 700,
-                        color: "rgba(255,255,255,0.5)",
-                        paddingLeft: 8,
-                        paddingRight: 8,
-                      },
-                      children: isResult ? "—" : "VS",
-                    },
-                  },
-                  {
-                    type: "div",
-                    props: {
-                      style: { display: "flex", flexDirection: "column", alignItems: "center", gap: 4, flex: 1 },
-                      children: compact([
-                        {
-                          type: "div",
-                          props: {
-                            style: { fontSize: isResult ? 22 : 26, fontWeight: 700, color: text, textAlign: "center", lineHeight: 1.1 },
-                            children: overlay.teamAway || "Away",
-                          },
-                        },
-                        isResult && overlay.scoreAway !== undefined && {
-                          type: "div",
-                          props: {
-                            style: { fontSize: 48, fontWeight: 700, color: accent, lineHeight: 1 },
-                            children: overlay.scoreAway,
-                          },
-                        },
-                      ]),
-                    },
-                  },
-                ],
-              },
-            },
-            (overlay.matchDate || overlay.venue) && {
-              type: "div",
-              props: {
-                style: { fontSize: 12, color: "rgba(255,255,255,0.6)", marginTop: 4, textAlign: "center" },
-                children: [overlay.matchDate, overlay.venue].filter(Boolean).join(" · "),
-              },
-            },
-          ]),
-        },
-      }
-    }
+Nada: empati terhadap pemain, tapi tetap analitis terhadap dampaknya.
+Panjang: 400–550 kata`,
 
-    if (ct === "schedule") {
-      return {
-        type: "div",
-        props: {
-          style: { display: "flex", flexDirection: "column", alignItems: "center", gap: 8 },
-          children: compact([
-            overlay.competition && {
-              type: "div",
-              props: {
-                style: { fontSize: 13, color: accent, fontWeight: 700, letterSpacing: 2 },
-                children: overlay.competition,
-              },
-            },
-            {
-              type: "div",
-              props: {
-                style: { fontSize: 28, fontWeight: 700, color: text, textAlign: "center", lineHeight: 1.2 },
-                children: overlay.matchCount ? `${overlay.matchCount} Pertandingan` : "Jadwal Lengkap",
-              },
-            },
-            overlay.dateRange && {
-              type: "div",
-              props: {
-                style: { fontSize: 14, color: "rgba(255,255,255,0.65)", textAlign: "center" },
-                children: overlay.dateRange,
-              },
-            },
-          ]),
-        },
-      }
-    }
+  preview: `Tipe: PREVIEW PERTANDINGAN
+Panduan narasi:
+• Buka dengan "taruhan" pertandingan ini — apa yang sesungguhnya sedang dipertaruhkan oleh masing-masing pihak
+• Ulas kekuatan dan kelemahan tim tuan rumah dengan sudut pandang taktis, bukan sekadar daftar fakta
+• Lakukan hal yang sama untuk tim tamu — dan tunjukkan di mana benturan taktis paling menarik akan terjadi
+• Sentuh head-to-head dan tren terkini, tapi hanya yang benar-benar relevan dengan narasi pertandingan ini
+• Identifikasi satu atau dua pemain kunci yang bisa menjadi pembeda — dengan alasan yang konkret
+• Tutup dengan prediksi yang didukung analisis, bukan sekadar "pertandingan ini akan seru"
 
-    if (ct === "squad") {
-      return {
-        type: "div",
-        props: {
-          style: { display: "flex", flexDirection: "column", alignItems: "center", gap: 8 },
-          children: compact([
-            {
-              type: "div",
-              props: {
-                style: { fontSize: 30, fontWeight: 700, color: text, textAlign: "center" },
-                children: overlay.teamName || "Skuad",
-              },
-            },
-            overlay.season && {
-              type: "div",
-              props: {
-                style: { fontSize: 14, color: accent, fontWeight: 700, letterSpacing: 1 },
-                children: `Musim ${overlay.season}`,
-              },
-            },
-            overlay.playerCount && {
-              type: "div",
-              props: {
-                style: { fontSize: 13, color: "rgba(255,255,255,0.6)" },
-                children: `${overlay.playerCount} Pemain`,
-              },
-            },
-          ]),
-        },
-      }
-    }
+Nada: seperti analis taktis yang juga bisa bercerita.
+Panjang: 600–800 kata`,
 
-    if (ct === "prediction") {
-      return {
-        type: "div",
-        props: {
-          style: { display: "flex", flexDirection: "column", alignItems: "center", gap: 8 },
-          children: compact([
-            overlay.tournament && {
-              type: "div",
-              props: {
-                style: { fontSize: 13, color: accent, fontWeight: 700, letterSpacing: 2, textTransform: "uppercase" },
-                children: overlay.tournament,
-              },
-            },
-            {
-              type: "div",
-              props: {
-                style: { fontSize: 15, color: "rgba(255,255,255,0.6)", marginTop: 2 },
-                children: "Favorit Juara",
-              },
-            },
-            overlay.favorite && {
-              type: "div",
-              props: {
-                style: { fontSize: 34, fontWeight: 700, color: accent, textAlign: "center", lineHeight: 1.1 },
-                children: overlay.favorite,
-              },
-            },
-          ]),
-        },
-      }
-    }
+  hasil: `Tipe: LAPORAN HASIL PERTANDINGAN
+Panduan narasi:
+• Buka dengan esensi pertandingan dalam satu atau dua kalimat yang kuat — bukan dengan skor dan nama pencetak gol
+• Ceritakan babak pertama: bukan play-by-play menit per menit, tapi momen-momen yang membentuk ritme pertandingan
+• Lanjutkan dengan babak kedua: titik balik, keputusan yang menentukan, momen yang mengubah segalanya
+• Berikan satu paragraf analisis taktis: mengapa pemenang menang dan mengapa yang kalah gagal — ini bagian yang paling membedakan tulisan The Athletic
+• Sorot pemain terbaik dengan konteks, bukan sekadar daftar nama
+• Tutup dengan dampak hasil ini ke gambaran besar kompetisi
 
-    if (ct === "transfer") {
-      return {
-        type: "div",
-        props: {
-          style: { display: "flex", flexDirection: "column", alignItems: "center", gap: 6 },
-          children: compact([
-            overlay.playerName && {
-              type: "div",
-              props: {
-                style: { fontSize: 30, fontWeight: 700, color: text, textAlign: "center" },
-                children: overlay.playerName,
-              },
-            },
-            (overlay.fromClub && overlay.toClub) && {
-              type: "div",
-              props: {
-                style: {
-                  display: "flex",
-                  alignItems: "center",
-                  gap: 10,
-                  marginTop: 4,
-                },
-                children: [
-                  {
-                    type: "div",
-                    props: {
-                      style: { fontSize: 16, color: "rgba(255,255,255,0.7)" },
-                      children: overlay.fromClub,
-                    },
-                  },
-                  {
-                    type: "div",
-                    props: {
-                      style: { fontSize: 18, color: accent, fontWeight: 700 },
-                      children: "→",
-                    },
-                  },
-                  {
-                    type: "div",
-                    props: {
-                      style: { fontSize: 16, color: text, fontWeight: 700 },
-                      children: overlay.toClub,
-                    },
-                  },
-                ],
-              },
-            },
-            overlay.transferFee && {
-              type: "div",
-              props: {
-                style: {
-                  marginTop: 6,
-                  backgroundColor: accent,
-                  color: "#000",
-                  fontWeight: 700,
-                  fontSize: 14,
-                  paddingLeft: 14,
-                  paddingRight: 14,
-                  paddingTop: 5,
-                  paddingBottom: 5,
-                  borderRadius: 20,
-                },
-                children: overlay.transferFee,
-              },
-            },
-          ]),
-        },
-      }
-    }
+Nada: ini bukan laporan pertandingan biasa — ini esai tentang apa yang terjadi dan mengapa itu penting.
+Panjang: 700–900 kata`,
 
-    if (ct === "press_conference") {
-      return {
-        type: "div",
-        props: {
-          style: { display: "flex", flexDirection: "column", alignItems: "center", gap: 8 },
-          children: compact([
-            overlay.clubName && {
-              type: "div",
-              props: {
-                style: { fontSize: 13, color: accent, fontWeight: 700, letterSpacing: 2, textTransform: "uppercase" },
-                children: overlay.clubName,
-              },
-            },
-            overlay.managerName && {
-              type: "div",
-              props: {
-                style: { fontSize: 28, fontWeight: 700, color: text, textAlign: "center" },
-                children: overlay.managerName,
-              },
-            },
-          ]),
-        },
-      }
-    }
+  trivia: `Tipe: ARTIKEL TRIVIA SEPAK BOLA
+Panduan narasi:
+• Buka dengan fakta yang mengejutkan atau paradoks yang membuat pembaca berpikir "tunggu, serius?"
+• Bangun konteks sejarah secara bertahap — biarkan pembaca merasa seperti sedang menggali lapisan demi lapisan
+• Hubungkan fakta-fakta pendukung dengan cara yang tidak terduga — kejutan kecil di setiap paragraf membuat pembaca terus lanjut
+• Jembatani ke era modern: apakah ini masih relevan? Apakah ada yang mendekati rekor ini hari ini?
+• Tutup dengan perspektif yang membuat pembaca melihat sesuatu yang familiar dengan cara yang berbeda
 
-    if (ct === "injury") {
-      return {
-        type: "div",
-        props: {
-          style: { display: "flex", flexDirection: "column", alignItems: "center", gap: 8 },
-          children: compact([
-            overlay.clubName && {
-              type: "div",
-              props: {
-                style: { fontSize: 13, color: accent, fontWeight: 700, letterSpacing: 2, textTransform: "uppercase" },
-                children: overlay.clubName,
-              },
-            },
-            overlay.playerName && {
-              type: "div",
-              props: {
-                style: { fontSize: 28, fontWeight: 700, color: text, textAlign: "center" },
-                children: overlay.playerName,
-              },
-            },
-            overlay.playerStatus && {
-              type: "div",
-              props: {
-                style: {
-                  marginTop: 4,
-                  backgroundColor: "rgba(248,113,113,0.25)",
-                  border: "1px solid rgba(248,113,113,0.5)",
-                  color: "#F87171",
-                  fontWeight: 600,
-                  fontSize: 13,
-                  paddingLeft: 14,
-                  paddingRight: 14,
-                  paddingTop: 5,
-                  paddingBottom: 5,
-                  borderRadius: 20,
-                },
-                children: overlay.playerStatus,
-              },
-            },
-          ]),
-        },
-      }
-    }
-
-    // general fallback
-    return {
-      type: "div",
-      props: {
-        style: { display: "flex", flexDirection: "column", alignItems: "center", gap: 8 },
-        children: compact([
-          {
-            type: "div",
-            props: {
-              style: { fontSize: 26, fontWeight: 700, color: text, textAlign: "center", lineHeight: 1.3, maxWidth: 380 },
-              children: overlay.headline || "Halfspace",
-            },
-          },
-          overlay.subheadline && {
-            type: "div",
-            props: {
-              style: { fontSize: 14, color: "rgba(255,255,255,0.65)", textAlign: "center", maxWidth: 340 },
-              children: overlay.subheadline,
-            },
-          },
-        ]),
-      },
-    }
-  }
-
-  const svgString = await satori(
-    {
-      type: "div",
-      props: {
-        style: {
-          display: "flex",
-          flexDirection: "column",
-          width: IMG_SIZE,
-          height: IMG_SIZE,
-          position: "relative",
-          fontFamily: "Inter",
-          // Background image di-embed langsung di sini — tidak perlu sharp composite
-          backgroundImage: `url("${backgroundDataURI}")`,
-          backgroundSize: "cover",
-          backgroundPosition: "center",
-        },
-        children: [
-          // Semi-transparent gradient overlay
-          {
-            type: "div",
-            props: {
-              style: {
-                position: "absolute",
-                inset: 0,
-                background: `linear-gradient(to top, ${bg} 0%, rgba(0,0,0,0.45) 55%, rgba(0,0,0,0.15) 100%)`,
-              },
-            },
-          },
-          // Content wrapper (bottom)
-          {
-            type: "div",
-            props: {
-              style: {
-                position: "absolute",
-                bottom: 0,
-                left: 0,
-                right: 0,
-                display: "flex",
-                flexDirection: "column",
-                alignItems: "center",
-                paddingBottom: 32,
-                paddingLeft: 24,
-                paddingRight: 24,
-                gap: 12,
-              },
-              children: [
-                // Type label badge
-                {
-                  type: "div",
-                  props: {
-                    style: {
-                      backgroundColor: accent,
-                      color: "#000000",
-                      fontSize: 10,
-                      fontWeight: 700,
-                      letterSpacing: 2,
-                      paddingLeft: 12,
-                      paddingRight: 12,
-                      paddingTop: 4,
-                      paddingBottom: 4,
-                      borderRadius: 4,
-                      textTransform: "uppercase",
-                    },
-                    children: label,
-                  },
-                },
-                // Dynamic content
-                renderContent(),
-                // Branding
-                {
-                  type: "div",
-                  props: {
-                    style: {
-                      marginTop: 8,
-                      fontSize: 11,
-                      color: "rgba(255,255,255,0.4)",
-                      letterSpacing: 3,
-                      textTransform: "uppercase",
-                    },
-                    children: "HALFSPACE.ID",
-                  },
-                },
-              ],
-            },
-          },
-          // Top-left accent bar
-          {
-            type: "div",
-            props: {
-              style: {
-                position: "absolute",
-                top: 20,
-                left: 20,
-                width: 36,
-                height: 4,
-                backgroundColor: accent,
-                borderRadius: 2,
-              },
-            },
-          },
-        ],
-      },
-    } as unknown as React.ReactNode,
-    {
-      width: IMG_SIZE,
-      height: IMG_SIZE,
-      fonts: [
-        { name: "Inter", data: fontBold,   weight: 700, style: "normal" },
-        { name: "Inter", data: fontMedium, weight: 500, style: "normal" },
-      ],
-    }
-  )
-
-  return svgString
-}
-
-// ─── Render SVG → PNG (tanpa sharp) ──────────────────────────────────────────
-
-function renderSVGtoPNG(svgString: string): Buffer {
-  const resvg = new Resvg(svgString, {
-    fitTo: { mode: "width", value: IMG_SIZE },
-    // Aktifkan image loading agar <image> data URI di SVG terbaca
-    imageRendering: 1, // 0 = optimizeQuality, 1 = optimizeSpeed
-  })
-  return Buffer.from(resvg.render().asPng())
+Nada: ringan, kadang sedikit jenaka, tapi selalu ada substansinya. Seperti ngobrol dengan teman yang sangat tahu sepak bola.
+Boleh gunakan satu atau dua kalimat pendek yang menghentak sebagai penekanan.
+Panjang: 450–600 kata`,
 }
 
 // ─── POST handler ─────────────────────────────────────────────────────────────
 
 export async function POST(req: NextRequest) {
-  // Auth
-  const user = await requireAdmin()
-  if (!user) {
-    return NextResponse.json({ error: "Unauthorized" }, { status: 401 })
-  }
-
-  // Rate limit
-  const { success } = await imageRateLimit.limit(user.id)
-  if (!success) {
+  const apiKey = process.env.GROQ_API_KEY
+  if (!apiKey) {
     return NextResponse.json(
-      { error: "Terlalu banyak request generate gambar. Tunggu sebentar lalu coba lagi." },
-      { status: 429 }
-    )
-  }
-
-  const accountId = process.env.CF_ACCOUNT_ID
-  const apiToken  = process.env.CF_API_TOKEN
-  if (!accountId || !apiToken) {
-    return NextResponse.json(
-      { error: "CF_ACCOUNT_ID / CF_API_TOKEN belum dikonfigurasi di server." },
+      { error: "GROQ_API_KEY belum dikonfigurasi di environment variables." },
       { status: 500 }
     )
   }
 
-  let body: { prompt?: string; overlay?: OverlayData }
+  let body: RequestBody
   try {
     body = await req.json()
   } catch {
     return NextResponse.json({ error: "Request body tidak valid." }, { status: 400 })
   }
 
-  const prompt = body.prompt?.trim()
-  if (!prompt) {
-    return NextResponse.json({ error: "Prompt wajib diisi." }, { status: 400 })
+  const { newsType, topic, context } = body
+
+  if (!newsType || !topic?.trim() || !context?.trim()) {
+    return NextResponse.json(
+      { error: "newsType, topic, dan context wajib diisi." },
+      { status: 400 }
+    )
   }
 
-  const overlay: OverlayData = body.overlay ?? { contentType: "general" }
-  const cfPrompt = buildCFPrompt(overlay.contentType, prompt)
+  const validTypes: NewsType[] = ["transfer", "konpers", "cedera", "preview", "hasil", "trivia"]
+  if (!validTypes.includes(newsType)) {
+    return NextResponse.json({ error: "newsType tidak valid." }, { status: 400 })
+  }
 
-  const url = `https://api.cloudflare.com/client/v4/accounts/${accountId}/ai/run/@cf/black-forest-labs/flux-1-schnell`
+  // ── Cek cache dulu ─────────────────────────────────────────────────────────
+  const cacheKey = makeCacheKey(newsType, topic, context)
+  const cached = getCached(cacheKey)
+  if (cached) {
+    console.log(`[generate-article] Cache hit untuk topik: "${topic.trim()}"`)
+    return NextResponse.json({ title: cached.title, content: cached.content })
+  }
 
-  let lastError = "Cloudflare Workers AI gagal merespons."
+  // ── Susun user prompt ──────────────────────────────────────────────────────
 
-  for (let attempt = 0; attempt <= MAX_RETRIES; attempt++) {
-    try {
-      const res = await fetch(url, {
-        method: "POST",
-        headers: {
-          Authorization: `Bearer ${apiToken}`,
-          "Content-Type": "application/json",
-        },
-        body: JSON.stringify({ prompt: cfPrompt }),
-        signal: AbortSignal.timeout(FETCH_TIMEOUT_MS),
-      })
+  const userPrompt = `${TYPE_INSTRUCTION[newsType]}
 
-      if (!res.ok) {
-        const text = await res.text().catch(() => "")
-        lastError = `Cloudflare error ${res.status}`
-        console.error("[generate-image] non-ok response:", res.status, text)
-        continue
-      }
+TOPIK: ${topic.trim()}
 
-      const data = await res.json()
-      const base64 = data?.result?.image
+KONTEKS / FAKTA YANG DIKETAHUI:
+${context.trim()}
 
-      if (!base64) {
-        lastError = "Cloudflare tidak mengembalikan gambar."
-        console.error("[generate-image] unexpected shape:", JSON.stringify(data).slice(0, 500))
-        continue
-      }
+Tulis artikel berdasarkan topik dan konteks di atas.
+Ingat: kamu jurnalis senior — bukan generator teks. Pilih angle yang paling menarik dari konteks yang diberikan, dan biarkan narasi berkembang secara organik.
 
-      // 1. Konversi base64 CF → data URI (deteksi format otomatis, no sharp)
-      const backgroundDataURI = cfBase64ToDataURI(base64)
+Kembalikan HANYA JSON dengan format berikut (tidak ada teks di luar JSON):
+{
+  "title": "<judul artikel: menarik, informatif, max 80 karakter, tanpa tanda tanya, tanpa clickbait>",
+  "content": "<konten artikel dalam HTML — gunakan <p> untuk paragraf dan <blockquote> untuk kutipan langsung dari narasumber. JANGAN gunakan tag HTML lain apapun.>"
+}`
 
-      let finalBuf: Buffer
-      try {
-        // 2. Satori render SVG dengan background ter-embed + overlay teks
-        const svgString = await buildCompositeSVG(backgroundDataURI, overlay)
+  // ── Kirim ke Groq API ──────────────────────────────────────────────────────
+  // Fix #4: temperature dinaikkan ke 0.85 untuk output lebih variatif dan tidak template-ish
+  // Fix #5: max_tokens dinaikkan ke 2800 agar artikel panjang tidak terpotong
 
-        // 3. Resvg render SVG → PNG final (background + teks, sekaligus)
-        finalBuf = renderSVGtoPNG(svgString)
-      } catch (compErr) {
-        console.error("[generate-image] composite error:", compErr)
+  try {
+    const res = await fetch("https://api.groq.com/openai/v1/chat/completions", {
+      method:  "POST",
+      headers: {
+        "Content-Type":  "application/json",
+        "Authorization": `Bearer ${apiKey}`,
+      },
+      body: JSON.stringify({
+        model:       "llama-3.3-70b-versatile",
+        temperature: 0.85,  // dinaikkan dari 0.7 → lebih variatif, lebih humanis
+        max_tokens:  2800,  // dinaikkan dari 2048 → ruang lebih untuk artikel panjang
+        messages: [
+          { role: "system", content: BASE_SYSTEM },
+          { role: "user",   content: userPrompt },
+        ],
+        response_format: { type: "json_object" },
+      }),
+    })
+
+    const resText = await res.text()
+
+    if (!res.ok) {
+      if (res.status === 429) {
         return NextResponse.json(
-          { error: "Gagal memproses gambar: " + (compErr instanceof Error ? compErr.message : String(compErr)) },
+          { error: "Groq API rate limit tercapai. Tunggu beberapa detik lalu coba lagi." },
+          { status: 429 }
+        )
+      }
+      if (res.status === 401) {
+        return NextResponse.json(
+          { error: "GROQ_API_KEY tidak valid. Hubungi administrator." },
           { status: 500 }
         )
       }
-
-      return new NextResponse(new Uint8Array(finalBuf), {
-        status: 200,
-        headers: {
-          "Content-Type": "image/png",
-          "Cache-Control": "no-store",
-        },
-      })
-    } catch (err) {
-      const isTimeout = err instanceof Error && err.name === "TimeoutError"
-      lastError = isTimeout
-        ? "Cloudflare timeout — server terlalu lama merespons."
-        : "Gagal menghubungi Cloudflare Workers AI."
-      console.error("[generate-image] CF fetch error:", err)
+      if (res.status === 400) {
+        return NextResponse.json(
+          { error: "Request ke Groq gagal. Coba kurangi panjang konteks." },
+          { status: 400 }
+        )
+      }
+      throw new Error(`Groq API error ${res.status}: ${resText.slice(0, 200)}`)
     }
-  }
 
-  console.error("[generate-image] failed after retries:", lastError)
-  return NextResponse.json({ error: lastError }, { status: 502 })
+    let data: Record<string, unknown>
+    try {
+      data = JSON.parse(resText)
+    } catch {
+      throw new Error(`Gagal parse response Groq: ${resText.slice(0, 200)}`)
+    }
+
+    type GroqChoice = { message?: { content?: string } }
+    const raw = ((data.choices as GroqChoice[])?.[0]?.message?.content ?? "").trim()
+
+    if (!raw) {
+      return NextResponse.json(
+        { error: "Groq tidak menghasilkan output. Coba lagi." },
+        { status: 422 }
+      )
+    }
+
+    // Bersihkan markdown fence jika ada (paranoid check)
+    let cleaned = raw.replace(/^```json\s*/i, "").replace(/^```\s*/i, "").replace(/\s*```$/i, "").trim()
+
+    // Fallback: ekstrak blok JSON pertama jika ada teks di luar JSON
+    if (!cleaned.startsWith("{")) {
+      const jsonMatch = cleaned.match(/\{[\s\S]*\}/)
+      if (jsonMatch) cleaned = jsonMatch[0]
+    }
+
+    let parsed: { title: string; content: string }
+    try {
+      parsed = JSON.parse(cleaned)
+    } catch {
+      console.error("[generate-article] Raw output tidak bisa di-parse:", raw.slice(0, 500))
+      return NextResponse.json(
+        { error: "Gagal parse hasil Groq. Coba lagi." },
+        { status: 422 }
+      )
+    }
+
+    if (!parsed.title?.trim() || !parsed.content?.trim()) {
+      return NextResponse.json(
+        { error: "Hasil generate tidak lengkap. Coba tambahkan konteks lebih detail." },
+        { status: 422 }
+      )
+    }
+
+    const result = {
+      title:   parsed.title.trim(),
+      content: parsed.content.trim(),
+    }
+
+    setCache(cacheKey, result.title, result.content)
+
+    type GroqUsage = { prompt_tokens?: number; completion_tokens?: number; total_tokens?: number }
+    const usage = data.usage as GroqUsage | undefined
+    if (usage) {
+      console.log(
+        `[generate-article] Groq usage — prompt: ${usage.prompt_tokens ?? 0}, ` +
+        `completion: ${usage.completion_tokens ?? 0}, total: ${usage.total_tokens ?? 0}`
+      )
+    }
+
+    return NextResponse.json(result)
+
+  } catch (err: unknown) {
+    const message = err instanceof Error ? err.message : "Terjadi error. Coba lagi."
+    console.error("[generate-article] Error:", err)
+    return NextResponse.json({ error: message }, { status: 500 })
+  }
 }

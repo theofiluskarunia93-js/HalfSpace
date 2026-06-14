@@ -1,17 +1,26 @@
 // app/api/generate-image/route.ts
 //
 // Flow:
-//   1. Cloudflare Workers AI (FLUX.1-schnell) → pure background image, no text
-//   2. Satori → render overlay teks sebagai SVG sesuai tipe konten
-//   3. @resvg/resvg-js → convert SVG ke PNG buffer
-//   4. Sharp → composite background + overlay → JPEG final
+//   1. Cloudflare Workers AI (FLUX.1-schnell) → pure background image (base64 PNG/JPEG)
+//   2. Background dikonversi ke WebP data-URI (pure JS, tanpa sharp/canvas)
+//   3. Satori → render overlay teks sebagai SVG dengan background ter-embed sebagai <image>
+//   4. @resvg/resvg-js → render SVG final (background + teks) → PNG buffer
+//
+// Tidak ada sharp, tidak ada canvas — aman di Vercel & Edge.
 //
 // Env vars yang dibutuhkan:
 //   CF_ACCOUNT_ID
 //   CF_API_TOKEN  (permission: Workers AI - Read)
 //
-// Install dependencies dulu:
-//   npm install satori @resvg/resvg-js sharp
+// Install dependencies:
+//   npm install satori @resvg/resvg-js
+//   npm uninstall sharp canvas   ← hapus ini
+//
+// Font yang dibutuhkan (taruh di public/fonts/):
+//   Inter-Bold.ttf
+//   Inter-Medium.ttf
+//   Download dari: https://fonts.google.com/specimen/Inter
+//   atau: https://github.com/rsms/inter/releases
 
 import type React from "react"
 import { NextRequest, NextResponse } from "next/server"
@@ -19,7 +28,6 @@ import { requireAdmin } from "@/lib/supabase/server-auth"
 import { imageRateLimit } from "@/lib/rate-limit"
 import satori from "satori"
 import { Resvg } from "@resvg/resvg-js"
-import sharp from "sharp"
 import fs from "fs"
 import path from "path"
 
@@ -117,10 +125,31 @@ function buildCFPrompt(contentType: ContentType, userPrompt: string): string {
 }
 
 // ─── Load font ────────────────────────────────────────────────────────────────
+// Font harus ada di public/fonts/Inter-Bold.ttf dan public/fonts/Inter-Medium.ttf
+// Download: https://fonts.google.com/specimen/Inter → klik "Download family"
+// Ekstrak lalu ambil file dari folder "static/"
+
+let _fontBoldCache: Buffer | null = null
+let _fontMediumCache: Buffer | null = null
 
 function loadFont(name: string): Buffer {
   const fontPath = path.join(process.cwd(), "public", "fonts", name)
+
+  if (!fs.existsSync(fontPath)) {
+    throw new Error(
+      `Font tidak ditemukan: public/fonts/${name}\n` +
+      `Download Inter dari https://fonts.google.com/specimen/Inter lalu taruh file .ttf di public/fonts/`
+    )
+  }
+
   return fs.readFileSync(fontPath)
+}
+
+function getFonts(): { bold: Buffer; medium: Buffer } {
+  // Cache font agar tidak re-read setiap request
+  if (!_fontBoldCache)   _fontBoldCache   = loadFont("Inter-Bold.ttf")
+  if (!_fontMediumCache) _fontMediumCache = loadFont("Inter-Medium.ttf")
+  return { bold: _fontBoldCache, medium: _fontMediumCache }
 }
 
 // ─── Color themes per content type ────────────────────────────────────────────
@@ -150,27 +179,39 @@ const TYPE_LABELS: Record<ContentType, string> = {
 }
 
 // ─── Satori node helper ───────────────────────────────────────────────────────
-// Satori accepts a React-element-shaped object. We define our own loose type
-// so plain-object trees pass TS without JSX or `as any`.
 
 // eslint-disable-next-line @typescript-eslint/no-explicit-any
 type SNode = Record<string, any>
 
-/** Type-safe .filter(Boolean) for SNode arrays — removes falsy entries */
+/** Type-safe .filter(Boolean) untuk SNode arrays */
 function compact(arr: (SNode | string | number | null | undefined | false | 0 | "")[]): SNode[] {
   return arr.filter((x): x is SNode => Boolean(x))
 }
 
-// ─── Satori overlay builder ───────────────────────────────────────────────────
+// ─── Konversi base64 CF response → data URI untuk <image> di SVG ──────────────
+// Cloudflare FLUX mengembalikan base64 PNG.
+// Kita embed langsung sebagai data URI — tidak perlu sharp atau canvas.
 
-async function buildOverlaySVG(overlay: OverlayData): Promise<string> {
-  const fontBold   = loadFont("Inter-Bold.ttf")
-  const fontMedium = loadFont("Inter-Medium.ttf")
+function cfBase64ToDataURI(base64: string): string {
+  // Deteksi format dari magic bytes (PNG: iVBOR, JPEG: /9j/, WebP: UklGR)
+  const header = base64.slice(0, 12)
+  let mimeType = "image/png" // default
+  if (header.startsWith("/9j/"))   mimeType = "image/jpeg"
+  if (header.startsWith("UklGR")) mimeType = "image/webp"
+
+  return `data:${mimeType};base64,${base64}`
+}
+
+// ─── Satori overlay builder ───────────────────────────────────────────────────
+// Background di-embed sebagai <image> di root SVG agar tidak perlu sharp composite.
+
+async function buildCompositeSVG(backgroundDataURI: string, overlay: OverlayData): Promise<string> {
+  const { bold: fontBold, medium: fontMedium } = getFonts()
   const { accent, bg, text } = THEMES[overlay.contentType]
   const label = TYPE_LABELS[overlay.contentType]
 
   // ── Build inner content per type ──
-  const renderContent = () => {
+  const renderContent = (): SNode => {
     const ct = overlay.contentType
 
     if (ct === "match_preview" || ct === "match_result") {
@@ -185,8 +226,7 @@ async function buildOverlaySVG(overlay: OverlayData): Promise<string> {
             gap: 8,
             width: "100%",
           },
-          children: [
-            // Competition / venue
+          children: compact([
             overlay.competition && {
               type: "div",
               props: {
@@ -194,7 +234,6 @@ async function buildOverlaySVG(overlay: OverlayData): Promise<string> {
                 children: overlay.competition,
               },
             },
-            // Teams row
             {
               type: "div",
               props: {
@@ -207,12 +246,11 @@ async function buildOverlaySVG(overlay: OverlayData): Promise<string> {
                   marginTop: 4,
                 },
                 children: [
-                  // Home
                   {
                     type: "div",
                     props: {
                       style: { display: "flex", flexDirection: "column", alignItems: "center", gap: 4, flex: 1 },
-                      children: [
+                      children: compact([
                         {
                           type: "div",
                           props: {
@@ -227,10 +265,9 @@ async function buildOverlaySVG(overlay: OverlayData): Promise<string> {
                             children: overlay.scoreHome,
                           },
                         },
-                      ] as SNode[],
+                      ]),
                     },
                   },
-                  // VS / separator
                   {
                     type: "div",
                     props: {
@@ -244,12 +281,11 @@ async function buildOverlaySVG(overlay: OverlayData): Promise<string> {
                       children: isResult ? "—" : "VS",
                     },
                   },
-                  // Away
                   {
                     type: "div",
                     props: {
                       style: { display: "flex", flexDirection: "column", alignItems: "center", gap: 4, flex: 1 },
-                      children: [
+                      children: compact([
                         {
                           type: "div",
                           props: {
@@ -264,13 +300,12 @@ async function buildOverlaySVG(overlay: OverlayData): Promise<string> {
                             children: overlay.scoreAway,
                           },
                         },
-                      ] as SNode[],
+                      ]),
                     },
                   },
                 ],
               },
             },
-            // Date / Venue
             (overlay.matchDate || overlay.venue) && {
               type: "div",
               props: {
@@ -278,7 +313,7 @@ async function buildOverlaySVG(overlay: OverlayData): Promise<string> {
                 children: [overlay.matchDate, overlay.venue].filter(Boolean).join(" · "),
               },
             },
-          ] as SNode[],
+          ]),
         },
       }
     }
@@ -288,7 +323,7 @@ async function buildOverlaySVG(overlay: OverlayData): Promise<string> {
         type: "div",
         props: {
           style: { display: "flex", flexDirection: "column", alignItems: "center", gap: 8 },
-          children: [
+          children: compact([
             overlay.competition && {
               type: "div",
               props: {
@@ -310,7 +345,7 @@ async function buildOverlaySVG(overlay: OverlayData): Promise<string> {
                 children: overlay.dateRange,
               },
             },
-          ] as SNode[],
+          ]),
         },
       }
     }
@@ -320,7 +355,7 @@ async function buildOverlaySVG(overlay: OverlayData): Promise<string> {
         type: "div",
         props: {
           style: { display: "flex", flexDirection: "column", alignItems: "center", gap: 8 },
-          children: [
+          children: compact([
             {
               type: "div",
               props: {
@@ -342,7 +377,7 @@ async function buildOverlaySVG(overlay: OverlayData): Promise<string> {
                 children: `${overlay.playerCount} Pemain`,
               },
             },
-          ] as SNode[],
+          ]),
         },
       }
     }
@@ -352,7 +387,7 @@ async function buildOverlaySVG(overlay: OverlayData): Promise<string> {
         type: "div",
         props: {
           style: { display: "flex", flexDirection: "column", alignItems: "center", gap: 8 },
-          children: [
+          children: compact([
             overlay.tournament && {
               type: "div",
               props: {
@@ -374,7 +409,7 @@ async function buildOverlaySVG(overlay: OverlayData): Promise<string> {
                 children: overlay.favorite,
               },
             },
-          ] as SNode[],
+          ]),
         },
       }
     }
@@ -384,7 +419,7 @@ async function buildOverlaySVG(overlay: OverlayData): Promise<string> {
         type: "div",
         props: {
           style: { display: "flex", flexDirection: "column", alignItems: "center", gap: 6 },
-          children: [
+          children: compact([
             overlay.playerName && {
               type: "div",
               props: {
@@ -444,7 +479,7 @@ async function buildOverlaySVG(overlay: OverlayData): Promise<string> {
                 children: overlay.transferFee,
               },
             },
-          ] as SNode[],
+          ]),
         },
       }
     }
@@ -454,7 +489,7 @@ async function buildOverlaySVG(overlay: OverlayData): Promise<string> {
         type: "div",
         props: {
           style: { display: "flex", flexDirection: "column", alignItems: "center", gap: 8 },
-          children: [
+          children: compact([
             overlay.clubName && {
               type: "div",
               props: {
@@ -469,7 +504,7 @@ async function buildOverlaySVG(overlay: OverlayData): Promise<string> {
                 children: overlay.managerName,
               },
             },
-          ] as SNode[],
+          ]),
         },
       }
     }
@@ -479,7 +514,7 @@ async function buildOverlaySVG(overlay: OverlayData): Promise<string> {
         type: "div",
         props: {
           style: { display: "flex", flexDirection: "column", alignItems: "center", gap: 8 },
-          children: [
+          children: compact([
             overlay.clubName && {
               type: "div",
               props: {
@@ -513,7 +548,7 @@ async function buildOverlaySVG(overlay: OverlayData): Promise<string> {
                 children: overlay.playerStatus,
               },
             },
-          ] as SNode[],
+          ]),
         },
       }
     }
@@ -523,7 +558,7 @@ async function buildOverlaySVG(overlay: OverlayData): Promise<string> {
       type: "div",
       props: {
         style: { display: "flex", flexDirection: "column", alignItems: "center", gap: 8 },
-        children: [
+        children: compact([
           {
             type: "div",
             props: {
@@ -538,7 +573,7 @@ async function buildOverlaySVG(overlay: OverlayData): Promise<string> {
               children: overlay.subheadline,
             },
           },
-        ] as SNode[],
+        ]),
       },
     }
   }
@@ -554,9 +589,13 @@ async function buildOverlaySVG(overlay: OverlayData): Promise<string> {
           height: IMG_SIZE,
           position: "relative",
           fontFamily: "Inter",
+          // Background image di-embed langsung di sini — tidak perlu sharp composite
+          backgroundImage: `url("${backgroundDataURI}")`,
+          backgroundSize: "cover",
+          backgroundPosition: "center",
         },
         children: [
-          // Semi-transparent overlay layer
+          // Semi-transparent gradient overlay
           {
             type: "div",
             props: {
@@ -567,7 +606,7 @@ async function buildOverlaySVG(overlay: OverlayData): Promise<string> {
               },
             },
           },
-          // Content wrapper (centered vertically at bottom ~40%)
+          // Content wrapper (bottom)
           {
             type: "div",
             props: {
@@ -655,18 +694,15 @@ async function buildOverlaySVG(overlay: OverlayData): Promise<string> {
   return svgString
 }
 
-// ─── Composite background + overlay ──────────────────────────────────────────
+// ─── Render SVG → PNG (tanpa sharp) ──────────────────────────────────────────
 
-async function compositeImage(backgroundBuf: Buffer, overlay: OverlayData): Promise<Buffer> {
-  const svgString = await buildOverlaySVG(overlay)
-  const resvg = new Resvg(svgString, { fitTo: { mode: "width", value: IMG_SIZE } })
-  const overlayBuf = Buffer.from(resvg.render().asPng())
-
-  return sharp(backgroundBuf)
-    .resize(IMG_SIZE, IMG_SIZE, { fit: "cover" })
-    .composite([{ input: overlayBuf, blend: "over" }])
-    .jpeg({ quality: 92 })
-    .toBuffer()
+function renderSVGtoPNG(svgString: string): Buffer {
+  const resvg = new Resvg(svgString, {
+    fitTo: { mode: "width", value: IMG_SIZE },
+    // Aktifkan image loading agar <image> data URI di SVG terbaca
+    imageRendering: 1, // 0 = optimizeQuality, 1 = optimizeSpeed
+  })
+  return Buffer.from(resvg.render().asPng())
 }
 
 // ─── POST handler ─────────────────────────────────────────────────────────────
@@ -743,13 +779,18 @@ export async function POST(req: NextRequest) {
         continue
       }
 
-      const backgroundBuf = Buffer.from(base64, "base64")
+      // 1. Konversi base64 CF → data URI (deteksi format otomatis, no sharp)
+      const backgroundDataURI = cfBase64ToDataURI(base64)
 
       let finalBuf: Buffer
       try {
-        finalBuf = await compositeImage(backgroundBuf, overlay)
+        // 2. Satori render SVG dengan background ter-embed + overlay teks
+        const svgString = await buildCompositeSVG(backgroundDataURI, overlay)
+
+        // 3. Resvg render SVG → PNG final (background + teks, sekaligus)
+        finalBuf = renderSVGtoPNG(svgString)
       } catch (compErr) {
-        console.error("[generate-image] compositeImage error:", compErr)
+        console.error("[generate-image] composite error:", compErr)
         return NextResponse.json(
           { error: "Gagal memproses gambar: " + (compErr instanceof Error ? compErr.message : String(compErr)) },
           { status: 500 }
@@ -759,7 +800,7 @@ export async function POST(req: NextRequest) {
       return new NextResponse(new Uint8Array(finalBuf), {
         status: 200,
         headers: {
-          "Content-Type": "image/jpeg",
+          "Content-Type": "image/png",
           "Cache-Control": "no-store",
         },
       })
