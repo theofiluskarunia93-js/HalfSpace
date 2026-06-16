@@ -203,8 +203,8 @@ const COUNTRY_FLAGS: Record<string, string> = {
   "Turkey": "🇹🇷", "Türkiye": "🇹🇷", "Ukraine": "🇺🇦", "Uruguay": "🇺🇾",
   "USA": "🇺🇸", "United States": "🇺🇸", "Venezuela": "🇻🇪", "Wales": "🏴󠁧󠁢󠁷󠁬󠁳󠁿",
   "Haiti": "🇭🇹", "Cabo Verde": "🇨🇻", "Cape Verde": "🇨🇻", "Uzbekistan": "🇺🇿",
-  "Curaçao": "🇨🇼", "Curacao": "🇨🇼", "Côte d'Ivoire": "🇨🇮", "Ivory Coast": "🇨🇮",
-  "Algeria": "🇩🇿", "DR Congo": "🇨🇩", "Congo": "🇨🇬", "South Africa": "🇿🇦",
+  "Curaçao": "🇨🇼", "Curacao": "🇨🇼", "Côte d'Ivoire": "🇨🇮",
+  "Congo": "🇨🇬", "South Africa": "🇿🇦",
   "Bosnia & Herzegovina": "🇧🇦", "Bosnia and Herzegovina": "🇧🇦",
 }
 
