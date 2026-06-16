@@ -7,9 +7,7 @@ import {
   Copy,
   Check,
   Download,
-  Send,
   Instagram,
-  Twitter,
   Facebook,
   RefreshCw,
   Image as ImageIcon,
@@ -206,7 +204,7 @@ const PLATFORMS: {
         <path d="M18.244 2.25h3.308l-7.227 8.26 8.502 11.24H16.17l-4.714-6.231-5.401 6.231H2.747l7.73-8.835L1.254 2.25H8.08l4.253 5.622zm-1.161 17.52h1.833L7.084 4.126H5.117z" />
       </svg>
     ),
-    color: "#1DA1F2", maxChars: 280, manual: false,
+    color: "#1DA1F2", maxChars: 280, manual: true,
   },
   { id: "facebook", label: "Facebook", icon: <Facebook className="h-4 w-4" />, color: "#1877F2", maxChars: 63206, manual: true },
   {
@@ -283,15 +281,13 @@ const OVERLAY_FIELDS: Partial<Record<ContentType, FieldDef[]>> = {
 // ─── Caption Card ─────────────────────────────────────────────────────────────
 
 function CaptionCard({
-  platform, value, onChange, copied, onCopy, isPublishing, onPublish,
+  platform, value, onChange, copied, onCopy,
 }: {
   platform: (typeof PLATFORMS)[number]
   value: string
   onChange: (val: string) => void
   copied: boolean
   onCopy: () => void
-  isPublishing?: boolean
-  onPublish?: () => void
 }) {
   const charCount = value.length
   const overLimit = charCount > platform.maxChars
@@ -302,9 +298,6 @@ function CaptionCard({
         <div className="flex items-center gap-2">
           <span style={{ color: platform.color }}>{platform.icon}</span>
           <span className="text-sm font-semibold text-foreground">{platform.label}</span>
-          {!platform.manual && (
-            <span className="text-[10px] bg-primary/15 text-primary font-bold px-2 py-0.5 rounded-full uppercase tracking-wide">Auto Post</span>
-          )}
         </div>
         <span className={`text-xs tabular-nums ${overLimit ? "text-destructive font-semibold" : "text-muted-foreground"}`}>
           {charCount} / {platform.maxChars}
@@ -325,21 +318,9 @@ function CaptionCard({
         <Button size="sm" variant="outline" onClick={onCopy} disabled={!value} className="gap-1.5 h-8 text-xs">
           {copied ? <><Check className="h-3 w-3 text-primary" />Tersalin</> : <><Copy className="h-3 w-3" />Salin</>}
         </Button>
-        {platform.manual ? (
-          <Button size="sm" variant="outline" disabled={!value} onClick={onCopy} className="gap-1.5 h-8 text-xs border-dashed">
-            <ExternalLink className="h-3 w-3" />Buka {platform.label}
-          </Button>
-        ) : (
-          <Button
-            size="sm"
-            onClick={onPublish}
-            disabled={!value || overLimit || isPublishing}
-            className="gap-1.5 h-8 text-xs bg-primary text-primary-foreground hover:bg-primary/90"
-          >
-            {isPublishing ? <Loader2 className="h-3 w-3 animate-spin" /> : <Send className="h-3 w-3" />}
-            Post Sekarang
-          </Button>
-        )}
+        <Button size="sm" variant="outline" disabled={!value} onClick={onCopy} className="gap-1.5 h-8 text-xs border-dashed">
+          <ExternalLink className="h-3 w-3" />Buka {platform.label}
+        </Button>
       </div>
     </div>
   )
@@ -426,10 +407,6 @@ export function SocialMediaView({ onBack, articleId }: SocialMediaViewProps) {
   const [generatingImage, setGeneratingImage]   = useState(false)
   const [imageError, setImageError]             = useState<string | null>(null)
   const [showOverlayForm, setShowOverlayForm]   = useState(true)
-
-  // Section 3 — Publish X
-  const [publishingX, setPublishingX]   = useState(false)
-  const [publishStatus, setPublishStatus] = useState<{ type: "success" | "error"; text: string } | null>(null)
 
   // ── Load article ───────────────────────────────────────────────────────────
 
@@ -546,30 +523,6 @@ export function SocialMediaView({ onBack, articleId }: SocialMediaViewProps) {
     setGeneratedImageUrl(null)
   }
 
-  // ── Publish X ──────────────────────────────────────────────────────────────
-
-  async function handlePublishX() {
-    if (!captions.x) return
-    setPublishingX(true)
-    setPublishStatus(null)
-    try {
-      const response = await fetch("/api/publish-to-x", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ text: captions.x, articleSlug: article?.slug }),
-      })
-      if (!response.ok) {
-        const err = await response.json()
-        throw new Error(err.error || "Gagal publish")
-      }
-      setPublishStatus({ type: "success", text: "✅ Berhasil diposting ke X!" })
-    } catch (err: any) {
-      setPublishStatus({ type: "error", text: `❌ ${err.message}` })
-    } finally {
-      setPublishingX(false)
-    }
-  }
-
   // ─── Render ────────────────────────────────────────────────────────────────
 
   if (loadingArticle) {
@@ -646,16 +599,6 @@ export function SocialMediaView({ onBack, articleId }: SocialMediaViewProps) {
             </div>
           )}
 
-          {publishStatus && (
-            <div className={`mb-4 rounded-lg border px-4 py-3 text-sm flex items-center gap-2 ${
-              publishStatus.type === "success"
-                ? "border-primary/30 bg-primary/10 text-primary"
-                : "border-destructive/30 bg-destructive/10 text-destructive"
-            }`}>
-              {publishStatus.text}
-            </div>
-          )}
-
           <div className="grid gap-4 md:grid-cols-2">
             {PLATFORMS.map((platform) => (
               <CaptionCard
@@ -665,8 +608,6 @@ export function SocialMediaView({ onBack, articleId }: SocialMediaViewProps) {
                 onChange={(val) => setCaptions((prev) => ({ ...prev, [platform.id]: val }))}
                 copied={!!copied[platform.id]}
                 onCopy={() => handleCopy(platform.id)}
-                isPublishing={platform.id === "x" ? publishingX : false}
-                onPublish={platform.id === "x" ? handlePublishX : undefined}
               />
             ))}
           </div>
@@ -793,20 +734,10 @@ export function SocialMediaView({ onBack, articleId }: SocialMediaViewProps) {
           </div>
 
           <div className="grid gap-3 sm:grid-cols-2 md:grid-cols-3">
-            <div className="rounded-xl border border-primary/30 bg-primary/5 p-4">
-              <div className="flex items-center gap-2 mb-2">
-                <svg className="h-5 w-5" viewBox="0 0 24 24" fill="currentColor">
-                  <path d="M18.244 2.25h3.308l-7.227 8.26 8.502 11.24H16.17l-4.714-6.231-5.401 6.231H2.747l7.73-8.835L1.254 2.25H8.08l4.253 5.622zm-1.161 17.52h1.833L7.084 4.126H5.117z" />
-                </svg>
-                <span className="text-sm font-semibold">X / Twitter</span>
-                <span className="text-[10px] bg-primary/20 text-primary font-bold px-2 py-0.5 rounded-full">AUTO</span>
-              </div>
-              <p className="text-xs text-muted-foreground">Gunakan tombol <strong>"Post Sekarang"</strong> di caption X di atas.</p>
-            </div>
-
             {[
               { label: "Instagram", url: "https://www.instagram.com/" },
               { label: "TikTok",    url: "https://www.tiktok.com/" },
+              { label: "X / Twitter", url: "https://x.com/" },
               { label: "Facebook",  url: "https://www.facebook.com/" },
               { label: "Threads",   url: "https://www.threads.net/" },
             ].map((p) => (

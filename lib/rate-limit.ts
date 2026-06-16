@@ -57,10 +57,6 @@ export const captionRateLimit = {
   limit: async (id: string) => limit(`generate-social-captions:${id}`, 10, MINUTE),
 }
 
-export const publishXRateLimit = {
-  limit: async (id: string) => limit(`publish-to-x:${id}`, 5, MINUTE),
-}
-
 export const imageRateLimit = {
   limit: async (id: string) => limit(`generate-image:${id}`, 10, MINUTE),
 }
