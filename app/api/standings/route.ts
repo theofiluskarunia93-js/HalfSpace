@@ -2,21 +2,21 @@ import { NextResponse } from "next/server"
 import { createClient } from "@supabase/supabase-js"
 
 // ─── League config ─────────────────────────────────────────────────────────
-// League IDs dari API-Football
+// bzzoiro pakai integer league_id, endpoint standings: /api/v2/leagues/{id}/standings/
+// World Cup: bzzoiro pakai league_id=27 (BUKAN 1 seperti API-Football)
+// World Cup response pakai { groups: { "Grup A": [...], ... } } bukan flat standings
 const LEAGUES = [
-  { id: 39,  name: "Premier League", slug: "premier-league", flag: "🏴󠁧󠁢󠁥󠁮󠁧󠁿" },
-  { id: 140, name: "La Liga",        slug: "la-liga",        flag: "🇪🇸" },
-  { id: 78,  name: "Bundesliga",     slug: "bundesliga",     flag: "🇩🇪" },
-  { id: 135, name: "Serie A",        slug: "serie-a",        flag: "🇮🇹" },
-  { id: 61,  name: "Ligue 1",        slug: "ligue-1",        flag: "🇫🇷" },
-  { id: 2,   name: "Champions League", slug: "champions-league", flag: "🏆" },
+  { id: 27,  name: "World Cup",        slug: "world-cup",        apiId: 27,  flag: "🌍" },
+  { id: 39,  name: "Premier League",   slug: "premier-league",   apiId: 39,  flag: "🏴󠁧󠁢󠁥󠁮󠁧󠁿" },
+  { id: 140, name: "La Liga",          slug: "la-liga",          apiId: 140, flag: "🇪🇸" },
+  { id: 78,  name: "Bundesliga",       slug: "bundesliga",       apiId: 78,  flag: "🇩🇪" },
+  { id: 135, name: "Serie A",          slug: "serie-a",          apiId: 135, flag: "🇮🇹" },
+  { id: 61,  name: "Ligue 1",          slug: "ligue-1",          apiId: 61,  flag: "🇫🇷" },
+  { id: 2,   name: "Champions League", slug: "champions-league", apiId: 2,   flag: "🏆" },
 ]
 
-// Season aktif — update tiap tahun
-const SEASON = 2024
-
-// Cache TTL — standings tidak butuh update sering
-const CACHE_TTL_HOURS = 6  // 6 jam
+// Cache TTL
+const CACHE_TTL_HOURS = 6
 
 // ─── Supabase ──────────────────────────────────────────────────────────────
 function getSupabase() {
@@ -26,69 +26,103 @@ function getSupabase() {
   return createClient(url, key)
 }
 
-// ─── API-Football fetch ────────────────────────────────────────────────────
-async function fetchFromAPI(leagueId: number, type: "standings" | "topscorers") {
-  const apiKey = process.env.API_FOOTBALL_KEY
-  if (!apiKey) throw new Error("API_FOOTBALL_KEY tidak ditemukan di .env.local")
+// ─── bzzoiro fetch helper ──────────────────────────────────────────────────
+async function bzzFetch(path: string) {
+  const apiKey = process.env.BZZOIRO_API_KEY
+  if (!apiKey) throw new Error("BZZOIRO_API_KEY tidak ditemukan di .env.local")
 
-  const url =
-    type === "standings"
-      ? `https://v3.football.api-sports.io/standings?league=${leagueId}&season=${SEASON}`
-      : `https://v3.football.api-sports.io/players/topscorers?league=${leagueId}&season=${SEASON}`
-
-  const res = await fetch(url, {
-    headers: { "x-apisports-key": apiKey },
+  const res = await fetch(`https://sports.bzzoiro.com${path}`, {
+    headers: {
+      "Authorization": `Token ${apiKey}`,
+      "Content-Type": "application/json",
+    },
     next: { revalidate: 0 },
   })
 
-  if (!res.ok) throw new Error(`API error ${res.status}`)
-  const json = await res.json()
-  if (json.errors && Object.keys(json.errors).length > 0) {
-    throw new Error(JSON.stringify(json.errors))
+  if (!res.ok) {
+    const body = await res.text().catch(() => "")
+    console.error(`❌ bzzFetch [standings] error ${res.status} — path: ${path} — body: ${body.slice(0, 300)}`)
+    throw new Error(`bzzoiro API error ${res.status}`)
   }
-  return json.response
+  const json = await res.json()
+  console.log(`✅ bzzFetch [standings] ${path} — preview: ${JSON.stringify(json).slice(0, 200)}`)
+  return json
 }
 
-// ─── Transform standings response ─────────────────────────────────────────
-function transformStandings(response: any[]) {
-  if (!response?.[0]?.league?.standings?.[0]) return []
-  return response[0].league.standings[0].map((item: any) => ({
-    pos:    item.rank,
-    team:   item.team.name,
-    logo:   item.team.logo,
-    played: item.all.played,
-    won:    item.all.win,
-    drawn:  item.all.draw,
-    lost:   item.all.lose,
-    gd:     item.goalsDiff,
-    points: item.points,
-    form:   item.form ?? "",
-    description: item.description ?? "",
-  }))
+// ─── Fix garbled UTF-8 dari bzzoiro (latin1 mis-decoded sebagai UTF-8) ──────
+function fixEncoding(str: string): string {
+  if (!str) return str
+  try {
+    // Decode latin1 → UTF-8 yang benar
+    return decodeURIComponent(escape(str))
+  } catch {
+    return str
+  }
 }
 
-// ─── Transform top scorers response ───────────────────────────────────────
-function transformScorers(response: any[]) {
-  return response.slice(0, 10).map((item: any, index: number) => ({
-    pos:    index + 1,
-    player: item.player.name,
-    photo:  item.player.photo,
-    team:   item.statistics[0]?.team?.name ?? "",
-    teamLogo: item.statistics[0]?.team?.logo ?? "",
-    goals:  item.statistics[0]?.goals?.total ?? 0,
-    assists: item.statistics[0]?.goals?.assists ?? 0,
-    appearances: item.statistics[0]?.games?.appearences ?? 0,
+// ─── Fetch standings dari bzzoiro ──────────────────────────────────────────
+// Endpoint: GET /api/v2/leagues/{id}/standings/
+// Response liga biasa: { standings: [...] }
+// Response cup/World Cup: { groups: { "Group A": [...], "Group B": [...], ... } }
+// Untuk World Cup, tiap row menyertakan field `group` agar widget bisa render per-grup
+async function fetchStandings(leagueApiId: number) {
+  const json = await bzzFetch(`/api/v2/leagues/${leagueApiId}/standings/`)
+
+  // Cup/World Cup → groups map: tiap entry diberi field `group`
+  if (json.groups && typeof json.groups === "object" && !Array.isArray(json.groups)) {
+    const result: any[] = []
+    for (const [groupName, entries] of Object.entries(json.groups)) {
+      const rows = entries as any[]
+      rows.forEach((item: any, idx: number) => {
+        result.push({
+          pos:         item.position ?? item.rank ?? idx + 1,
+          team:        fixEncoding(item.team_name ?? item.team ?? ""),
+          logo:        item.team_logo ?? item.logo ?? "",
+          played:      item.played ?? item.games_played ?? 0,
+          won:         item.won ?? item.wins ?? 0,
+          drawn:       item.drawn ?? item.draws ?? 0,
+          lost:        item.lost ?? item.losses ?? 0,
+          gd:          item.goal_difference ?? item.goals_difference ?? 0,
+          points:      item.points > 0 ? item.points : ((item.won ?? item.wins ?? 0) * 3 + (item.drawn ?? item.draws ?? 0)),
+          form:        item.form ?? "",
+          description: item.description ?? item.status ?? "",
+          group:       groupName,
+        })
+      })
+    }
+    return result
+  }
+
+  // Liga biasa → flat standings array
+  let list: any[] = []
+  if (json.standings && Array.isArray(json.standings)) {
+    list = json.standings
+  } else if (Array.isArray(json)) {
+    list = json
+  }
+
+  return list.map((item: any, idx: number) => ({
+    pos:         item.position ?? item.rank ?? idx + 1,
+    team:        fixEncoding(item.team_name ?? item.team ?? ""),
+    logo:        item.team_logo ?? item.logo ?? "",
+    played:      item.played ?? item.games_played ?? 0,
+    won:         item.won ?? item.wins ?? 0,
+    drawn:       item.drawn ?? item.draws ?? 0,
+    lost:        item.lost ?? item.losses ?? 0,
+    gd:          item.goal_difference ?? item.goals_difference ?? 0,
+    points:      item.points > 0 ? item.points : ((item.won ?? item.wins ?? 0) * 3 + (item.drawn ?? item.draws ?? 0)),
+    form:        item.form ?? "",
+    description: item.description ?? item.status ?? "",
   }))
 }
 
 // ─── Main handler ──────────────────────────────────────────────────────────
 export async function GET(request: Request) {
   const { searchParams } = new URL(request.url)
-  const leagueSlug = searchParams.get("league") ?? "premier-league"
-  const type = (searchParams.get("type") ?? "standings") as "standings" | "topscorers"
+  const leagueSlug = searchParams.get("league") ?? "world-cup"
 
   const league = LEAGUES.find((l) => l.slug === leagueSlug) ?? LEAGUES[0]
-  const cacheKey = `standings_${type}_${league.id}_${SEASON}`
+  const cacheKey = `bzz_standings_${league.apiId}`
   const supabase = getSupabase()
 
   // ── 1. Cek cache Supabase ──────────────────────────────────────────────
@@ -102,19 +136,10 @@ export async function GET(request: Request) {
 
       if (cached) {
         const ageHours = (Date.now() - new Date(cached.fetched_at).getTime()) / 3600000
-
-        // Validasi cache tidak kosong sebelum dikembalikan
-        const cachedHasData =
-          type === "standings"
-            ? cached.payload?.standings?.length > 0
-            : cached.payload?.scorers?.length > 0
+        const cachedHasData = (cached.payload?.standings?.length ?? 0) > 0
 
         if (ageHours < CACHE_TTL_HOURS && cachedHasData) {
-          return NextResponse.json({
-            ...cached.payload,
-            fromCache: true,
-            cachedAt: cached.fetched_at,
-          })
+          return NextResponse.json({ ...cached.payload, fromCache: true, cachedAt: cached.fetched_at })
         }
       }
     } catch {
@@ -122,23 +147,13 @@ export async function GET(request: Request) {
     }
   }
 
-  // ── 2. Fetch dari API-Football ─────────────────────────────────────────
+  // ── 2. Fetch standings dari bzzoiro ────────────────────────────────────
   try {
-    const raw = await fetchFromAPI(league.id, type)
-    const data =
-      type === "standings"
-        ? { standings: transformStandings(raw), leagues: LEAGUES }
-        : { scorers: transformScorers(raw), leagues: LEAGUES }
+    const standings = await fetchStandings(league.apiId)
+    const data = { standings, leagues: LEAGUES }
 
-    // ── 3. Simpan ke cache — HANYA jika data tidak kosong ─────────────
-    // Mencegah "poisoned cache": data kosong [] tersimpan dan dikembalikan
-    // terus-menerus selama 6 jam tanpa pernah coba fetch ulang ke API.
-    const hasData =
-      type === "standings"
-        ? (data as any).standings?.length > 0
-        : (data as any).scorers?.length > 0
-
-    if (supabase && hasData) {
+    // ── 3. Simpan ke cache jika ada data ────────────────────────────────
+    if (supabase && standings.length > 0) {
       await supabase.from("match_cache").upsert(
         { cache_key: cacheKey, payload: data, fetched_at: new Date().toISOString() },
         { onConflict: "cache_key" }
@@ -147,6 +162,7 @@ export async function GET(request: Request) {
 
     return NextResponse.json({ ...data, fromCache: false, cachedAt: new Date().toISOString() })
   } catch (err: any) {
+    console.error("❌ standings route error:", err.message)
     return NextResponse.json({ error: err.message ?? "Gagal fetch data" }, { status: 500 })
   }
 }

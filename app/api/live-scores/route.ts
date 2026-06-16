@@ -1,27 +1,28 @@
 import { NextResponse } from "next/server"
 import { createClient } from "@supabase/supabase-js"
 
-// ─── Liga yang dipantau ────────────────────────────────────────────────────
+// ─── League config — bzzoiro pakai integer ID ─────────────────────────────
+// Endpoint: /api/v2/events/ — league_id berbeda dari API-Football untuk beberapa liga
+// World Cup: bzzoiro pakai league_id=27 (BUKAN 1 seperti API-Football)
 const WATCHED_LEAGUES = [
-  { id: 39,  name: "Premier League"    },
-  { id: 140, name: "La Liga"           },
-  { id: 78,  name: "Bundesliga"        },
-  { id: 135, name: "Serie A"           },
-  { id: 61,  name: "Ligue 1"           },
-  { id: 2,   name: "Champions League"  },
-  { id: 3,   name: "Europa League"     }, // ← FIX: ditambahkan, ada di dropdown komponen
-  { id: 1,   name: "World Cup"         },
-  { id: 4,   name: "Euro"              },
-  { id: 9,   name: "Copa America"      },
-  { id: 12,  name: "AFCON"             },
-  { id: 17,  name: "AFC Asian Cup"     },
-  { id: 142, name: "AFF Cup"           },
+  { id: 39,  apiId: 39  }, // Premier League
+  { id: 140, apiId: 140 }, // La Liga
+  { id: 78,  apiId: 78  }, // Bundesliga
+  { id: 135, apiId: 135 }, // Serie A
+  { id: 61,  apiId: 61  }, // Ligue 1
+  { id: 2,   apiId: 2   }, // Champions League
+  { id: 3,   apiId: 3   }, // Europa League
+  { id: 27,  apiId: 27  }, // World Cup (bzzoiro ID: 27)
+  { id: 4,   apiId: 4   }, // Euro
+  { id: 9,   apiId: 9   }, // Copa America
+  { id: 12,  apiId: 12  }, // AFCON
+  { id: 17,  apiId: 17  }, // AFC Asian Cup
+  { id: 142, apiId: 142 }, // AFF Cup
 ]
 
 const ALL_LEAGUE_IDS = WATCHED_LEAGUES.map((l) => l.id)
 
 // ─── Cache TTL ─────────────────────────────────────────────────────────────
-// Live match → 15 menit | Tidak ada pertandingan → 24 jam
 const CACHE_TTL_LIVE_MS     = 15 * 60 * 1000
 const CACHE_TTL_SCHEDULE_MS = 24 * 60 * 60 * 1000
 
@@ -33,35 +34,109 @@ function getSupabase() {
   return createClient(url, key)
 }
 
-// ─── API-Football fetch helpers ────────────────────────────────────────────
-async function apiFetch(path: string) {
-  const apiKey = process.env.API_FOOTBALL_KEY
-  if (!apiKey) throw new Error("API_FOOTBALL_KEY tidak ditemukan di .env.local")
+// ─── bzzoiro fetch helper ──────────────────────────────────────────────────
+// Base URL: https://sports.bzzoiro.com
+// Endpoint: /api/v2/events/ (BUKAN /football/api/v2/matches/)
+async function bzzFetch(path: string) {
+  const apiKey = process.env.BZZOIRO_API_KEY
+  if (!apiKey) throw new Error("BZZOIRO_API_KEY tidak ditemukan di .env.local")
 
-  const res = await fetch(`https://v3.football.api-sports.io${path}`, {
-    headers: { "x-apisports-key": apiKey },
+  const res = await fetch(`https://sports.bzzoiro.com${path}`, {
+    headers: {
+      "Authorization": `Token ${apiKey}`,
+      "Content-Type": "application/json",
+    },
     next: { revalidate: 0 },
   })
-  if (!res.ok) throw new Error(`API error ${res.status}`)
-  const json = await res.json()
-  if (json.errors && Object.keys(json.errors).length > 0) {
-    throw new Error(JSON.stringify(json.errors))
+
+  if (!res.ok) {
+    const body = await res.text().catch(() => "")
+    console.error(`❌ bzzFetch [live-scores] error ${res.status} — path: ${path} — body: ${body.slice(0, 300)}`)
+    throw new Error(`bzzoiro API error ${res.status}`)
   }
-  return json.response as any[]
+  const json = await res.json()
+  console.log(`✅ bzzFetch [live-scores] ${path} — preview: ${JSON.stringify(json).slice(0, 200)}`)
+  return json
+}
+
+// ─── Map status bzzoiro → kode yang dipakai komponen live-scores.tsx ───────
+// Dari schema: status enum = "1st_half","2nd_half","aet","cancelled","extratime",
+//              "finished","halftime","inprogress","notstarted","penalties","postponed"
+function mapStatus(status: string, period?: string): string {
+  const s = (status ?? "").toLowerCase()
+  const p = (period ?? "").toLowerCase()
+
+  if (s === "inprogress" || s === "1st_half" || p === "1st_half") return "1H"
+  if (s === "2nd_half" || p === "2nd_half")  return "2H"
+  if (s === "halftime"  || p === "halftime")  return "HT"
+  if (s === "extratime" || s === "aet" || p === "extra_time") return "ET"
+  if (s === "penalties" || p === "penalties") return "P"
+  if (s === "finished")   return "FT"
+  if (s === "aet")        return "AET"
+  if (s === "notstarted") return "NS"
+  if (s === "postponed")  return "PST"
+  if (s === "cancelled")  return "CANC"
+  return "NS"
+}
+
+// ─── Transform bzzoiro EventDetailV2Schema → format komponen ──────────────
+// Schema bzzoiro: { id, home_team, away_team, home_score, away_score,
+//                   event_date, status, period, current_minute,
+//                   home_team_id, away_team_id, league_id }
+// Komponen butuh: { fixture: { id, date, status: { short, elapsed } },
+//                   teams: { home: { id, name, logo }, away: ... },
+//                   goals: { home, away } }
+function transformEvent(event: any) {
+  return {
+    fixture: {
+      id:     event.id,
+      date:   event.event_date,
+      status: {
+        short:   mapStatus(event.status, event.period),
+        elapsed: event.current_minute ?? null,
+      },
+    },
+    teams: {
+      home: {
+        id:   event.home_team_id   ?? 0,
+        name: event.home_team      ?? "",
+        // bzzoiro tidak sertakan logo langsung di events list — kosongkan dulu
+        // Logo bisa diambil dari /api/v2/teams/{id}/ jika diperlukan
+        logo: event.home_team_logo ?? "",
+      },
+      away: {
+        id:   event.away_team_id   ?? 0,
+        name: event.away_team      ?? "",
+        logo: event.away_team_logo ?? "",
+      },
+    },
+    goals: {
+      home: event.home_score ?? null,
+      away: event.away_score ?? null,
+    },
+  }
 }
 
 // ─── Fetch live matches untuk satu liga ───────────────────────────────────
+// bzzoiro endpoint live: GET /api/v2/events/live/?league_id={id}
+// Response: { count: N, events: [...] }
 async function fetchLiveForLeague(leagueId: number) {
-  const response = await apiFetch("/fixtures?live=all")
-  // Filter hanya liga yang diminta
-  return response.filter((f: any) => f.league.id === leagueId)
+  const json = await bzzFetch(`/api/v2/events/live/?league_id=${leagueId}`)
+  const events = json.events ?? json.results ?? (Array.isArray(json) ? json : [])
+  return events.map(transformEvent)
 }
 
 // ─── Fetch jadwal hari ini untuk satu liga ────────────────────────────────
+// bzzoiro endpoint events: GET /api/v2/events/?league_id={id}&date_from=...&date_to=...
 async function fetchScheduleForLeague(leagueId: number) {
   const today = new Date().toISOString().split("T")[0]
-  const response = await apiFetch(`/fixtures?date=${today}&league=${leagueId}`)
-  return response
+  const dateFrom = `${today}T00:00:00Z`
+  const dateTo   = `${today}T23:59:59Z`
+  const json = await bzzFetch(
+    `/api/v2/events/?league_id=${leagueId}&date_from=${dateFrom}&date_to=${dateTo}&limit=20`
+  )
+  const events = json.results ?? (Array.isArray(json) ? json : [])
+  return events.map(transformEvent)
 }
 
 // ─── Supabase cache helpers ────────────────────────────────────────────────
@@ -85,114 +160,70 @@ async function setCache(supabase: any, key: string, payload: any) {
       { onConflict: "cache_key" }
     )
   } catch {
-    // Cache write gagal — tidak masalah, lanjut saja
+    // Cache write gagal — tidak masalah
   }
 }
 
 // ─── Main handler ──────────────────────────────────────────────────────────
-// FIX: Terima request parameter dan destructure URL untuk baca ?league=
 export async function GET(request: Request) {
   const { searchParams } = new URL(request.url)
   const leagueId = parseInt(searchParams.get("league") ?? "39", 10)
 
-  // Validasi leagueId — harus ada di daftar yang diizinkan
   const isValidLeague = ALL_LEAGUE_IDS.includes(leagueId)
   const resolvedLeagueId = isValidLeague ? leagueId : 39
 
-  // Cache key per-liga sehingga tiap liga punya cache sendiri
   const cacheKeyLive     = `livescores_live_${resolvedLeagueId}`
   const cacheKeySchedule = `livescores_schedule_${resolvedLeagueId}`
-
   const supabase = getSupabase()
 
-  // ── 1. Cek cache live per-liga (TTL: 15 menit) ────────────────────────
+  // ── 1. Cek cache live (TTL: 15 menit) ────────────────────────────────
   if (supabase) {
     const cached = await getCache(supabase, cacheKeyLive)
     if (cached) {
       const ageMs = Date.now() - new Date(cached.fetched_at).getTime()
       if (ageMs < CACHE_TTL_LIVE_MS) {
-        return NextResponse.json({
-          ...cached.payload,
-          fromCache: true,
-          fetchedAt: cached.fetched_at,
-        })
+        return NextResponse.json({ ...cached.payload, fromCache: true, fetchedAt: cached.fetched_at })
       }
     }
   }
 
-  // ── 2. Fetch live dari API-Football ───────────────────────────────────
   try {
+    // ── 2. Fetch live dari bzzoiro ────────────────────────────────────
     const liveFixtures = await fetchLiveForLeague(resolvedLeagueId)
 
     if (liveFixtures.length > 0) {
-      // FIX: return flat { fixtures: [...] } bukan { groups: [...] }
-      // Komponen live-scores.tsx membaca data?.fixtures
       const payload = { mode: "live" as const, fixtures: liveFixtures }
-
       if (supabase) await setCache(supabase, cacheKeyLive, payload)
-
-      return NextResponse.json({
-        ...payload,
-        fromCache: false,
-        fetchedAt: new Date().toISOString(),
-      })
+      return NextResponse.json({ ...payload, fromCache: false, fetchedAt: new Date().toISOString() })
     }
 
-    // ── 3. Tidak ada live → cek cache jadwal ──────────────────────────
+    // ── 3. Tidak ada live → cek cache jadwal ─────────────────────────
     if (supabase) {
       const cached = await getCache(supabase, cacheKeySchedule)
       if (cached) {
         const ageMs = Date.now() - new Date(cached.fetched_at).getTime()
         if (ageMs < CACHE_TTL_SCHEDULE_MS) {
-          return NextResponse.json({
-            ...cached.payload,
-            fromCache: true,
-            fetchedAt: cached.fetched_at,
-          })
+          return NextResponse.json({ ...cached.payload, fromCache: true, fetchedAt: cached.fetched_at })
         }
       }
     }
 
-    // ── 4. Cache expired → fetch jadwal hari ini ──────────────────────
+    // ── 4. Fetch jadwal hari ini ──────────────────────────────────────
     const scheduleFixtures = await fetchScheduleForLeague(resolvedLeagueId)
-
-    // FIX: return flat { fixtures: [...] } bukan { groups: [...] }
     const payload = { mode: "schedule" as const, fixtures: scheduleFixtures }
-
     if (supabase) await setCache(supabase, cacheKeySchedule, payload)
 
-    return NextResponse.json({
-      ...payload,
-      fromCache: false,
-      fetchedAt: new Date().toISOString(),
-    })
+    return NextResponse.json({ ...payload, fromCache: false, fetchedAt: new Date().toISOString() })
 
   } catch (err: any) {
-    // ── 5. API gagal → coba kembalikan stale cache ────────────────────
+    console.error("❌ live-scores route error:", err.message)
+    // ── 5. API gagal → kembalikan stale cache jika ada ───────────────
     if (supabase) {
       const staleLive = await getCache(supabase, cacheKeyLive)
-      if (staleLive) {
-        return NextResponse.json({
-          ...staleLive.payload,
-          fromCache: true,
-          stale: true,
-          fetchedAt: staleLive.fetched_at,
-        })
-      }
+      if (staleLive) return NextResponse.json({ ...staleLive.payload, fromCache: true, stale: true, fetchedAt: staleLive.fetched_at })
       const staleSchedule = await getCache(supabase, cacheKeySchedule)
-      if (staleSchedule) {
-        return NextResponse.json({
-          ...staleSchedule.payload,
-          fromCache: true,
-          stale: true,
-          fetchedAt: staleSchedule.fetched_at,
-        })
-      }
+      if (staleSchedule) return NextResponse.json({ ...staleSchedule.payload, fromCache: true, stale: true, fetchedAt: staleSchedule.fetched_at })
     }
-
-    return NextResponse.json(
-      { error: err.message ?? "Gagal fetch data" },
-      { status: 500 }
-    )
+    return NextResponse.json({ error: err.message ?? "Gagal fetch data" }, { status: 500 })
   }
 }

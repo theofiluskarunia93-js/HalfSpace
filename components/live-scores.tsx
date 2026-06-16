@@ -28,14 +28,16 @@ const STATUS_CFG: Record<string, { label: string; live: boolean; cls: string }> 
 }
 
 // ─── Liga yang tersedia untuk dropdown filter ─────────────────────────────
+// World Cup: bzzoiro pakai league_id=27 (BUKAN 1 seperti API-Football)
 const LEAGUES = [
+  { id: 27,  slug: "world-cup",        name: "World Cup",         flag: "🌍" },
   { id: 39,  slug: "premier-league",   name: "Premier League",    flag: "🏴󠁧󠁢󠁥󠁮󠁧󠁿" },
   { id: 140, slug: "la-liga",          name: "La Liga",           flag: "🇪🇸" },
   { id: 135, slug: "serie-a",          name: "Serie A",           flag: "🇮🇹" },
   { id: 78,  slug: "bundesliga",       name: "Bundesliga",        flag: "🇩🇪" },
   { id: 61,  slug: "ligue-1",          name: "Ligue 1",           flag: "🇫🇷" },
   { id: 2,   slug: "champions-league", name: "Champions League",  flag: "🏆" },
-  { id: 3,   slug: "europa-league",    name: "Europa League",     flag: "🌍" },
+  { id: 3,   slug: "europa-league",    name: "Europa League",     flag: "⚽" },
 ]
 
 // ─── Storage key untuk cache lokal (per-liga) ─────────────────────────────
@@ -179,9 +181,47 @@ function isRateLimitError(err: string): boolean {
   )
 }
 
-// ─── Logo ──────────────────────────────────────────────────────────────────
+// ─── Country name → flag emoji map (untuk World Cup) ──────────────────────
+const COUNTRY_FLAGS: Record<string, string> = {
+  "Afghanistan": "🇦🇫", "Albania": "🇦🇱", "Algeria": "🇩🇿", "Angola": "🇦🇴",
+  "Argentina": "🇦🇷", "Australia": "🇦🇺", "Austria": "🇦🇹", "Belgium": "🇧🇪",
+  "Bolivia": "🇧🇴", "Bosnia": "🇧🇦", "Brazil": "🇧🇷", "Cameroon": "🇨🇲",
+  "Canada": "🇨🇦", "Chile": "🇨🇱", "China": "🇨🇳", "Colombia": "🇨🇴",
+  "Costa Rica": "🇨🇷", "Croatia": "🇭🇷", "Czech Republic": "🇨🇿", "Czechia": "🇨🇿",
+  "Denmark": "🇩🇰", "DR Congo": "🇨🇩", "Ecuador": "🇪🇨", "Egypt": "🇪🇬",
+  "England": "🏴󠁧󠁢󠁥󠁮󠁧󠁿", "Finland": "🇫🇮", "France": "🇫🇷", "Germany": "🇩🇪",
+  "Ghana": "🇬🇭", "Greece": "🇬🇷", "Honduras": "🇭🇳", "Hungary": "🇭🇺",
+  "Indonesia": "🇮🇩", "Iran": "🇮🇷", "Iraq": "🇮🇶", "Israel": "🇮🇱",
+  "Italy": "🇮🇹", "Ivory Coast": "🇨🇮", "Jamaica": "🇯🇲", "Japan": "🇯🇵",
+  "Jordan": "🇯🇴", "Kenya": "🇰🇪", "Mexico": "🇲🇽", "Morocco": "🇲🇦",
+  "Netherlands": "🇳🇱", "New Zealand": "🇳🇿", "Nigeria": "🇳🇬", "Norway": "🇳🇴",
+  "Panama": "🇵🇦", "Paraguay": "🇵🇾", "Peru": "🇵🇪", "Poland": "🇵🇱",
+  "Portugal": "🇵🇹", "Qatar": "🇶🇦", "Romania": "🇷🇴", "Russia": "🇷🇺",
+  "Saudi Arabia": "🇸🇦", "Scotland": "🏴󠁧󠁢󠁳󠁣󠁴󠁿", "Senegal": "🇸🇳", "Serbia": "🇷🇸",
+  "Slovakia": "🇸🇰", "Slovenia": "🇸🇮", "South Korea": "🇰🇷", "Korea Republic": "🇰🇷",
+  "Spain": "🇪🇸", "Sweden": "🇸🇪", "Switzerland": "🇨🇭", "Tunisia": "🇹🇳",
+  "Turkey": "🇹🇷", "Türkiye": "🇹🇷", "Ukraine": "🇺🇦", "Uruguay": "🇺🇾",
+  "USA": "🇺🇸", "United States": "🇺🇸", "Venezuela": "🇻🇪", "Wales": "🏴󠁧󠁢󠁷󠁬󠁳󠁿",
+  "Haiti": "🇭🇹", "Cabo Verde": "🇨🇻", "Cape Verde": "🇨🇻", "Uzbekistan": "🇺🇿",
+  "Curaçao": "🇨🇼", "Curacao": "🇨🇼", "Côte d'Ivoire": "🇨🇮", "Ivory Coast": "🇨🇮",
+  "Algeria": "🇩🇿", "DR Congo": "🇨🇩", "Congo": "🇨🇬", "South Africa": "🇿🇦",
+  "Bosnia & Herzegovina": "🇧🇦", "Bosnia and Herzegovina": "🇧🇦",
+}
+
+function getCountryFlag(name: string): string | null {
+  if (COUNTRY_FLAGS[name]) return COUNTRY_FLAGS[name]
+  for (const [country, flag] of Object.entries(COUNTRY_FLAGS)) {
+    if (name.toLowerCase().includes(country.toLowerCase())) return flag
+  }
+  return null
+}
+
+// ─── Logo — dengan fallback ke bendera negara atau initial ─────────────────
 function Logo({ src, alt, size = 6 }: { src: string; alt: string; size?: number }) {
   const [err, setErr] = useState(false)
+  const pxSize = size * 4
+  const flag = getCountryFlag(alt)
+
   if (src && !err) {
     return (
       <img
@@ -192,9 +232,26 @@ function Logo({ src, alt, size = 6 }: { src: string; alt: string; size?: number 
       />
     )
   }
+
+  if (flag) {
+    return (
+      <span
+        className="flex-shrink-0 select-none leading-none"
+        style={{ fontSize: pxSize * 0.85, lineHeight: 1 }}
+        role="img"
+        aria-label={alt}
+      >
+        {flag}
+      </span>
+    )
+  }
+
   return (
-    <div className={`flex h-${size} w-${size} flex-shrink-0 items-center justify-center rounded-full bg-muted text-xs font-bold text-muted-foreground`}>
-      {alt.charAt(0)}
+    <div
+      className={`flex h-${size} w-${size} flex-shrink-0 items-center justify-center rounded-full bg-muted font-bold text-muted-foreground`}
+      style={{ fontSize: Math.max(pxSize * 0.35, 10) }}
+    >
+      {alt.slice(0, 2).toUpperCase()}
     </div>
   )
 }
@@ -445,7 +502,7 @@ function DummyBanner() {
 
 // ─── Main Component ────────────────────────────────────────────────────────
 export function LiveScores() {
-  const [selectedLeague, setSelectedLeague] = useState("premier-league")
+  const [selectedLeague, setSelectedLeague] = useState("world-cup")
   const [data, setData]           = useState<ApiResponse | null>(null)
   const [isLoading, setIsLoading] = useState(true)
   const [isRefreshing, setIsRefreshing] = useState(false)
@@ -654,13 +711,13 @@ export function LiveScores() {
               <div className="md:hidden">
                 <MatchStrip
                   fixtures={fixtures}
-                  cardWidth="w-[100px]"
-                  logoSize={5}
-                  teamFontCls="text-[9px]"
-                  scoreFontCls="text-xs"
-                  timeFontCls="text-[10px]"
-                  timeLabelCls="text-[8px]"
-                  scrollStep={110}
+                  cardWidth="w-[130px]"
+                  logoSize={8}
+                  teamFontCls="text-[11px]"
+                  scoreFontCls="text-sm"
+                  timeFontCls="text-xs"
+                  timeLabelCls="text-[10px]"
+                  scrollStep={140}
                   isDummy={isDummy}
                 />
               </div>
@@ -669,13 +726,13 @@ export function LiveScores() {
               <div className="hidden md:block">
                 <MatchStrip
                   fixtures={fixtures}
-                  cardWidth="w-[120px]"
-                  logoSize={6}
-                  teamFontCls="text-[10px]"
-                  scoreFontCls="text-xs"
-                  timeFontCls="text-[11px]"
-                  timeLabelCls="text-[9px]"
-                  scrollStep={130}
+                  cardWidth="w-[150px]"
+                  logoSize={10}
+                  teamFontCls="text-xs"
+                  scoreFontCls="text-base"
+                  timeFontCls="text-xs"
+                  timeLabelCls="text-[10px]"
+                  scrollStep={160}
                   isDummy={isDummy}
                 />
               </div>
