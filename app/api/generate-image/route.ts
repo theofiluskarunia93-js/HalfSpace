@@ -609,19 +609,19 @@ async function buildCompositeSVG(backgroundDataURI: string, overlay: OverlayData
               },
             },
           },
-          // Content wrapper (bottom)
+          // Content wrapper (bottom) — dinaikkan agar ada ruang untuk branding di bawah
           {
             type: "div",
             props: {
               style: {
                 position: "absolute",
-                bottom: 0,
+                bottom: 75,
                 left: 0,
                 right: 0,
                 display: "flex",
                 flexDirection: "column",
                 alignItems: "center",
-                paddingBottom: 32,
+                paddingBottom: 0,
                 paddingLeft: 24,
                 paddingRight: 24,
                 gap: 12,
@@ -649,22 +649,35 @@ async function buildCompositeSVG(backgroundDataURI: string, overlay: OverlayData
                 },
                 // Dynamic content
                 renderContent(),
-                // Branding
-                {
-                  type: "div",
-                  props: {
-                    style: {
-                      marginTop: 8,
-                      fontSize: 11,
-                      color: "rgba(255,255,255,0.75)",
-                      letterSpacing: 3,
-                      textTransform: "uppercase",
-                      fontWeight: 700,
-                    },
-                    children: "HALFSPACESPORT.COM",
-                  },
-                },
               ],
+            },
+          },
+          // Branding — tetap di posisi paling bawah
+          {
+            type: "div",
+            props: {
+              style: {
+                position: "absolute",
+                bottom: 16,
+                left: 0,
+                right: 0,
+                display: "flex",
+                justifyContent: "center",
+                alignItems: "center",
+              },
+              children: {
+                type: "div",
+                props: {
+                  style: {
+                    fontSize: 11,
+                    color: "rgba(255,255,255,0.75)",
+                    letterSpacing: 3,
+                    textTransform: "uppercase",
+                    fontWeight: 700,
+                  },
+                  children: "HALFSPACESPORT.COM",
+                },
+              },
             },
           },
           // Top-left accent bar
