@@ -1,25 +1,92 @@
+// app/api/generate-social-captions/route.ts
+//
+// Generate caption media sosial — powered by Groq (llama-3.3-70b-versatile).
+//
+// Sebelumnya endpoint ini memakai OpenRouter dengan model yang bisa dipilih
+// manual dari frontend. Sekarang OpenRouter dihilangkan total — Groq menjadi
+// satu-satunya "otak" dan langsung generate caption untuk SEMUA platform
+// sekaligus (Instagram, TikTok, X, Facebook, Threads) dalam satu panggilan,
+// dengan aturan per-platform yang sudah di-embed langsung di prompt di bawah.
+//
+// Input : title (wajib), excerpt, firstSentence (kalimat pertama artikel,
+//         dipakai sebagai hook literal untuk caption X), slug (untuk
+//         membangun link artikel)
+// Output: { instagram, tiktok, x, facebook, threads }
+
 import { NextRequest, NextResponse } from "next/server"
 import { requireAdmin } from "@/lib/supabase/server-auth"
 
-// ─── Model list yang tersedia via OpenRouter ───────────────────────────────────
-// Tambah / hapus sesuai kebutuhan. id = model string OpenRouter.
-export const OPENROUTER_MODELS = [
-  { id: "anthropic/claude-sonnet-4-5",        label: "Claude Sonnet 4.5" },
-  { id: "anthropic/claude-3-5-haiku",         label: "Claude Haiku 3.5" },
-  { id: "google/gemini-2.0-flash-001",        label: "Gemini 2.0 Flash" },
-  { id: "google/gemini-2.5-pro",              label: "Gemini 2.5 Pro" },
-  { id: "openai/gpt-4o-mini",                 label: "GPT-4o Mini" },
-  { id: "openai/gpt-4o",                      label: "GPT-4o" },
-  { id: "meta-llama/llama-3.3-70b-instruct",  label: "Llama 3.3 70B" },
-  { id: "mistralai/mistral-small-3.1-24b-instruct", label: "Mistral Small 3.1" },
-  { id: "deepseek/deepseek-chat-v3-0324",     label: "DeepSeek V3" },
-] as const
+// Domain publik HalfSpace Sport — dipakai untuk menyusun link artikel yang
+// disisipkan ke caption X & Facebook, dan disebut di CTA TikTok.
+const SITE_URL = (process.env.NEXT_PUBLIC_SITE_URL ?? "https://halfspacesport.com").replace(/\/$/, "")
 
 interface GenerateCaptionsRequest {
-  title: string
-  excerpt: string
-  model?: string
+  title:         string
+  excerpt?:      string
+  firstSentence?: string
+  slug?:         string
 }
+
+interface Captions {
+  instagram: string
+  tiktok:    string
+  x:         string
+  facebook:  string
+  threads:   string
+}
+
+// ─── Helpers ──────────────────────────────────────────────────────────────────
+
+async function groqChat(apiKey: string, prompt: string): Promise<string> {
+  const res = await fetch("https://api.groq.com/openai/v1/chat/completions", {
+    method:  "POST",
+    headers: {
+      "Content-Type":  "application/json",
+      "Authorization": `Bearer ${apiKey}`,
+    },
+    body: JSON.stringify({
+      model:       "llama-3.3-70b-versatile",
+      temperature: 0.85,
+      max_tokens:  2200,
+      messages: [{ role: "user", content: prompt }],
+      response_format: { type: "json_object" },
+    }),
+  })
+
+  if (!res.ok) {
+    const errText = await res.text()
+    if (res.status === 429) throw new Error("Groq API rate limit tercapai. Tunggu beberapa detik lalu coba lagi.")
+    if (res.status === 401) throw new Error("GROQ_API_KEY tidak valid. Hubungi administrator.")
+    if (res.status === 400) throw new Error("Request ke Groq gagal. Coba kurangi panjang excerpt/konteks.")
+    throw new Error(`Groq API error ${res.status}: ${errText.slice(0, 200)}`)
+  }
+
+  const data = await res.json() as { choices?: { message?: { content?: string } }[] }
+  return (data.choices?.[0]?.message?.content ?? "").trim()
+}
+
+// Parsing JSON dengan fallback, untuk jaga-jaga kalau model menyisipkan
+// markdown fence walau sudah diminta response_format json_object.
+function extractJsonObject<T>(raw: string): T | null {
+  let cleaned = raw
+    .replace(/^```json\s*/i, "")
+    .replace(/^```\s*/i, "")
+    .replace(/\s*```$/i, "")
+    .trim()
+
+  if (cleaned.startsWith("{")) {
+    try { return JSON.parse(cleaned) as T } catch { /* lanjut */ }
+  }
+
+  const match = cleaned.match(/\{[\s\S]*\}/)
+  if (match) {
+    try { return JSON.parse(match[0]) as T } catch { /* gagal juga */ }
+  }
+
+  return null
+}
+
+// ─── POST handler ─────────────────────────────────────────────────────────────
 
 export async function POST(request: NextRequest) {
   // ── Auth check ──────────────────────────────────────────────────────────
@@ -28,44 +95,73 @@ export async function POST(request: NextRequest) {
     return NextResponse.json({ error: "Unauthorized" }, { status: 401 })
   }
 
+  const apiKey = process.env.GROQ_API_KEY
+  if (!apiKey) {
+    return NextResponse.json(
+      { error: "GROQ_API_KEY belum dikonfigurasi di environment variables." },
+      { status: 500 }
+    )
+  }
+
+  let reqBody: GenerateCaptionsRequest
   try {
-    const { title, excerpt, model }: GenerateCaptionsRequest = await request.json()
+    reqBody = await request.json()
+  } catch {
+    return NextResponse.json({ error: "Request body tidak valid." }, { status: 400 })
+  }
 
-    if (!title?.trim()) {
-      return NextResponse.json({ error: "Judul artikel wajib diisi" }, { status: 400 })
-    }
+  const { title, excerpt, firstSentence, slug } = reqBody
 
-    const apiKey = process.env.OPENROUTER_API_KEY
-    if (!apiKey) {
-      return NextResponse.json(
-        { error: "OPENROUTER_API_KEY belum dikonfigurasi di environment variables." },
-        { status: 500 }
-      )
-    }
+  if (!title?.trim()) {
+    return NextResponse.json({ error: "Judul artikel wajib diisi" }, { status: 400 })
+  }
 
-    // Default ke model pertama jika tidak dipilih
-    const selectedModel = model || OPENROUTER_MODELS[0].id
+  const articleUrl = slug?.trim() ? `${SITE_URL}/article/${slug.trim()}` : ""
 
-    const prompt = `Kamu adalah copywriter media sosial profesional untuk portal berita olahraga HalfSpace.id yang berfokus pada sepak bola.
+  // ─── Prompt: aturan per platform di-embed langsung di sini ──────────────────
+  const prompt = `Kamu adalah copywriter media sosial profesional untuk media sepak bola HalfSpace Sport (${SITE_URL.replace(/^https?:\/\//, "")}).
 
-Berdasarkan artikel berikut, buat caption untuk 5 platform sekaligus:
+Berdasarkan artikel berikut, buat caption untuk 5 platform sekaligus: Instagram, TikTok, X (Twitter), Facebook, dan Threads.
 
-JUDUL: ${title}
-EXCERPT: ${excerpt || "(tidak ada excerpt)"}
+JUDUL ARTIKEL: ${title}
+EXCERPT/RINGKASAN: ${excerpt?.trim() || "(tidak ada excerpt)"}
+KALIMAT PERTAMA ARTIKEL (hook asli dari isi artikel): ${firstSentence?.trim() || "(tidak tersedia — gunakan judul sebagai dasar hook)"}
+LINK ARTIKEL: ${articleUrl || "(tidak tersedia)"}
 
-Buat caption yang:
-- Natural, engaging, dan sesuai karakter masing-masing platform
-- Gunakan bahasa Indonesia yang kasual tapi profesional
-- Sertakan emoji yang relevan
-- Sertakan hashtag yang tepat di akhir (sesuai platform)
-- Jangan sertakan link artikel (akan ditambahkan manual)
+Tulis dalam Bahasa Indonesia yang natural dan sesuai karakter media sosial sepak bola — jangan terasa seperti terjemahan kaku, dan jangan memakai frasa generik AI seperti "tentu saja" atau "tidak dapat dipungkiri".
 
-ATURAN PER PLATFORM:
-- Instagram: Max 2200 karakter, storytelling, 15-20 hashtag di bagian akhir dengan #
-- TikTok: Max 2200 karakter, casual, pakai kata "guys" / "sob", 5-10 hashtag ringan
-- X (Twitter): MAKSIMAL 240 karakter (penting!), langsung ke poin, pakai 1-2 hashtag saja
-- Facebook: Panjang boleh, tone informatif, sertakan sedikit context untuk audiens dewasa
-- Threads: Max 500 karakter, casual, lebih personal, 2-5 hashtag
+━━━ ATURAN PER PLATFORM (WAJIB DIIKUTI PERSIS, JANGAN DICAMPUR ANTAR PLATFORM) ━━━
+
+INSTAGRAM:
+- Baris PERTAMA harus berupa hook 1 baris yang menarik perhatian
+- Body boleh lebih panjang dari hook — pisahkan setiap paragraf dengan baris kosong agar enak dibaca
+- Gunakan emoji secukupnya, jangan berlebihan
+- Tutup dengan CTA: "link di bio"
+- Akhiri dengan TEPAT 5 hashtag yang relevan dengan topik artikel
+
+X (TWITTER):
+- MAKSIMAL 250 karakter total termasuk link — ini batas keras, jangan dilanggar
+- Hook pembuka HARUS memakai/mengadaptasi langsung kalimat pertama artikel di atas, tanpa basa-basi sebelum masuk ke intinya
+- Sisipkan link artikel (${articleUrl || "(tidak tersedia, lewati bagian ini jika kosong)"}) secara natural karena X mendukung link yang bisa diklik
+- Tidak perlu banyak hashtag, fokus ke hook dan link
+
+FACEBOOK:
+- Nada mengobrol dan santai, seperti teman membahas bola — bukan siaran pers
+- Boleh agak panjang, beberapa paragraf singkat
+- Sisipkan link artikel (${articleUrl || "(tidak tersedia, lewati bagian ini jika kosong)"}) secara inline/menyatu dalam kalimat, bukan ditempel begitu saja di akhir
+- Tutup dengan SATU pertanyaan terbuka ke audiens untuk memancing komentar dan menaikkan engagement
+
+TIKTOK:
+- Ini caption PENDAMPING untuk video/slide artikel, bukan artikel itu sendiri — harus pendek dan kasual
+- Hook di awal seperti sedang mengobrol langsung dengan audiens (sapaan santai)
+- Tutup dengan CTA persis: "kunjungi www.halfspacesport.com"
+- Akhiri dengan TEPAT 5 hashtag relevan, dan salah satunya WAJIB #halfspacesport
+
+THREADS:
+- Nada PALING santai dan personal di antara semua platform — seperti curhat ke teman, bukan promosi
+- Mirip gaya X tapi lebih ke arah personal/curhat
+- Cukup 1-2 kalimat saja dengan hook yang kuat, jangan bertele-tele
+- Tidak perlu CTA, link, atau hashtag
 
 Jawab HANYA dalam format JSON seperti ini, tanpa teks lain apapun, tanpa markdown backtick:
 {
@@ -76,58 +172,20 @@ Jawab HANYA dalam format JSON seperti ini, tanpa teks lain apapun, tanpa markdow
   "threads": "..."
 }`
 
-    const res = await fetch("https://openrouter.ai/api/v1/chat/completions", {
-      method: "POST",
-      headers: {
-        "Content-Type": "application/json",
-        "Authorization": `Bearer ${apiKey}`,
-        "HTTP-Referer": "https://halfspace.id",
-        "X-Title": "HalfSpace CMS",
-      },
-      body: JSON.stringify({
-        model: selectedModel,
-        temperature: 0.8,
-        max_tokens: 2000,
-        messages: [{ role: "user", content: prompt }],
-      }),
-    })
+  try {
+    const raw = await groqChat(apiKey, prompt)
 
-    if (!res.ok) {
-      const errText = await res.text()
-      console.error("[generate-social-captions] OpenRouter error:", res.status, errText)
-
-      if (res.status === 401) {
-        return NextResponse.json(
-          { error: "OPENROUTER_API_KEY tidak valid. Cek konfigurasi .env.local." },
-          { status: 401 }
-        )
-      }
-      if (res.status === 429) {
-        return NextResponse.json(
-          { error: "Rate limit OpenRouter tercapai. Tunggu beberapa detik lalu coba lagi." },
-          { status: 429 }
-        )
-      }
-
+    const captions = extractJsonObject<Captions>(raw)
+    if (!captions) {
+      console.error("[generate-social-captions] Gagal parse hasil Groq. Raw:", raw.slice(0, 800))
       return NextResponse.json(
-        { error: `OpenRouter error ${res.status}. Coba lagi.` },
-        { status: 500 }
+        { error: "Gagal memproses hasil Groq. Coba lagi dalam beberapa detik." },
+        { status: 422 }
       )
     }
 
-    const data = await res.json()
-    const rawText: string = data.choices?.[0]?.message?.content ?? ""
-
-    // Strip JSON fences jika model menambahkan ```json ... ```
-    const cleanJson = rawText
-      .replace(/```json\n?/g, "")
-      .replace(/```\n?/g, "")
-      .trim()
-
-    const captions = JSON.parse(cleanJson)
-
     // Pastikan semua platform ada
-    const requiredKeys = ["instagram", "tiktok", "x", "facebook", "threads"]
+    const requiredKeys: (keyof Captions)[] = ["instagram", "tiktok", "x", "facebook", "threads"]
     for (const key of requiredKeys) {
       if (!captions[key]) captions[key] = ""
     }
@@ -135,9 +193,7 @@ Jawab HANYA dalam format JSON seperti ini, tanpa teks lain apapun, tanpa markdow
     return NextResponse.json(captions)
   } catch (error) {
     console.error("[generate-social-captions]", error)
-    return NextResponse.json(
-      { error: "Gagal generate caption. Coba lagi." },
-      { status: 500 }
-    )
+    const message = error instanceof Error ? error.message : "Gagal generate caption. Coba lagi."
+    return NextResponse.json({ error: message }, { status: 500 })
   }
 }

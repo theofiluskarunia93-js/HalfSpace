@@ -16,8 +16,6 @@ import {
   Loader2,
   ExternalLink,
   AlertCircle,
-  ChevronDown,
-  Bot,
   Wand2,
   ChevronRight,
 } from "lucide-react"
@@ -26,20 +24,6 @@ import { Textarea } from "@/components/ui/textarea"
 import { Input } from "@/components/ui/input"
 import { createClient } from "@/lib/supabase/client"
 import type { ContentType, OverlayData } from "@/app/api/generate-image/route"
-
-// ─── Model list ───────────────────────────────────────────────────────────────
-
-const MODELS = [
-  { id: "anthropic/claude-sonnet-4-5",               label: "Claude Sonnet 4.5" },
-  { id: "anthropic/claude-3-5-haiku",                label: "Claude Haiku 3.5" },
-  { id: "google/gemini-2.0-flash-001",               label: "Gemini 2.0 Flash" },
-  { id: "google/gemini-2.5-pro",                     label: "Gemini 2.5 Pro" },
-  { id: "openai/gpt-4o-mini",                        label: "GPT-4o Mini" },
-  { id: "openai/gpt-4o",                             label: "GPT-4o" },
-  { id: "meta-llama/llama-3.3-70b-instruct",         label: "Llama 3.3 70B" },
-  { id: "mistralai/mistral-small-3.1-24b-instruct",  label: "Mistral Small 3.1" },
-  { id: "deepseek/deepseek-chat-v3-0324",            label: "DeepSeek V3" },
-]
 
 // ─── Types ────────────────────────────────────────────────────────────────────
 
@@ -66,6 +50,21 @@ interface Captions {
 
 type Platform = keyof Captions
 type CopyState = Partial<Record<Platform, boolean>>
+
+// ─── Ekstrak kalimat pertama dari konten artikel ───────────────────────────────
+// Dipakai sebagai hook literal untuk caption X (aturan: "hook = kalimat pertama
+// dari artikel sendiri, tanpa basa-basi").
+
+function extractFirstSentence(html: string): string {
+  const text = html
+    .replace(/<[^>]+>/g, " ")
+    .replace(/&nbsp;/g, " ")
+    .replace(/\s+/g, " ")
+    .trim()
+  if (!text) return ""
+  const match = text.match(/^.*?[.!?](?:\s|$)/)
+  return (match ? match[0] : text.slice(0, 160)).trim()
+}
 
 // ─── Content type meta ────────────────────────────────────────────────────────
 
@@ -281,53 +280,6 @@ const OVERLAY_FIELDS: Partial<Record<ContentType, FieldDef[]>> = {
   ],
 }
 
-// ─── Model Selector ───────────────────────────────────────────────────────────
-
-function ModelSelector({ value, onChange }: { value: string; onChange: (val: string) => void }) {
-  const [open, setOpen] = useState(false)
-  const selected = MODELS.find((m) => m.id === value) ?? MODELS[0]
-
-  return (
-    <div className="relative">
-      <button
-        type="button"
-        onClick={() => setOpen((o) => !o)}
-        className="flex items-center gap-2 rounded-lg border border-border bg-secondary/40 px-3 py-1.5 text-xs text-foreground hover:border-primary/50 hover:bg-secondary/70 transition-colors"
-      >
-        <Bot className="h-3.5 w-3.5 text-primary" />
-        <span className="font-medium">{selected.label}</span>
-        <ChevronDown className={`h-3 w-3 text-muted-foreground transition-transform ${open ? "rotate-180" : ""}`} />
-      </button>
-
-      {open && (
-        <>
-          <div className="fixed inset-0 z-40" onClick={() => setOpen(false)} />
-          <div className="absolute right-0 top-full z-50 mt-1.5 w-52 rounded-xl border border-border bg-card shadow-xl overflow-hidden">
-            <div className="px-3 py-2 border-b border-border">
-              <p className="text-[10px] uppercase tracking-widest text-muted-foreground font-bold">Pilih Model AI</p>
-            </div>
-            <div className="max-h-64 overflow-y-auto py-1">
-              {MODELS.map((model) => (
-                <button
-                  key={model.id}
-                  type="button"
-                  onClick={() => { onChange(model.id); setOpen(false) }}
-                  className={`flex w-full items-center gap-2.5 px-3 py-2 text-left text-xs transition-colors hover:bg-secondary ${model.id === value ? "text-primary font-semibold bg-primary/5" : "text-foreground"}`}
-                >
-                  {model.id === value
-                    ? <Check className="h-3 w-3 text-primary flex-shrink-0" />
-                    : <span className="w-3 flex-shrink-0" />}
-                  {model.label}
-                </button>
-              ))}
-            </div>
-          </div>
-        </>
-      )}
-    </div>
-  )
-}
-
 // ─── Caption Card ─────────────────────────────────────────────────────────────
 
 function CaptionCard({
@@ -461,7 +413,7 @@ export function SocialMediaView({ onBack, articleId }: SocialMediaViewProps) {
   const [loadingArticle, setLoadingArticle] = useState(true)
 
   // Section 1 — Caption
-  const [selectedModel, setSelectedModel] = useState(MODELS[0].id)
+  const [firstSentence, setFirstSentence] = useState("")
   const [captions, setCaptions] = useState<Captions>({ instagram: "", tiktok: "", x: "", facebook: "", threads: "" })
   const [generatingCaptions, setGeneratingCaptions] = useState(false)
   const [captionError, setCaptionError] = useState<string | null>(null)
@@ -486,12 +438,19 @@ export function SocialMediaView({ onBack, articleId }: SocialMediaViewProps) {
       setLoadingArticle(true)
       const { data, error } = await supabase
         .from("articles")
-        .select("id, title, excerpt, featured_image_url, slug")
+        .select("id, title, excerpt, content, featured_image_url, slug")
         .eq("id", articleId)
         .single()
 
       if (!error && data) {
-        setArticle(data)
+        setArticle({
+          id: data.id,
+          title: data.title,
+          excerpt: data.excerpt,
+          featured_image_url: data.featured_image_url,
+          slug: data.slug,
+        })
+        setFirstSentence(extractFirstSentence(data.content || ""))
 
         // Auto-detect & parse overlay from title
         const ct = detectContentType(data.title)
@@ -514,7 +473,12 @@ export function SocialMediaView({ onBack, articleId }: SocialMediaViewProps) {
       const response = await fetch("/api/generate-social-captions", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ title: article.title, excerpt: article.excerpt, model: selectedModel }),
+        body: JSON.stringify({
+          title: article.title,
+          excerpt: article.excerpt,
+          firstSentence,
+          slug: article.slug,
+        }),
       })
       if (!response.ok) {
         const err = await response.json()
@@ -661,10 +625,9 @@ export function SocialMediaView({ onBack, articleId }: SocialMediaViewProps) {
                 <span className="flex h-6 w-6 items-center justify-center rounded-full bg-primary/15 text-primary text-xs font-black">1</span>
                 Caption Generator
               </h3>
-              <p className="text-xs text-muted-foreground mt-0.5">Generate caption untuk semua platform sekaligus.</p>
+              <p className="text-xs text-muted-foreground mt-0.5">Generate caption untuk semua platform sekaligus — powered by Groq.</p>
             </div>
             <div className="flex items-center gap-2 flex-wrap">
-              <ModelSelector value={selectedModel} onChange={setSelectedModel} />
               <Button
                 onClick={handleGenerateCaptions}
                 disabled={generatingCaptions}

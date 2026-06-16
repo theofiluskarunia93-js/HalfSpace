@@ -8,15 +8,11 @@ import Paragraph from "@tiptap/extension-paragraph"
 import { StarterKit } from "@tiptap/starter-kit"
 import { Image as TiptapImage } from "@tiptap/extension-image"
 import { Link as TiptapLink } from "@tiptap/extension-link"
-import { Table } from "@tiptap/extension-table"
-import { TableRow } from "@tiptap/extension-table-row"
-import { TableHeader } from "@tiptap/extension-table-header"
-import { TableCell } from "@tiptap/extension-table-cell"
 import {
   ArrowLeft, Save, Image as ImageIcon, X, Plus, Eye,
   Bold, Italic, List, ListOrdered, Link2,
   Code2, Minus, Heading1, Heading2, Heading3,
-  Undo2, Redo2, Table as TableIcon, Star,
+  Undo2, Redo2, Star,
   Pilcrow, MessageSquareQuote, Sparkles,
 } from "lucide-react"
 import type { NewsType } from "@/app/api/generate-article/route"
@@ -452,10 +448,6 @@ export function CreateArticleView({ onBack, articleId }: CreateArticleViewProps)
   const [aiError,       setAiError]       = useState<string | null>(null)
   const [aiProgress,    setAiProgress]    = useState<{ step: number; label: string } | null>(null)
 
-  // ── Humanizer state ───────────────────────────────────────────────────────────────
-  const [isHumanizing,  setIsHumanizing]  = useState(false)
-  const [humanizeToast, setHumanizeToast] = useState<{ type: "success" | "error"; msg: string } | null>(null)
-
   // ── Pre-loaded widgets (untuk artikel lama dari Posts → Edit) ──────────────
   // Diisi setelah fetchArticle parse shortcode dari konten artikel.
   const [preloadedWidgets, setPreloadedWidgets] = useState<{ widgetId: string; widgetType: WidgetType }[]>([])
@@ -480,10 +472,6 @@ export function CreateArticleView({ onBack, articleId }: CreateArticleViewProps)
       CustomParagraph,
       TiptapImage,
       TiptapLink.configure({ openOnClick: false, HTMLAttributes: { target: "_blank", rel: "noopener noreferrer" } }),
-      Table.configure({ resizable: true }),
-      TableRow,
-      TableHeader,
-      TableCell,
     ],
     editorProps: {
       attributes: {
@@ -720,11 +708,6 @@ export function CreateArticleView({ onBack, articleId }: CreateArticleViewProps)
     setLinkUrl("https://")
   }, [editor, linkUrl, linkText])
 
-  const handleInsertTable = useCallback(() => {
-    if (!editor) return
-    editor.chain().focus().insertTable({ rows: 3, cols: 3, withHeaderRow: true }).run()
-  }, [editor])
-
   const handleInsertSectionLabel = useCallback(() => {
     if (!editor) return
     editor.chain().focus().insertContent(
@@ -815,42 +798,6 @@ export function CreateArticleView({ onBack, articleId }: CreateArticleViewProps)
     } finally {
       setAiGenerating(false)
       setAiProgress(null)
-    }
-  }
-
-  // ── Humanizer handler ─────────────────────────────────────────────────────────────
-  // Alur: ambil konten editor saat ini → kirim ke /api/humanize-article → replace konten
-  async function handleHumanize() {
-    if (!editor) return
-    const currentHtml = editor.getHTML()
-    const plainText = editor.getText()
-    if (!plainText.trim() || plainText.trim().length < 50) {
-      setHumanizeToast({ type: "error", msg: "Konten editor terlalu pendek untuk di-humanize. Generate artikel dulu." })
-      setTimeout(() => setHumanizeToast(null), 4000)
-      return
-    }
-    setIsHumanizing(true)
-    setHumanizeToast(null)
-    try {
-      const res = await fetch("/api/humanize-article", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({
-          html:     currentHtml,
-          newsType: aiNewsType,
-        }),
-      })
-      const data = await res.json()
-      if (!res.ok) throw new Error(data.error ?? `Error ${res.status}`)
-      // Ganti konten editor dengan hasil humanizer
-      editor.commands.setContent(data.content)
-      setHumanizeToast({ type: "success", msg: "✨ Artikel berhasil di-humanize oleh Gemini!" })
-      setTimeout(() => setHumanizeToast(null), 4000)
-    } catch (err: any) {
-      setHumanizeToast({ type: "error", msg: err.message ?? "Humanize gagal. Coba lagi." })
-      setTimeout(() => setHumanizeToast(null), 5000)
-    } finally {
-      setIsHumanizing(false)
     }
   }
 
@@ -1217,9 +1164,6 @@ export function CreateArticleView({ onBack, articleId }: CreateArticleViewProps)
                   <ToolbarButton onClick={handleInsertImage} title="Sisipkan Gambar">
                     <ImageIcon className="h-4 w-4" />
                   </ToolbarButton>
-                  <ToolbarButton onClick={handleInsertTable} title="Sisipkan Tabel">
-                    <TableIcon className="h-4 w-4" />
-                  </ToolbarButton>
                   <ToolbarSeparator />
                   <ToolbarButton onClick={() => editor?.chain().focus().undo().run()} disabled={!editor?.can().undo()} title="Undo">
                     <Undo2 className="h-4 w-4" />
@@ -1231,34 +1175,7 @@ export function CreateArticleView({ onBack, articleId }: CreateArticleViewProps)
                   <ToolbarButton onClick={() => { if (!aiGenerating) { setAiModalOpen(true); setAiError(null) } }} title="Generate Breaking News dengan AI" active={aiModalOpen} disabled={aiGenerating}>
                     <Sparkles className="h-4 w-4" />
                   </ToolbarButton>
-                  <ToolbarButton
-                    onClick={handleHumanize}
-                    disabled={isHumanizing}
-                    title="Humanize artikel dengan Gemini (⭐ → ganti draft menjadi lebih natural)"
-                    active={isHumanizing}
-                  >
-                    {isHumanizing ? (
-                      <svg className="h-4 w-4 animate-spin" viewBox="0 0 24 24" fill="none">
-                        <circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4"/>
-                        <path className="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8v8z"/>
-                      </svg>
-                    ) : (
-                      <Star className="h-4 w-4 text-yellow-400" />
-                    )}
-                  </ToolbarButton>
                 </div>
-
-                {/* Humanize Toast */}
-                {humanizeToast && (
-                  <div className={[
-                    "flex items-center gap-2 px-4 py-2 text-xs font-medium border-b border-border transition-all",
-                    humanizeToast.type === "success"
-                      ? "bg-primary/10 text-primary border-primary/20"
-                      : "bg-destructive/10 text-destructive border-destructive/20",
-                  ].join(" ")}>
-                    {humanizeToast.msg}
-                  </div>
-                )}
 
                 {/* Area tulis */}
                 <div className="h-[640px] overflow-y-auto bg-card px-10 py-8 scroll-smooth">
@@ -1793,10 +1710,9 @@ export function CreateArticleView({ onBack, articleId }: CreateArticleViewProps)
                 </div>
                 <div className="flex flex-col gap-1.5">
                   {[
-                    { step: 1, label: "Menulis Draft" },
-                    { step: 2, label: "Memverifikasi Fakta" },
-                    { step: 3, label: "Menyempurnakan Konten" },
-                    { step: 4, label: "Draft Selesai" },
+                    { step: 1, label: "Menyusun Prompt Editorial" },
+                    { step: 2, label: "Menulis Draft dengan Gemini" },
+                    { step: 3, label: "Draft Selesai" },
                   ].map(({ step, label }) => {
                     const isDone    = aiProgress.step > step
                     const isActive  = aiProgress.step === step
@@ -1828,7 +1744,7 @@ export function CreateArticleView({ onBack, articleId }: CreateArticleViewProps)
 
           {/* Footer */}
           <div className="flex items-center justify-between border-t border-border px-6 py-4">
-            <p className="text-[11px] text-muted-foreground">Powered by Groq · Llama 3.3 70B · Tavily</p>
+            <p className="text-[11px] text-muted-foreground">Powered by Google Gemini</p>
             <div className="flex gap-3">
               <button
                 onClick={() => { setAiModalOpen(false); setAiError(null) }}

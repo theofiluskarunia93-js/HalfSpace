@@ -1,20 +1,33 @@
 // app/api/generate-article/route.ts
 //
-// Generate artikel sepak bola bergaya The Athletic — powered by Groq (llama-3.3-70b-versatile).
-// + Tavily fact-check integration (4-step pipeline)
-// + Auth-only (no rate limit)
+// Generate artikel sepak bola bergaya The Athletic — powered by Google Gemini.
 //
-// Pipeline:
-//   Step 1 : Groq tulis draft dari konteks
-//   Step 2 : Tavily fact-check klaim dari draft
-//   Step 3 : Groq sisipkan fakta inline ke draft
-//   Step 4 : Output muncul di editor
+// Sebelumnya pipeline ini memakai Groq (draft) + Tavily (fact-check inline).
+// Sekarang draft langsung ditulis oleh Gemini dalam satu panggilan, karena:
+//   - Gemini sebelumnya hanya dipakai sebagai "Humanizer" tahap kedua
+//   - Sekarang Gemini menulis draft asli, jadi tahap Humanizer terpisah
+//     sudah tidak diperlukan lagi (lihat: penghapusan /api/humanize-article)
+//   - Tavily fact-check dihapus total dari pipeline ini
 //
-// Streaming progress via SSE (Server-Sent Events) ke client.
+// Pipeline baru:
+//   Step 1 : Menyusun prompt editorial (gaya penulisan + tipe berita + topik/konteks)
+//   Step 2 : Gemini menulis draft lengkap (judul + isi, sudah final)
+//   Step 3 : Output dikirim ke editor
+//
+// Streaming progress via SSE (Server-Sent Events) ke client — kontrak event
+// SSE ("progress" | "done" | "error") dipertahankan sama seperti sebelumnya
+// agar frontend (create-article-view.tsx) tidak perlu mengubah cara baca stream.
+//
 // Input : newsType + topic + context
 // Output: SSE stream → { event: "progress"|"done"|"error", data: ... }
+//
+// Catatan API key:
+// - Pakai GEMINI_API_KEY (format Google AI Studio terbaru: "AQ.xxx")
+// - SDK: @google/genai (class GoogleGenAI) — jangan fetch manual ke endpoint v1beta lama
+// - Model: gemini-3.5-flash (sama dengan model yang sebelumnya dipakai Humanizer)
 
 import { NextRequest, NextResponse } from "next/server"
+import { GoogleGenAI } from "@google/genai"
 import { requireAdmin } from "@/lib/supabase/server-auth"
 
 export type NewsType =
@@ -80,6 +93,7 @@ Jangan gunakan frasa-frasa berikut dalam bentuk apapun — ini adalah fingerprin
 - Setiap paragraf maksimal 4 kalimat
 - Gunakan <blockquote> HANYA untuk kutipan langsung dari narasumber yang ada di konteks
 - JANGAN tambahkan heading, subheading, atau judul di dalam konten — hanya <p> dan <blockquote>
+- Jika tipe berita memiliki struktur bagian (lihat instruksi tipe di bawah), bagian-bagian itu HARUS tetap ditulis sebagai narasi yang mengalir lewat paragraf biasa — bukan dengan menulis label bagian secara literal di dalam teks
 - Tutup artikel dengan paragraf yang memperluas perspektif, bukan meringkas ulang apa yang sudah ditulis
 - Output HANYA JSON murni, tanpa markdown fence, tanpa komentar`
 
@@ -119,25 +133,28 @@ Nada: empati terhadap pemain, tapi tetap analitis terhadap dampaknya.
 Panjang: 400–550 kata`,
 
   preview: `Tipe: PREVIEW PERTANDINGAN
-Panduan narasi:
-• Buka dengan "taruhan" pertandingan ini — apa yang sesungguhnya sedang dipertaruhkan oleh masing-masing pihak
-• Ulas kekuatan dan kelemahan tim tuan rumah dengan sudut pandang taktis, bukan sekadar daftar fakta
-• Lakukan hal yang sama untuk tim tamu — dan tunjukkan di mana benturan taktis paling menarik akan terjadi
-• Sentuh head-to-head dan tren terkini, tapi hanya yang benar-benar relevan dengan narasi pertandingan ini
-• Identifikasi satu atau dua pemain kunci yang bisa menjadi pembeda — dengan alasan yang konkret
-• Tutup dengan prediksi yang didukung analisis, bukan sekadar "pertandingan ini akan seru"
+Struktur artikel WAJIB mengikuti urutan berikut, ditulis sebagai satu narasi yang mengalir lewat paragraf biasa (TANPA heading/subheading literal — transisi antar bagian harus terasa alami, bukan daftar bersekat):
+
+1. NARASI PEMBUKA — Buka dengan "taruhan" pertandingan ini: apa yang sesungguhnya dipertaruhkan kedua pihak, tensi yang melingkupi laga ini, atau momentum yang sedang dibawa masing-masing tim. Bangun atmosfer sebelum nama tim disebutkan secara langsung.
+2. ANALISA TIM KANDANG — Bedah kekuatan dan kelemahan tim tuan rumah dari sudut pandang taktis: pola permainan, kondisi skuat terkini, performa kandang belakangan ini, pemain yang sedang on-fire atau yang absen.
+3. ANALISA TIM TANDANG — Lakukan hal serupa untuk tim tamu, dan secara spesifik tunjukkan di titik mana benturan taktis paling menarik akan terjadi ketika kedua gaya bermain bertemu.
+4. PREDIKSI JALANNYA PERTANDINGAN — Tutup dengan prediksi yang didukung analisis dari dua bagian sebelumnya: bagaimana laga ini diperkirakan berjalan, fase mana yang krusial, dan kemungkinan hasil yang paling realistis — bukan sekadar "pertandingan ini akan seru".
+
+Sentuh head-to-head dan tren terkini HANYA jika benar-benar relevan dan memperkuat analisa taktis di atas — jangan dipaksakan jadi bagian terpisah.
 
 Nada: seperti analis taktis yang juga bisa bercerita.
 Panjang: 600–800 kata`,
 
   hasil: `Tipe: LAPORAN HASIL PERTANDINGAN
-Panduan narasi:
-• Buka dengan esensi pertandingan dalam satu atau dua kalimat yang kuat — bukan dengan skor dan nama pencetak gol
-• Ceritakan babak pertama: bukan play-by-play menit per menit, tapi momen-momen yang membentuk ritme pertandingan
-• Lanjutkan dengan babak kedua: titik balik, keputusan yang menentukan, momen yang mengubah segalanya
-• Berikan satu paragraf analisis taktis: mengapa pemenang menang dan mengapa yang kalah gagal — ini bagian yang paling membedakan tulisan The Athletic
-• Sorot pemain terbaik dengan konteks, bukan sekadar daftar nama
-• Tutup dengan dampak hasil ini ke gambaran besar kompetisi
+Struktur artikel WAJIB mengikuti urutan berikut, ditulis sebagai satu narasi yang mengalir lewat paragraf biasa (TANPA heading/subheading literal — setiap bagian harus mengalir natural ke bagian berikutnya):
+
+1. NARASI PEMBUKA — Tangkap esensi pertandingan dalam satu atau dua kalimat pembuka yang kuat. Jangan dibuka dengan skor atau nama pencetak gol.
+2. JALANNYA BABAK PERTAMA — Ceritakan ritme 45 menit pertama: bagaimana permainan terbangun, momen-momen yang membentuk arah laga, gol-gol yang lahir di babak ini lengkap dengan konteksnya — bukan play-by-play menit per menit.
+3. JALANNYA BABAK KEDUA — Lanjutkan dengan apa yang berubah setelah turun minum: pergantian taktik, perubahan intensitas permainan, gol-gol tambahan, dan bagaimana situasi berkembang hingga peluit panjang.
+4. MOMENT PENGUBAH JALANNYA PERTANDINGAN — Soroti satu titik balik paling krusial di laga ini — kartu merah, pergantian pemain, keputusan wasit, atau momen individu — yang benar-benar mengubah arah pertandingan. Jelaskan secara konkret mengapa momen ini menjadi pembeda.
+5. DAMPAK DARI HASIL AKHIR — Tutup dengan apa arti hasil ini untuk gambaran besar: posisi klasemen, momentum menuju laga berikutnya, atau narasi musim masing-masing tim.
+
+Sisipkan satu observasi taktis singkat tentang mengapa pemenang menang dan mengapa yang kalah gagal — leburkan secara alami ke salah satu bagian di atas, bukan sebagai bagian terpisah.
 
 Nada: ini bukan laporan pertandingan biasa — ini esai tentang apa yang terjadi dan mengapa itu penting.
 Panjang: 700–900 kata`,
@@ -161,69 +178,52 @@ function sseEvent(event: string, data: unknown): string {
   return `event: ${event}\ndata: ${JSON.stringify(data)}\n\n`
 }
 
-async function groqChat(apiKey: string, systemPrompt: string, userPrompt: string): Promise<string> {
-  const res = await fetch("https://api.groq.com/openai/v1/chat/completions", {
-    method:  "POST",
-    headers: {
-      "Content-Type":  "application/json",
-      "Authorization": `Bearer ${apiKey}`,
+// Panggil Gemini dan minta output JSON murni langsung lewat responseMimeType,
+// supaya hasilnya seandal mungkin tanpa perlu tahap "refine" tambahan.
+async function geminiGenerateJson(apiKey: string, systemPrompt: string, userPrompt: string): Promise<string> {
+  const genai = new GoogleGenAI({ apiKey })
+
+  const response = await genai.models.generateContent({
+    model: "gemini-3.5-flash",
+    contents: userPrompt,
+    config: {
+      systemInstruction: systemPrompt,
+      temperature:       0.85,
+      maxOutputTokens:   8192,
+      responseMimeType:  "application/json",
     },
-    body: JSON.stringify({
-      model:       "llama-3.3-70b-versatile",
-      temperature: 0.85,
-      max_tokens:  2800,
-      messages: [
-        { role: "system", content: systemPrompt },
-        { role: "user",   content: userPrompt },
-      ],
-      response_format: { type: "json_object" },
-    }),
   })
 
-  if (!res.ok) {
-    const errText = await res.text()
-    if (res.status === 429) throw new Error("Groq API rate limit tercapai. Tunggu beberapa detik lalu coba lagi.")
-    if (res.status === 401) throw new Error("GROQ_API_KEY tidak valid. Hubungi administrator.")
-    if (res.status === 400) throw new Error("Request ke Groq gagal. Coba kurangi panjang konteks.")
-    throw new Error(`Groq API error ${res.status}: ${errText.slice(0, 200)}`)
-  }
-
-  const data = await res.json() as { choices?: { message?: { content?: string } }[] }
-  return (data.choices?.[0]?.message?.content ?? "").trim()
+  return (response.text ?? "").trim()
 }
 
-async function tavilySearch(apiKey: string, query: string): Promise<string> {
-  const res = await fetch("https://api.tavily.com/search", {
-    method:  "POST",
-    headers: { "Content-Type": "application/json" },
-    body: JSON.stringify({
-      api_key:        apiKey,
-      query:          query,
-      search_depth:   "basic",
-      max_results:    5,
-      include_answer: true,
-    }),
-  })
+// Parsing JSON dengan beberapa fallback, karena model kadang tetap menyisipkan
+// markdown fence atau teks tambahan walau sudah diminta JSON murni.
+function extractJsonObject<T>(raw: string): T | null {
+  let cleaned = raw
+    .replace(/^```json\s*/i, "")
+    .replace(/^```\s*/i, "")
+    .replace(/\s*```$/i, "")
+    .trim()
 
-  if (!res.ok) {
-    // Tavily gagal → lanjutkan tanpa fact-check (non-fatal)
-    console.warn("[generate-article] Tavily error:", res.status)
-    return ""
+  if (cleaned.startsWith("{")) {
+    try {
+      return JSON.parse(cleaned) as T
+    } catch {
+      // lanjut ke strategi berikutnya
+    }
   }
 
-  const data = await res.json() as {
-    answer?: string
-    results?: { title?: string; content?: string; url?: string }[]
+  const match = cleaned.match(/\{[\s\S]*\}/)
+  if (match) {
+    try {
+      return JSON.parse(match[0]) as T
+    } catch {
+      // gagal juga → null
+    }
   }
 
-  const parts: string[] = []
-  if (data.answer) parts.push(`Ringkasan: ${data.answer}`)
-  if (data.results) {
-    data.results.slice(0, 3).forEach((r, i) => {
-      parts.push(`[${i + 1}] ${r.title ?? ""}: ${(r.content ?? "").slice(0, 300)}`)
-    })
-  }
-  return parts.join("\n")
+  return null
 }
 
 // ─── POST handler ─────────────────────────────────────────────────────────────
@@ -235,12 +235,11 @@ export async function POST(req: NextRequest) {
     return NextResponse.json({ error: "Unauthorized" }, { status: 401 })
   }
 
-  const groqKey   = process.env.GROQ_API_KEY
-  const tavilyKey = process.env.TAVILY_API_KEY
+  const geminiKey = process.env.GEMINI_API_KEY
 
-  if (!groqKey) {
+  if (!geminiKey) {
     return NextResponse.json(
-      { error: "GROQ_API_KEY belum dikonfigurasi di environment variables." },
+      { error: "GEMINI_API_KEY belum dikonfigurasi di environment variables." },
       { status: 500 }
     )
   }
@@ -276,10 +275,10 @@ export async function POST(req: NextRequest) {
       }
 
       try {
-        // ── STEP 1: Groq tulis draft ────────────────────────────────────────
-        send("progress", { step: 1, label: "Menulis Draft" })
+        // ── STEP 1: Susun prompt editorial ───────────────────────────────────
+        send("progress", { step: 1, label: "Menyusun Prompt Editorial" })
 
-        const userPromptDraft = `${TYPE_INSTRUCTION[newsType]}
+        const userPrompt = `${TYPE_INSTRUCTION[newsType]}
 
 TOPIK: ${topic.trim()}
 
@@ -287,105 +286,52 @@ KONTEKS / FAKTA YANG DIKETAHUI:
 ${context.trim()}
 
 Tulis artikel berdasarkan topik dan konteks di atas.
-Ingat: kamu jurnalis senior — bukan generator teks. Pilih angle yang paling menarik dari konteks yang diberikan, dan biarkan narasi berkembang secara organik.
+Ingat: kamu jurnalis senior — bukan generator teks. Pilih angle yang paling menarik dari konteks yang diberikan, dan biarkan narasi berkembang secara organik mengikuti struktur yang sudah ditentukan di atas.
 
 Kembalikan HANYA JSON dengan format berikut (tidak ada teks di luar JSON):
 {
   "title": "<judul artikel: menarik, informatif, max 80 karakter, tanpa tanda tanya, tanpa clickbait>",
-  "content": "<konten artikel dalam HTML — gunakan <p> untuk paragraf dan <blockquote> untuk kutipan langsung dari narasumber. JANGAN gunakan tag HTML lain apapun.>"
+  "content": "<konten artikel dalam HTML — gunakan <p> untuk paragraf dan <blockquote> untuk kutipan langsung dari narasumber. JANGAN gunakan tag HTML lain apapun, termasuk heading.>"
 }`
 
-        const draftRaw = await groqChat(groqKey, BASE_SYSTEM, userPromptDraft)
+        // ── STEP 2: Gemini menulis draft ────────────────────────────────────
+        send("progress", { step: 2, label: "Menulis Draft dengan Gemini" })
 
-        let draftCleaned = draftRaw
-          .replace(/^```json\s*/i, "").replace(/^```\s*/i, "").replace(/\s*```$/i, "").trim()
-        if (!draftCleaned.startsWith("{")) {
-          const m = draftCleaned.match(/\{[\s\S]*\}/)
-          if (m) draftCleaned = m[0]
+        const raw = await geminiGenerateJson(geminiKey, BASE_SYSTEM, userPrompt)
+
+        if (!raw) {
+          throw new Error("Gemini tidak menghasilkan output. Coba lagi.")
         }
 
-        let draft: { title: string; content: string }
-        try {
-          draft = JSON.parse(draftCleaned)
-        } catch {
-          throw new Error("Gagal parse draft dari Groq. Coba lagi.")
+        const draft = extractJsonObject<{ title: string; content: string }>(raw)
+
+        if (!draft?.title?.trim() || !draft?.content?.trim()) {
+          console.error("[generate-article] Gagal parse hasil Gemini. Raw:", raw.slice(0, 800))
+          throw new Error("Gagal memproses hasil Gemini. Coba lagi dalam beberapa detik.")
         }
 
-        if (!draft.title?.trim() || !draft.content?.trim()) {
-          throw new Error("Draft Groq tidak lengkap. Tambahkan konteks lebih detail.")
-        }
-
-        // ── STEP 2: Tavily fact-check ───────────────────────────────────────
-        send("progress", { step: 2, label: "Memverifikasi Fakta" })
-
-        let factContext = ""
-        if (tavilyKey) {
-          // Buat query dari topik + judul draft
-          const searchQuery = `${topic.trim()} ${draft.title}`.slice(0, 200)
-          factContext = await tavilySearch(tavilyKey, searchQuery)
-        }
-
-        // ── STEP 3: Groq sisipkan fakta inline ─────────────────────────────
-        send("progress", { step: 3, label: "Menyempurnakan Konten" })
-
-        let finalDraft = draft
-
-        if (factContext.trim()) {
-          const refinementPrompt = `Kamu adalah editor jurnalistik senior di HalfSpace.id.
-
-Kamu menerima sebuah draft artikel dan hasil riset terbaru dari web. Tugasmu adalah menyisipkan fakta-fakta yang relevan dari hasil riset ke dalam draft secara INLINE dan NATURAL — bukan menambah section baru, bukan mengubah struktur, dan TIDAK mengubah gaya penulisan yang sudah ada.
-
-ATURAN PENYISIPAN:
-- Sisipkan fakta hanya jika benar-benar memperkuat narasi yang sudah ada
-- Pertahankan gaya jurnalistik, hook pembuka, dan penutup artikel
-- Jangan ubah judul
-- Jangan tambahkan heading atau subheading baru
-- Output tetap HANYA JSON murni: { "title": "...", "content": "..." }
-
-DRAFT ARTIKEL:
-${JSON.stringify(draft)}
-
-HASIL RISET TERBARU (gunakan jika relevan):
-${factContext}
-
-Kembalikan artikel yang telah disempurnakan dalam format JSON yang sama.`
-
-          const refinedRaw = await groqChat(
-            groqKey,
-            "Kamu adalah editor jurnalistik senior. Output HANYA JSON murni, tanpa markdown fence, tanpa komentar.",
-            refinementPrompt
-          )
-
-          let refinedCleaned = refinedRaw
-            .replace(/^```json\s*/i, "").replace(/^```\s*/i, "").replace(/\s*```$/i, "").trim()
-          if (!refinedCleaned.startsWith("{")) {
-            const m = refinedCleaned.match(/\{[\s\S]*\}/)
-            if (m) refinedCleaned = m[0]
-          }
-
-          try {
-            const refined = JSON.parse(refinedCleaned) as { title: string; content: string }
-            if (refined.title?.trim() && refined.content?.trim()) {
-              finalDraft = refined
-            }
-          } catch {
-            // Gagal refine → gunakan draft awal (non-fatal)
-            console.warn("[generate-article] Refinement parse failed, using original draft")
-          }
-        }
-
-        // ── STEP 4: Done ────────────────────────────────────────────────────
-        send("progress", { step: 4, label: "Draft Selesai" })
+        // ── STEP 3: Done ────────────────────────────────────────────────────
+        send("progress", { step: 3, label: "Draft Selesai" })
 
         send("done", {
-          title:   finalDraft.title.trim(),
-          content: finalDraft.content.trim(),
+          title:   draft.title.trim(),
+          content: draft.content.trim(),
         })
 
       } catch (err: unknown) {
         const message = err instanceof Error ? err.message : "Terjadi error. Coba lagi."
         console.error("[generate-article] Error:", err)
-        send("error", { error: message })
+
+        // Deteksi error spesifik Gemini agar pesannya jelas bagi admin
+        if (message.includes("400") || message.includes("INVALID_ARGUMENT")) {
+          send("error", { error: "Gemini: request tidak valid. Pastikan GEMINI_API_KEY benar dan model tersedia." })
+        } else if (message.includes("403") || message.includes("PERMISSION_DENIED")) {
+          send("error", { error: "Gemini: API key tidak memiliki akses. Cek quota atau billing di Google AI Studio." })
+        } else if (message.includes("429") || message.includes("RESOURCE_EXHAUSTED")) {
+          send("error", { error: "Gemini: quota free tier habis. Tunggu beberapa saat atau upgrade plan." })
+        } else {
+          send("error", { error: message })
+        }
       } finally {
         controller.close()
       }
