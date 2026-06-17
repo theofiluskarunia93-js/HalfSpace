@@ -72,6 +72,34 @@ export default function AboutUsPage() {
               ))}
             </div>
           </div>
+
+
+          {/* Founder Section */}
+          <div className="mt-8 rounded-xl border border-border bg-card p-8">
+            <h2 className="mb-4 text-2xl font-bold text-foreground" style={{ fontFamily: "var(--font-oswald)" }}>
+              Founder
+            </h2>
+            <div className="h-1 w-12 bg-primary mb-6" style={{ boxShadow: "0 0 10px oklch(0.87 0.29 142 / 0.6)" }} />
+            <div className="flex items-start gap-6">
+              <div className="flex-shrink-0 w-16 h-16 rounded-full bg-primary/10 flex items-center justify-center border border-primary/30">
+                <span className="text-2xl font-black text-primary" style={{ fontFamily: "var(--font-oswald)" }}>TK</span>
+              </div>
+              <div>
+                <h3 className="text-xl font-bold text-foreground mb-1" style={{ fontFamily: "var(--font-oswald)" }}>
+                  Theofilus Karunia
+                </h3>
+                <p className="text-xs font-semibold uppercase tracking-widest text-primary mb-4">
+                  Founder & SEO Practitioner
+                </p>
+                <p className="text-muted-foreground leading-relaxed">
+                  HalfSpacesport.com didirikan oleh Theofilus Karunia, seorang praktisi SEO (Search Engine Optimization) 
+                  dan arsitek konten yang pernah bekerja di KapanLagi Youniverse selama 3,5 tahun menghandle website 
+                  olahraga disana. Founder kami berfokus pada pengembangan media digital berbasis User Centris sehingga 
+                  lahirlah HalfSpacesport.com ini.
+                </p>
+              </div>
+            </div>
+          </div>
         </div>
       </main>
       <FooterStandalone />
