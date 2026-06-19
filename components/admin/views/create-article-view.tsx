@@ -1711,8 +1711,9 @@ export function CreateArticleView({ onBack, articleId }: CreateArticleViewProps)
                 <div className="flex flex-col gap-1.5">
                   {[
                     { step: 1, label: "Menyusun Prompt Editorial" },
-                    { step: 2, label: "Menulis Draft dengan Gemini" },
-                    { step: 3, label: "Draft Selesai" },
+                    { step: 2, label: "Menulis Draft dengan OpenRouter" },
+                    { step: 3, label: "Revisi Editor oleh Gemini" },
+                    { step: 4, label: "Draft Final Selesai" },
                   ].map(({ step, label }) => {
                     const isDone    = aiProgress.step > step
                     const isActive  = aiProgress.step === step

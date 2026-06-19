@@ -247,6 +247,11 @@ function JadwalEditor({
 }
 
 // ── Klasemen Editor ───────────────────────────────────────────────────────────
+// Tampilan diKELOMPOKKAN PER GRUP (Grup A peringkat 1-4, lalu Grup B 1-4, dst)
+// alih-alih diurutkan hanya berdasarkan rank global (yang sebelumnya membuat
+// urutannya jadi A1, B1, C1... A2, B2...). Pengelompokan ini HANYA soal
+// tampilan/urutan render di editor — skema data & cara simpan ke Supabase
+// tidak berubah sama sekali.
 
 function KlasemenEditor({
   widgetId, onClose, onSaved,
@@ -283,28 +288,57 @@ function KlasemenEditor({
     })
   }
 
-  function addRow() {
-    const lastRank = rows.length > 0 ? rows[rows.length - 1].rank + 1 : 1
-    setRows((prev) => [
-      ...prev,
-      {
-        id: crypto.randomUUID(),
-        widget_id: widgetId,
-        rank: lastRank,
-        group_label: prev[0]?.group_label ?? "A",
-        team_name: "",
-        played: 0, won: 0, drawn: 0, lost: 0, gf: 0, ga: 0, points: 0,
-        _isNew: true,
-      } as any,
-    ])
+  // Tambah tim baru langsung di grup yang sedang diedit — rank otomatis
+  // lanjut dari rank tertinggi yang sudah ada di grup tersebut.
+  function addRowToGroup(groupLabel: string) {
+    setRows((prev) => {
+      const rowsInGroup = prev.filter((r) => r.group_label === groupLabel)
+      const lastRank = rowsInGroup.length > 0
+        ? Math.max(...rowsInGroup.map((r) => Number(r.rank) || 0)) + 1
+        : 1
+      return [
+        ...prev,
+        {
+          id: crypto.randomUUID(),
+          widget_id: widgetId,
+          rank: lastRank,
+          group_label: groupLabel,
+          team_name: "",
+          played: 0, won: 0, drawn: 0, lost: 0, gf: 0, ga: 0, points: 0,
+          _isNew: true,
+        } as any,
+      ]
+    })
   }
 
-  async function deleteRow(index: number) {
-    const row = rows[index] as any
-    if (!row._isNew) {
+  // Tambah grup baru — buat huruf grup berikutnya yang belum dipakai (A, B, C, ...)
+  // dengan satu baris tim kosong di rank 1.
+  function addNewGroup() {
+    setRows((prev) => {
+      const existingGroups = new Set(prev.map((r) => (r.group_label || "").toUpperCase()))
+      const alphabet = "ABCDEFGHIJKL"
+      const nextLetter = alphabet.split("").find((l) => !existingGroups.has(l)) ?? "A"
+      return [
+        ...prev,
+        {
+          id: crypto.randomUUID(),
+          widget_id: widgetId,
+          rank: 1,
+          group_label: nextLetter,
+          team_name: "",
+          played: 0, won: 0, drawn: 0, lost: 0, gf: 0, ga: 0, points: 0,
+          _isNew: true,
+        } as any,
+      ]
+    })
+  }
+
+  async function deleteRow(rowId: string) {
+    const row = rows.find((r) => r.id === rowId) as any
+    if (row && !row._isNew) {
       await supabase.from("widget_klasemen").delete().eq("id", row.id)
     }
-    setRows((prev) => prev.filter((_, i) => i !== index))
+    setRows((prev) => prev.filter((r) => r.id !== rowId))
   }
 
   async function save() {
@@ -345,42 +379,87 @@ function KlasemenEditor({
     </div>
   )
 
+  // ── Kelompokkan baris per Grup, urut alfabetis, dan di dalam grup diurut
+  //    berdasarkan rank (1, 2, 3, 4, ...) — bukan dicampur antar grup lagi.
+  const groupLabels: string[] = [...new Set(rows.map((r) => r.group_label || "—"))].sort(
+    (a, b) => a.localeCompare(b, "id", { numeric: true })
+  )
+
   return (
-    <div className="space-y-4">
+    <div className="space-y-6">
       {error && (
         <p className="rounded-lg border border-red-500/30 bg-red-500/10 px-4 py-2 text-sm text-red-400">{error}</p>
       )}
 
-      {rows.map((row, i) => (
-        <div key={row.id} className="relative rounded-xl border border-white/10 bg-white/[0.03] p-4">
-          <button
-            onClick={() => deleteRow(i)}
-            className="absolute right-3 top-3 text-zinc-600 transition-colors hover:text-red-400"
-          >
-            <Trash2 size={14} />
-          </button>
-          <div className="grid grid-cols-3 gap-3 sm:grid-cols-5">
-            <Input label="Grup" value={row.group_label} onChange={(v) => updateRow(i, "group_label", v)} placeholder="A" />
-            <div className="col-span-2 sm:col-span-2">
-              <Input label="Nama Tim" value={row.team_name} onChange={(v) => updateRow(i, "team_name", v)} placeholder="Nama Tim" />
+      {groupLabels.length === 0 && (
+        <p className="py-6 text-center text-sm text-zinc-500">Belum ada grup. Tambahkan grup pertama di bawah.</p>
+      )}
+
+      {groupLabels.map((groupLabel) => {
+        const groupRows = rows
+          .filter((r) => r.group_label === groupLabel)
+          .sort((a, b) => Number(a.rank) - Number(b.rank))
+
+        return (
+          <div key={groupLabel} className="rounded-2xl border border-white/10 bg-white/[0.02] p-4">
+            {/* Header grup, misal: "Grup A · 4 Tim" */}
+            <div className="mb-3 flex items-center justify-between">
+              <div className="flex items-center gap-2">
+                <span className="rounded-md bg-[#39FF14] px-2.5 py-1 text-xs font-black uppercase tracking-widest text-black">
+                  Grup {groupLabel}
+                </span>
+                <span className="text-xs text-zinc-500">
+                  {groupRows.length} {groupRows.length === 1 ? "Tim" : "Tim"} · Peringkat 1–{groupRows.length || 0}
+                </span>
+              </div>
             </div>
-            <Input label="Rank" value={row.rank} onChange={(v) => updateRow(i, "rank", v)} type="number" />
-            <Input label="Main" value={row.played} onChange={(v) => updateRow(i, "played", v)} type="number" />
-            <Input label="Menang" value={row.won} onChange={(v) => updateRow(i, "won", v)} type="number" />
-            <Input label="Seri" value={row.drawn} onChange={(v) => updateRow(i, "drawn", v)} type="number" />
-            <Input label="Kalah" value={row.lost} onChange={(v) => updateRow(i, "lost", v)} type="number" />
-            <Input label="GF" value={row.gf} onChange={(v) => updateRow(i, "gf", v)} type="number" />
-            <Input label="GA" value={row.ga} onChange={(v) => updateRow(i, "ga", v)} type="number" />
-            <Input label="Poin" value={row.points} onChange={(v) => updateRow(i, "points", v)} type="number" />
+
+            <div className="space-y-3">
+              {groupRows.map((row) => {
+                // Index asli di array rows — dibutuhkan oleh updateRow()
+                const originalIndex = rows.findIndex((r) => r.id === row.id)
+                return (
+                  <div key={row.id} className="relative rounded-xl border border-white/10 bg-white/[0.03] p-4">
+                    <button
+                      onClick={() => deleteRow(row.id)}
+                      className="absolute right-3 top-3 text-zinc-600 transition-colors hover:text-red-400"
+                    >
+                      <Trash2 size={14} />
+                    </button>
+                    <div className="grid grid-cols-3 gap-3 sm:grid-cols-5">
+                      <Input label="Grup" value={row.group_label} onChange={(v) => updateRow(originalIndex, "group_label", v)} placeholder="A" />
+                      <div className="col-span-2 sm:col-span-2">
+                        <Input label="Nama Tim" value={row.team_name} onChange={(v) => updateRow(originalIndex, "team_name", v)} placeholder="Nama Tim" />
+                      </div>
+                      <Input label="Rank" value={row.rank} onChange={(v) => updateRow(originalIndex, "rank", v)} type="number" />
+                      <Input label="Main" value={row.played} onChange={(v) => updateRow(originalIndex, "played", v)} type="number" />
+                      <Input label="Menang" value={row.won} onChange={(v) => updateRow(originalIndex, "won", v)} type="number" />
+                      <Input label="Seri" value={row.drawn} onChange={(v) => updateRow(originalIndex, "drawn", v)} type="number" />
+                      <Input label="Kalah" value={row.lost} onChange={(v) => updateRow(originalIndex, "lost", v)} type="number" />
+                      <Input label="GF" value={row.gf} onChange={(v) => updateRow(originalIndex, "gf", v)} type="number" />
+                      <Input label="GA" value={row.ga} onChange={(v) => updateRow(originalIndex, "ga", v)} type="number" />
+                      <Input label="Poin" value={row.points} onChange={(v) => updateRow(originalIndex, "points", v)} type="number" />
+                    </div>
+                  </div>
+                )
+              })}
+            </div>
+
+            <button
+              onClick={() => addRowToGroup(groupLabel)}
+              className="mt-3 flex w-full items-center justify-center gap-2 rounded-xl border border-dashed border-[#39FF14]/30 py-2.5 text-sm text-[#39FF14]/70 transition hover:border-[#39FF14]/60 hover:text-[#39FF14]"
+            >
+              <Plus size={14} /> Tambah Tim ke Grup {groupLabel}
+            </button>
           </div>
-        </div>
-      ))}
+        )
+      })}
 
       <button
-        onClick={addRow}
-        className="flex w-full items-center justify-center gap-2 rounded-xl border border-dashed border-[#39FF14]/30 py-3 text-sm text-[#39FF14]/70 transition hover:border-[#39FF14]/60 hover:text-[#39FF14]"
+        onClick={addNewGroup}
+        className="flex w-full items-center justify-center gap-2 rounded-xl border border-dashed border-white/15 py-3 text-sm text-zinc-400 transition hover:border-[#39FF14]/40 hover:text-[#39FF14]"
       >
-        <Plus size={16} /> Tambah Tim
+        <Plus size={16} /> Tambah Grup Baru
       </button>
 
       <div className="flex justify-end gap-3 pt-2">
@@ -399,6 +478,8 @@ function KlasemenEditor({
     </div>
   )
 }
+
+
 
 // ── Transfer Editor ──────────────────────────────────────────────────────────
 

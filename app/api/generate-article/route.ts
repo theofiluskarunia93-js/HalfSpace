@@ -1,18 +1,24 @@
 // app/api/generate-article/route.ts
 //
-// Generate artikel sepak bola bergaya The Athletic — powered by Google Gemini.
+// Generate artikel sepak bola bergaya The Athletic — pipeline DUA TAHAP:
 //
-// Sebelumnya pipeline ini memakai Groq (draft) + Tavily (fact-check inline).
-// Sekarang draft langsung ditulis oleh Gemini dalam satu panggilan, karena:
-//   - Gemini sebelumnya hanya dipakai sebagai "Humanizer" tahap kedua
-//   - Sekarang Gemini menulis draft asli, jadi tahap Humanizer terpisah
-//     sudah tidak diperlukan lagi (lihat: penghapusan /api/humanize-article)
-//   - Tavily fact-check dihapus total dari pipeline ini
+//   Tahap 1 (Penulis) : OpenRouter menulis draft lengkap (judul + isi)
+//                        berdasarkan prompt editorial (gaya The Athletic) di bawah.
+//   Tahap 2 (Editor)   : Gemini membaca draft dari OpenRouter, lalu MEREVISI
+//                        sebagai editor senior — memperkuat hook, ritme kalimat,
+//                        membuang frasa AI-fingerprint yang lolos, dan menjaga
+//                        draft tetap sesuai aturan struktur/tipe berita.
 //
-// Pipeline baru:
+// Kedua tahap ini berjalan otomatis di background dalam satu request —
+// klien hanya menerima HASIL AKHIR yang sudah melalui kedua proses tersebut
+// (sudah final, sudah diedit). Progress tetap di-stream lewat SSE supaya UI
+// admin bisa menampilkan status "Menulis Draft" → "Revisi Editor" → "Selesai".
+//
+// Pipeline:
 //   Step 1 : Menyusun prompt editorial (gaya penulisan + tipe berita + topik/konteks)
-//   Step 2 : Gemini menulis draft lengkap (judul + isi, sudah final)
-//   Step 3 : Output dikirim ke editor
+//   Step 2 : OpenRouter menulis draft pertama (judul + isi)
+//   Step 3 : Gemini merevisi draft sebagai editor (output final)
+//   Step 4 : Draft final dikirim ke editor artikel
 //
 // Streaming progress via SSE (Server-Sent Events) ke client — kontrak event
 // SSE ("progress" | "done" | "error") dipertahankan sama seperti sebelumnya
@@ -22,9 +28,18 @@
 // Output: SSE stream → { event: "progress"|"done"|"error", data: ... }
 //
 // Catatan API key:
-// - Pakai GEMINI_API_KEY (format Google AI Studio terbaru: "AQ.xxx")
-// - SDK: @google/genai (class GoogleGenAI) — jangan fetch manual ke endpoint v1beta lama
-// - Model: gemini-3.5-flash (sama dengan model yang sebelumnya dipakai Humanizer)
+// - OPENROUTER_API_KEY  → dipakai untuk tahap penulisan draft awal (OpenRouter REST API,
+//   format kompatibel OpenAI chat completions: https://openrouter.ai/api/v1/chat/completions).
+//   Akun ini memakai FREE TIER OpenRouter — model default & fallback semua memakai
+//   suffix ":free" (lihat DEFAULT_FREE_MODELS di bawah). Free tier rate limit-nya
+//   ketat (umumnya ~20 req/menit, 50-1000 req/hari), jadi sudah disiapkan fallback
+//   otomatis antar beberapa model gratis kalau salah satu kena limit.
+// - GEMINI_API_KEY      → dipakai untuk tahap revisi/editor (format Google AI Studio
+//   terbaru: "AQ.xxx"). SDK: @google/genai (class GoogleGenAI) — jangan fetch manual
+//   ke endpoint v1beta lama.
+// - OPENROUTER_MODEL (opsional) → kalau diisi, dicoba duluan sebelum fallback ke
+//   daftar model gratis. Kosongkan saja kalau memang mau pakai free tier sepenuhnya.
+// - Model Gemini untuk tahap editor: gemini-3.5-flash
 
 import { NextRequest, NextResponse } from "next/server"
 import { GoogleGenAI } from "@google/genai"
@@ -178,9 +193,96 @@ function sseEvent(event: string, data: unknown): string {
   return `event: ${event}\ndata: ${JSON.stringify(data)}\n\n`
 }
 
-// Panggil Gemini dan minta output JSON murni langsung lewat responseMimeType,
-// supaya hasilnya seandal mungkin tanpa perlu tahap "refine" tambahan.
-async function geminiGenerateJson(apiKey: string, systemPrompt: string, userPrompt: string): Promise<string> {
+// ─── TAHAP 1 (Penulis): OpenRouter menulis draft pertama ─────────────────────
+// Memakai endpoint REST OpenRouter (kompatibel format chat completions OpenAI).
+// Model bisa dikonfigurasi lewat env OPENROUTER_MODEL — default ke model GRATIS
+// (suffix ":free") karena akun ini memakai free tier OpenRouter, bukan berbayar.
+// Free tier rate limit-nya ketat (umumnya ~20 req/menit, 50-1000 req/hari
+// tergantung histori top-up), jadi disiapkan beberapa model fallback gratis:
+// kalau model utama kena 429 (rate limit) atau lagi unavailable, otomatis
+// coba model gratis berikutnya di daftar sebelum benar-benar gagal.
+//
+// Catatan: roster model ":free" di OpenRouter berubah-ubah dari waktu ke waktu.
+// Kalau salah satu ID di bawah sudah tidak aktif, cek daftar terbaru di
+// https://openrouter.ai/models?max_price=0 dan update FALLBACK_MODELS.
+const DEFAULT_FREE_MODELS = [
+  "meta-llama/llama-3.3-70b-instruct:free",
+  "deepseek/deepseek-chat-v3.1:free",
+  "qwen/qwen3-235b-a22b:free",
+]
+
+async function openRouterGenerateJson(apiKey: string, systemPrompt: string, userPrompt: string): Promise<string> {
+  const configuredModel = process.env.OPENROUTER_MODEL?.trim()
+  const modelsToTry = configuredModel
+    ? [configuredModel, ...DEFAULT_FREE_MODELS.filter((m) => m !== configuredModel)]
+    : DEFAULT_FREE_MODELS
+
+  let lastError: Error | null = null
+
+  for (const model of modelsToTry) {
+    try {
+      const res = await fetch("https://openrouter.ai/api/v1/chat/completions", {
+        method:  "POST",
+        headers: {
+          "Content-Type":  "application/json",
+          "Authorization": `Bearer ${apiKey}`,
+          // Header opsional yang direkomendasikan OpenRouter untuk identifikasi app —
+          // tidak wajib diisi dengan URL valid, tapi membantu tracking di dashboard mereka.
+          "HTTP-Referer":  process.env.NEXT_PUBLIC_SITE_URL ?? "https://halfspacesport.com",
+          "X-Title":       "HalfSpace.id Article Generator",
+        },
+        body: JSON.stringify({
+          model,
+          temperature: 0.85,
+          max_tokens:  8192,
+          messages: [
+            { role: "system", content: systemPrompt },
+            { role: "user",   content: userPrompt },
+          ],
+          response_format: { type: "json_object" },
+        }),
+      })
+
+      if (!res.ok) {
+        const errText = await res.text()
+
+        // 429 (rate limit) atau 404/503 (model gratis lagi penuh/unavailable)
+        // → jangan langsung gagal, coba model fallback berikutnya di daftar.
+        if (res.status === 429 || res.status === 404 || res.status === 503) {
+          lastError = new Error(`Model ${model} tidak tersedia saat ini (${res.status}). Mencoba model fallback...`)
+          console.warn(`[generate-article] ${lastError.message}`)
+          continue
+        }
+
+        if (res.status === 401) throw new Error("OPENROUTER_API_KEY tidak valid. Hubungi administrator.")
+        if (res.status === 402) throw new Error("OpenRouter: kredit/saldo akun habis atau melebihi limit free tier harian.")
+        throw new Error(`OpenRouter API error ${res.status}: ${errText.slice(0, 200)}`)
+      }
+
+      const data = await res.json() as { choices?: { message?: { content?: string } }[] }
+      const content = (data.choices?.[0]?.message?.content ?? "").trim()
+      if (content) return content
+
+      lastError = new Error(`Model ${model} mengembalikan output kosong. Mencoba model fallback...`)
+    } catch (err) {
+      // Error network/parsing sementara → tetap coba model fallback berikutnya
+      lastError = err instanceof Error ? err : new Error("Error tidak diketahui saat memanggil OpenRouter.")
+      if (lastError.message.includes("OPENROUTER_API_KEY tidak valid")) throw lastError
+    }
+  }
+
+  throw new Error(
+    lastError?.message
+      ? `Semua model gratis OpenRouter gagal dicoba. Error terakhir: ${lastError.message}`
+      : "OpenRouter rate limit tercapai di semua model gratis. Tunggu beberapa saat lalu coba lagi."
+  )
+}
+
+// ─── TAHAP 2 (Editor): Gemini merevisi draft dari OpenRouter ─────────────────
+// Gemini di sini berperan sebagai editor senior — bukan menulis dari nol,
+// tapi membaca draft yang sudah ada dan mengembalikan versi revisi final
+// dalam format JSON yang sama (title + content).
+async function geminiReviseJson(apiKey: string, systemPrompt: string, userPrompt: string): Promise<string> {
   const genai = new GoogleGenAI({ apiKey })
 
   const response = await genai.models.generateContent({
@@ -188,7 +290,7 @@ async function geminiGenerateJson(apiKey: string, systemPrompt: string, userProm
     contents: userPrompt,
     config: {
       systemInstruction: systemPrompt,
-      temperature:       0.85,
+      temperature:       0.7,
       maxOutputTokens:   8192,
       responseMimeType:  "application/json",
     },
@@ -196,6 +298,24 @@ async function geminiGenerateJson(apiKey: string, systemPrompt: string, userProm
 
   return (response.text ?? "").trim()
 }
+
+// System prompt khusus untuk tahap editor — Gemini diposisikan sebagai editor
+// senior yang mengoreksi draft, BUKAN menulis ulang dari nol. Aturan gaya/struktur
+// dari BASE_SYSTEM tetap dilampirkan supaya revisi tidak melenceng dari standar editorial.
+const EDITOR_SYSTEM = `${BASE_SYSTEM}
+
+━━━ PERAN KAMU SEKARANG: EDITOR SENIOR ━━━
+Kamu menerima draft artikel yang SUDAH DITULIS oleh jurnalis lain. Tugasmu BUKAN menulis ulang dari nol,
+tapi MENYUNTING draft tersebut menjadi versi final yang lebih kuat, dengan tetap mempertahankan substansi,
+fakta, dan struktur yang sudah ada di draft. Fokus revisi:
+- Perkuat hook paragraf pembuka jika masih lemah atau melanggar aturan hook di atas
+- Perbaiki ritme kalimat yang monoton, variasikan panjang kalimat
+- Hapus/ganti frasa fingerprint AI yang masih lolos di draft (lihat daftar frasa terlarang di atas)
+- Pastikan penyebutan nama/tim sudah divariasikan, tidak diulang berlebihan
+- Rapikan transisi antar paragraf agar mengalir lebih natural
+- JANGAN mengubah fakta, angka, atau detail yang sudah ada di draft — hanya kualitas penulisannya
+- JANGAN menambah heading/subheading — hanya <p> dan <blockquote>
+- Output tetap HANYA JSON murni dengan struktur {"title": "...", "content": "..."}, tanpa markdown fence, tanpa komentar`
 
 // Parsing JSON dengan beberapa fallback, karena model kadang tetap menyisipkan
 // markdown fence atau teks tambahan walau sudah diminta JSON murni.
@@ -235,8 +355,15 @@ export async function POST(req: NextRequest) {
     return NextResponse.json({ error: "Unauthorized" }, { status: 401 })
   }
 
-  const geminiKey = process.env.GEMINI_API_KEY
+  const openRouterKey = process.env.OPENROUTER_API_KEY
+  const geminiKey      = process.env.GEMINI_API_KEY
 
+  if (!openRouterKey) {
+    return NextResponse.json(
+      { error: "OPENROUTER_API_KEY belum dikonfigurasi di environment variables." },
+      { status: 500 }
+    )
+  }
   if (!geminiKey) {
     return NextResponse.json(
       { error: "GEMINI_API_KEY belum dikonfigurasi di environment variables." },
@@ -294,36 +421,73 @@ Kembalikan HANYA JSON dengan format berikut (tidak ada teks di luar JSON):
   "content": "<konten artikel dalam HTML — gunakan <p> untuk paragraf dan <blockquote> untuk kutipan langsung dari narasumber. JANGAN gunakan tag HTML lain apapun, termasuk heading.>"
 }`
 
-        // ── STEP 2: Gemini menulis draft ────────────────────────────────────
-        send("progress", { step: 2, label: "Menulis Draft dengan Gemini" })
+        // ── STEP 2: OpenRouter menulis draft pertama ────────────────────────
+        send("progress", { step: 2, label: "Menulis Draft dengan OpenRouter" })
 
-        const raw = await geminiGenerateJson(geminiKey, BASE_SYSTEM, userPrompt)
+        const rawDraft = await openRouterGenerateJson(openRouterKey, BASE_SYSTEM, userPrompt)
 
-        if (!raw) {
-          throw new Error("Gemini tidak menghasilkan output. Coba lagi.")
+        if (!rawDraft) {
+          throw new Error("OpenRouter tidak menghasilkan output. Coba lagi.")
         }
 
-        const draft = extractJsonObject<{ title: string; content: string }>(raw)
+        const draft = extractJsonObject<{ title: string; content: string }>(rawDraft)
 
         if (!draft?.title?.trim() || !draft?.content?.trim()) {
-          console.error("[generate-article] Gagal parse hasil Gemini. Raw:", raw.slice(0, 800))
-          throw new Error("Gagal memproses hasil Gemini. Coba lagi dalam beberapa detik.")
+          console.error("[generate-article] Gagal parse hasil OpenRouter. Raw:", rawDraft.slice(0, 800))
+          throw new Error("Gagal memproses hasil OpenRouter. Coba lagi dalam beberapa detik.")
         }
 
-        // ── STEP 3: Done ────────────────────────────────────────────────────
-        send("progress", { step: 3, label: "Draft Selesai" })
+        // ── STEP 3: Gemini merevisi draft sebagai editor ────────────────────
+        send("progress", { step: 3, label: "Revisi Editor oleh Gemini" })
+
+        const editorUserPrompt = `Berikut draft artikel yang perlu kamu revisi sebagai editor senior.
+
+TIPE BERITA: ${newsType}
+
+DRAFT (judul):
+${draft.title.trim()}
+
+DRAFT (isi, HTML):
+${draft.content.trim()}
+
+Revisi draft di atas sesuai instruksi editor yang sudah diberikan. Kembalikan HASIL REVISI FINAL dalam format JSON:
+{
+  "title": "<judul hasil revisi: menarik, informatif, max 80 karakter, tanpa tanda tanya, tanpa clickbait>",
+  "content": "<konten hasil revisi dalam HTML — gunakan <p> untuk paragraf dan <blockquote> untuk kutipan langsung. JANGAN gunakan tag HTML lain apapun, termasuk heading.>"
+}`
+
+        const rawFinal = await geminiReviseJson(geminiKey, EDITOR_SYSTEM, editorUserPrompt)
+
+        if (!rawFinal) {
+          throw new Error("Gemini (editor) tidak menghasilkan output. Coba lagi.")
+        }
+
+        const final = extractJsonObject<{ title: string; content: string }>(rawFinal)
+
+        if (!final?.title?.trim() || !final?.content?.trim()) {
+          console.error("[generate-article] Gagal parse hasil revisi Gemini. Raw:", rawFinal.slice(0, 800))
+          throw new Error("Gagal memproses hasil revisi editor. Coba lagi dalam beberapa detik.")
+        }
+
+        // ── STEP 4: Done — hasil sudah melalui penulisan + revisi editor ────
+        send("progress", { step: 4, label: "Draft Final Selesai" })
 
         send("done", {
-          title:   draft.title.trim(),
-          content: draft.content.trim(),
+          title:   final.title.trim(),
+          content: final.content.trim(),
         })
 
       } catch (err: unknown) {
         const message = err instanceof Error ? err.message : "Terjadi error. Coba lagi."
         console.error("[generate-article] Error:", err)
 
-        // Deteksi error spesifik Gemini agar pesannya jelas bagi admin
-        if (message.includes("400") || message.includes("INVALID_ARGUMENT")) {
+        // Error dari OpenRouter (tahap 1) sudah punya pesan jelas sendiri
+        // (lihat openRouterGenerateJson) — jangan ditimpa label Gemini.
+        if (message.includes("OpenRouter") || message.includes("OPENROUTER")) {
+          send("error", { error: message })
+        }
+        // Deteksi error spesifik Gemini (tahap 2/editor) agar pesannya jelas bagi admin
+        else if (message.includes("400") || message.includes("INVALID_ARGUMENT")) {
           send("error", { error: "Gemini: request tidak valid. Pastikan GEMINI_API_KEY benar dan model tersedia." })
         } else if (message.includes("403") || message.includes("PERMISSION_DENIED")) {
           send("error", { error: "Gemini: API key tidak memiliki akses. Cek quota atau billing di Google AI Studio." })
