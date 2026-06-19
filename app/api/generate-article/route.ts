@@ -57,6 +57,7 @@ interface RequestBody {
   newsType: NewsType
   topic:    string
   context:  string
+  model?:   string  // model OpenRouter pilihan manual dari UI (opsional, lihat AI_MODEL_OPTIONS di create-article-view.tsx)
 }
 
 // ─── BASE SYSTEM PROMPT ───────────────────────────────────────────────────────
@@ -199,17 +200,24 @@ function sseEvent(event: string, data: unknown): string {
 // kalau model utama kena 429 (rate limit) atau lagi unavailable, otomatis
 // coba model gratis berikutnya di daftar sebelum benar-benar gagal.
 //
-// Catatan: roster model ":free" di OpenRouter berubah-ubah dari waktu ke waktu.
-// Kalau salah satu ID di bawah sudah tidak aktif, cek daftar terbaru di
-// https://openrouter.ai/models?max_price=0 dan update FALLBACK_MODELS.
+// Catatan roster (terakhir diverifikasi via GET https://openrouter.ai/api/v1/models
+// pada 19 Juni 2026): meta-llama/llama-3.3-70b-instruct:free, deepseek/deepseek-chat-v3.1:free,
+// dan qwen/qwen3-235b-a22b:free SUDAH TIDAK ADA lagi di katalog gratis OpenRouter — ketiganya
+// sudah dihapus/dipindah ke tier berbayar. Daftar di bawah ini sudah diganti dengan model gratis
+// yang masih aktif DAN mendukung parameter response_format (wajib untuk JSON mode di
+// openRouterGenerateJson — model gratis yang tidak mendukung response_format akan gagal dengan
+// error 400 saat dipanggil).
 const DEFAULT_FREE_MODELS = [
-  "meta-llama/llama-3.3-70b-instruct:free",
-  "deepseek/deepseek-chat-v3.1:free",
-  "qwen/qwen3-235b-a22b:free",
+  "nvidia/nemotron-3-super-120b-a12b:free",   // 120B MoE (12B aktif), context besar, kualitas terbaik di free tier saat ini
+  "qwen/qwen3-next-80b-a3b-instruct:free",    // 80B-A3B MoE, instruction-following kuat, multilingual
+  "google/gemma-4-31b-it:free",               // 30.7B dense, provider berbeda (redundansi kalau NVIDIA/Qwen kena limit)
+  "google/gemma-4-26b-a4b-it:free",           // varian MoE lebih ringan dari Gemma 4, fallback tambahan
+  "nvidia/nemotron-nano-9b-v2:free",          // 9B, fallback terakhir paling ringan
 ]
 
-async function openRouterGenerateJson(apiKey: string, systemPrompt: string, userPrompt: string): Promise<string> {
-  const configuredModel = process.env.OPENROUTER_MODEL?.trim()
+async function openRouterGenerateJson(apiKey: string, systemPrompt: string, userPrompt: string, preferredModel?: string): Promise<string> {
+  // Prioritas: model yang dipilih manual lewat UI (preferredModel) > OPENROUTER_MODEL (env) > daftar default
+  const configuredModel = preferredModel?.trim() || process.env.OPENROUTER_MODEL?.trim()
   const modelsToTry = configuredModel
     ? [configuredModel, ...DEFAULT_FREE_MODELS.filter((m) => m !== configuredModel)]
     : DEFAULT_FREE_MODELS
@@ -243,10 +251,12 @@ async function openRouterGenerateJson(apiKey: string, systemPrompt: string, user
       if (!res.ok) {
         const errText = await res.text()
 
-        // 429 (rate limit) atau 404/503 (model gratis lagi penuh/unavailable)
-        // → jangan langsung gagal, coba model fallback berikutnya di daftar.
-        if (res.status === 429 || res.status === 404 || res.status === 503) {
-          lastError = new Error(`Model ${model} tidak tersedia saat ini (${res.status}). Mencoba model fallback...`)
+        // 429 (rate limit), 404/503 (model gratis lagi penuh/unavailable), atau 400
+        // (mis. model tidak mendukung response_format/parameter lain) → jangan langsung
+        // gagal, coba model fallback berikutnya di daftar. Hanya 401/402 yang benar-benar
+        // fatal di level akun (lihat di bawah) dan layak menghentikan seluruh percobaan.
+        if (res.status === 429 || res.status === 404 || res.status === 503 || res.status === 400) {
+          lastError = new Error(`Model ${model} tidak tersedia/tidak didukung saat ini (${res.status}). Mencoba model fallback...`)
           console.warn(`[generate-article] ${lastError.message}`)
           continue
         }
@@ -376,7 +386,7 @@ export async function POST(req: NextRequest) {
     return NextResponse.json({ error: "Request body tidak valid." }, { status: 400 })
   }
 
-  const { newsType, topic, context } = body
+  const { newsType, topic, context, model } = body
 
   if (!newsType || !topic?.trim() || !context?.trim()) {
     return NextResponse.json(
@@ -422,7 +432,7 @@ Kembalikan HANYA JSON dengan format berikut (tidak ada teks di luar JSON):
         // ── STEP 2: OpenRouter menulis draft pertama ────────────────────────
         send("progress", { step: 2, label: "Menulis Draft dengan OpenRouter" })
 
-        const rawDraft = await openRouterGenerateJson(openRouterKey, BASE_SYSTEM, userPrompt)
+        const rawDraft = await openRouterGenerateJson(openRouterKey, BASE_SYSTEM, userPrompt, model)
 
         if (!rawDraft) {
           throw new Error("OpenRouter tidak menghasilkan output. Coba lagi.")

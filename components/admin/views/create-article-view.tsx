@@ -354,15 +354,19 @@ function cleanLegacyBadgeContent(content: string): string {
 // Daftar ini HARUS sinkron dengan DEFAULT_FREE_MODELS di
 // app/api/generate-article/route.ts. Kalau ada model yang mati di OpenRouter
 // (cek openrouter.ai/models), update di KEDUA tempat.
+//
+// Update 19 Jun 2026: daftar lama (llama-3.3-70b-instruct:free, deepseek-chat-v3.1:free,
+// deepseek-r1:free, gemma-3-12b-it:free, stepfun step-3.5-flash:free) sudah dihapus dari
+// katalog gratis OpenRouter (cek live via GET /api/v1/models). qwen3-coder:free dan
+// gpt-oss-120b:free masih gratis TAPI tidak mendukung response_format (JSON mode) yang
+// dipakai route.ts, jadi tidak dimasukkan lagi ke sini supaya tidak memicu error 400.
 const AI_MODEL_OPTIONS = [
-  { value: "",                                     label: "Otomatis (fallback)" },
-  { value: "meta-llama/llama-3.3-70b-instruct:free", label: "Llama 3.3 70B (Meta)" },
-  { value: "deepseek/deepseek-chat-v3.1:free",       label: "DeepSeek Chat v3.1" },
-  { value: "deepseek/deepseek-r1:free",              label: "DeepSeek R1 (Reasoning)" },
-  { value: "qwen/qwen3-coder:free",                  label: "Qwen3 Coder" },
-  { value: "google/gemma-3-12b-it:free",             label: "Gemma 3 12B (Google)" },
-  { value: "openai/gpt-oss-120b:free",               label: "GPT-OSS 120B (OpenAI)" },
-  { value: "stepfun/step-3.5-flash:free",            label: "Step 3.5 Flash (StepFun)" },
+  { value: "",                                          label: "Otomatis (fallback)" },
+  { value: "nvidia/nemotron-3-super-120b-a12b:free",     label: "Nemotron 3 Super 120B (NVIDIA)" },
+  { value: "qwen/qwen3-next-80b-a3b-instruct:free",      label: "Qwen3 Next 80B Instruct" },
+  { value: "google/gemma-4-31b-it:free",                 label: "Gemma 4 31B (Google)" },
+  { value: "google/gemma-4-26b-a4b-it:free",             label: "Gemma 4 26B A4B (Google)" },
+  { value: "nvidia/nemotron-nano-9b-v2:free",            label: "Nemotron Nano 9B V2 (ringan)" },
 ] as const
 
 // ─── Inject section-label otomatis ke hasil AI generate ──────────────────────
