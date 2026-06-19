@@ -365,6 +365,52 @@ const AI_MODEL_OPTIONS = [
   { value: "stepfun/step-3.5-flash:free",            label: "Step 3.5 Flash (StepFun)" },
 ] as const
 
+// ─── Inject section-label otomatis ke hasil AI generate ──────────────────────
+// Memproses HTML hasil AI dan menyisipkan <p class="section-label"> sebelum
+// setiap heading (h2/h3) sesuai tipe berita, sehingga hasil generate langsung
+// kompatibel dengan tools Pilcrow di editor tanpa harus manual.
+//
+// Pemetaan label per tipe berita mengikuti struktur narasi yang sudah didefinisikan
+// di route.ts — urutan label mengikuti urutan bagian yang diminta di prompt editorial.
+const SECTION_LABELS: Record<string, string[]> = {
+  hasil:    ["BABAK · PERTAMA", "BABAK · KEDUA", "MOMEN · PENENTU", "DAMPAK · HASIL"],
+  preview:  ["KONDISI · SKUAT", "KONDISI · SKUAT", "PERTARUNGAN · KUNCI", "PREDIKSI · PERTANDINGAN"],
+  transfer: ["LATAR BELAKANG", "DETAIL · TRANSFER", "DAMPAK · KLUB", "KE DEPAN"],
+  konpers:  ["ATMOSFER · KONPERS", "KUTIPAN · KUNCI", "DI BALIK KATA-KATA", "IMPLIKASI"],
+  cedera:   ["KRONOLOGI · CEDERA", "DAMPAK · TIM", "PROGNOSIS"],
+  trivia:   ["FAKTA · MENGEJUTKAN", "KONTEKS · SEJARAH", "ERA · MODERN"],
+}
+
+function injectSectionLabels(html: string, newsType: string): string {
+  if (typeof window === "undefined") return html
+
+  const labels = SECTION_LABELS[newsType]
+  if (!labels || labels.length === 0) return html
+
+  const parser = new DOMParser()
+  const doc = parser.parseFromString(html, "text/html")
+
+  // Cari semua heading h2 dan h3 yang ada di konten
+  const headings = Array.from(doc.body.querySelectorAll("h2, h3"))
+
+  headings.forEach((heading, i) => {
+    // Jangan sisipkan label jika sudah ada section-label tepat sebelumnya
+    const prev = heading.previousElementSibling
+    if (prev?.classList.contains("section-label")) return
+
+    // Ambil label sesuai urutan, kalau index melebihi daftar pakai yang terakhir
+    const labelText = labels[i] ?? labels[labels.length - 1]
+
+    const labelEl = doc.createElement("p")
+    labelEl.className = "section-label"
+    labelEl.textContent = labelText
+
+    heading.parentNode?.insertBefore(labelEl, heading)
+  })
+
+  return doc.body.innerHTML
+}
+
 // ─── Main Component ───────────────────────────────────────────────────────────
 
 export function CreateArticleView({ onBack, articleId }: CreateArticleViewProps) {
@@ -799,7 +845,10 @@ export function CreateArticleView({ onBack, articleId }: CreateArticleViewProps)
             setAiProgress({ step: payload.step, label: payload.label })
           } else if (event === "done") {
             setTitle(payload.title)
-            if (editor) editor.commands.setContent(payload.content)
+            if (editor) {
+              const contentWithLabels = injectSectionLabels(payload.content, aiNewsType)
+              editor.commands.setContent(contentWithLabels)
+            }
             setAiProgress({ step: 4, label: "Draft Selesai" })
             // Small delay to show "Draft Selesai" before closing
             await new Promise(r => setTimeout(r, 900))

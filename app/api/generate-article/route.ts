@@ -39,7 +39,7 @@
 //   ke endpoint v1beta lama.
 // - OPENROUTER_MODEL (opsional) → kalau diisi, dicoba duluan sebelum fallback ke
 //   daftar model gratis. Kosongkan saja kalau memang mau pakai free tier sepenuhnya.
-// - Model Gemini untuk tahap editor: gemini-3.5-flash
+// - Model Gemini untuk tahap editor: gemini-2.5-flash
 
 import { NextRequest, NextResponse } from "next/server"
 import { GoogleGenAI } from "@google/genai"
@@ -57,10 +57,6 @@ interface RequestBody {
   newsType: NewsType
   topic:    string
   context:  string
-  // Opsional: model OpenRouter spesifik yang dipilih admin dari dropdown
-  // di editor (lihat AI_MODEL_OPTIONS di create-article-view.tsx). Kalau
-  // diisi, dicoba PALING PERTAMA sebelum fallback ke DEFAULT_FREE_MODELS.
-  model?:   string
 }
 
 // ─── BASE SYSTEM PROMPT ───────────────────────────────────────────────────────
@@ -111,8 +107,9 @@ Jangan gunakan frasa-frasa berikut dalam bentuk apapun — ini adalah fingerprin
 ━━━ ATURAN STRUKTUR ━━━
 - Setiap paragraf maksimal 4 kalimat
 - Gunakan <blockquote> HANYA untuk kutipan langsung dari narasumber yang ada di konteks
-- JANGAN tambahkan heading, subheading, atau judul di dalam konten — hanya <p> dan <blockquote>
-- Jika tipe berita memiliki struktur bagian (lihat instruksi tipe di bawah), bagian-bagian itu HARUS tetap ditulis sebagai narasi yang mengalir lewat paragraf biasa — bukan dengan menulis label bagian secara literal di dalam teks
+- Setiap tipe berita memiliki bagian-bagian dengan judul <h2> — lihat instruksi per tipe di bawah untuk judul <h2> yang WAJIB dipakai persis seperti yang tertulis
+- Paragraf narasi ditulis mengalir di bawah setiap <h2>, JANGAN tulis label bagian sebagai teks biasa di dalam <p>
+- JANGAN gunakan <h1>, <h3>, atau heading lain — HANYA <h2> untuk judul bagian
 - Tutup artikel dengan paragraf yang memperluas perspektif, bukan meringkas ulang apa yang sudah ditulis
 - Output HANYA JSON murni, tanpa markdown fence, tanpa komentar`
 
@@ -120,71 +117,67 @@ Jangan gunakan frasa-frasa berikut dalam bentuk apapun — ini adalah fingerprin
 
 const TYPE_INSTRUCTION: Record<NewsType, string> = {
   transfer: `Tipe: BERITA TRANSFER
-Panduan narasi (bukan checklist kaku — biarkan cerita mengalir secara alami):
-• Buka dengan tegangan atau situasi yang menggambarkan "mengapa ini terjadi sekarang" — bukan dengan mengumumkan nama dan klub tujuan
-• Masuk ke detail transfer: nilai, durasi kontrak, siapa yang mengonfirmasi, bagaimana prosesnya berjalan
-• Berikan konteks yang membuat pembaca benar-benar mengerti: performa pemain belakangan ini, kebutuhan klub yang merekrut, apa yang membuat transfer ini masuk akal (atau mengejutkan)
-• Tutup dengan apa artinya ini ke depan — bagi pemain, bagi kedua klub, atau bagi persaingan di liga
+Struktur artikel WAJIB menggunakan judul <h2> berikut secara berurutan, diikuti paragraf narasi di bawahnya:
+
+1. <h2>Latar Belakang</h2> — Buka dengan tegangan atau situasi "mengapa ini terjadi sekarang", bukan langsung umumkan nama dan klub tujuan.
+2. <h2>Detail Transfer</h2> — Nilai transfer, durasi kontrak, siapa yang mengonfirmasi, bagaimana prosesnya berjalan.
+3. <h2>Dampak bagi Kedua Klub</h2> — Performa pemain belakangan ini, kebutuhan klub yang merekrut, mengapa transfer ini masuk akal atau mengejutkan.
+4. <h2>Ke Depan</h2> — Apa artinya ini bagi pemain, kedua klub, dan persaingan di liga.
 
 Nada: serius tapi tidak kering. Ini bukan siaran pers — ini narasi tentang karier seorang manusia dan keputusan besar yang menyertainya.
 Panjang: 500–700 kata`,
 
   konpers: `Tipe: KONFERENSI PERS
-Panduan narasi:
-• Buka dengan atmosfer atau momen paling signifikan dari konpers — bukan dengan "Pelatih X menghadiri konferensi pers"
-• Hadirkan kutipan terkuat sebagai blockquote setelah konteks awal dibangun, bukan di awal artikel
-• Elaborasi apa yang sesungguhnya ada di balik kata-kata tersebut — apa yang tidak dikatakan sama pentingnya dengan apa yang dikatakan
-• Tunjukkan mengapa pernyataan ini penting di titik waktu ini, bukan sekadar merangkum ulang ucapannya
-• Tutup dengan implikasi: apa yang berubah setelah konpers ini, apa yang masih menggantung
+Struktur artikel WAJIB menggunakan judul <h2> berikut secara berurutan, diikuti paragraf narasi di bawahnya:
+
+1. <h2>Atmosfer Konpers</h2> — Buka dengan atmosfer atau momen paling signifikan — bukan dengan "Pelatih X menghadiri konferensi pers".
+2. <h2>Kutipan Kunci</h2> — Hadirkan kutipan terkuat sebagai blockquote setelah konteks awal dibangun.
+3. <h2>Di Balik Kata-Kata</h2> — Elaborasi apa yang sesungguhnya ada di balik pernyataan — apa yang tidak dikatakan sama pentingnya.
+4. <h2>Implikasi</h2> — Apa yang berubah setelah konpers ini, apa yang masih menggantung.
 
 Nada: seperti jurnalis yang ada di ruangan itu dan membaca lebih dari sekadar transkrip.
 Panjang: 600–800 kata`,
 
   cedera: `Tipe: BERITA CEDERA
-Panduan narasi:
-• Buka dengan dampak atau kehilangan yang ditimbulkan — bukan dengan nama pemain dan diagnosis medis
-• Jelaskan kronologi: kapan, di pertandingan mana, bagaimana momen itu terjadi
-• Bahas apa artinya ini bagi tim: jadwal ke depan, pengganti yang mungkin, posisi di klasemen
-• Jika relevan, beri konteks riwayat cedera pemain — apakah ini pola yang mengkhawatirkan?
-• Tutup dengan prognosis terbaru dan apa yang ditunggu semua pihak
+Struktur artikel WAJIB menggunakan judul <h2> berikut secara berurutan, diikuti paragraf narasi di bawahnya:
+
+1. <h2>Kronologi Cedera</h2> — Buka dengan dampak atau kehilangan yang ditimbulkan, lalu jelaskan kapan, di pertandingan mana, dan bagaimana momen itu terjadi.
+2. <h2>Dampak bagi Tim</h2> — Apa artinya ini bagi tim: jadwal ke depan, pengganti yang mungkin, posisi di klasemen. Jika relevan, beri konteks riwayat cedera — apakah ini pola mengkhawatirkan?
+3. <h2>Prognosis</h2> — Prognosis terbaru dan apa yang ditunggu semua pihak.
 
 Nada: empati terhadap pemain, tapi tetap analitis terhadap dampaknya.
 Panjang: 400–550 kata`,
 
   preview: `Tipe: PREVIEW PERTANDINGAN
-Struktur artikel WAJIB mengikuti urutan berikut, ditulis sebagai satu narasi yang mengalir lewat paragraf biasa (TANPA heading/subheading literal — transisi antar bagian harus terasa alami, bukan daftar bersekat):
+Struktur artikel WAJIB menggunakan judul <h2> berikut secara berurutan, diikuti paragraf narasi di bawahnya:
 
-1. NARASI PEMBUKA — Buka dengan "taruhan" pertandingan ini: apa yang sesungguhnya dipertaruhkan kedua pihak, tensi yang melingkupi laga ini, atau momentum yang sedang dibawa masing-masing tim. Bangun atmosfer sebelum nama tim disebutkan secara langsung.
-2. ANALISA TIM KANDANG — Bedah kekuatan dan kelemahan tim tuan rumah dari sudut pandang taktis: pola permainan, kondisi skuat terkini, performa kandang belakangan ini, pemain yang sedang on-fire atau yang absen.
-3. ANALISA TIM TANDANG — Lakukan hal serupa untuk tim tamu, dan secara spesifik tunjukkan di titik mana benturan taktis paling menarik akan terjadi ketika kedua gaya bermain bertemu.
-4. PREDIKSI JALANNYA PERTANDINGAN — Tutup dengan prediksi yang didukung analisis dari dua bagian sebelumnya: bagaimana laga ini diperkirakan berjalan, fase mana yang krusial, dan kemungkinan hasil yang paling realistis — bukan sekadar "pertandingan ini akan seru".
+1. <h2>[Nama Tim Kandang]: Momentum Tuan Rumah</h2> — Ganti [Nama Tim Kandang] dengan nama tim yang sebenarnya. Bedah kekuatan dan kelemahan tim tuan rumah: pola permainan, kondisi skuat terkini, performa kandang, pemain on-fire atau absen.
+2. <h2>[Nama Tim Tandang]: [Satu frasa karakter tim]</h2> — Ganti dengan nama dan karakter nyata tim tamu. Lakukan analisa serupa dan tunjukkan di titik mana benturan taktis paling menarik akan terjadi.
+3. <h2>[Nama Pemain A] vs [Nama Pemain B]</h2> — Ganti dengan duel individual paling krusial di laga ini. Jelaskan mengapa pertarungan ini bisa jadi penentu.
+4. <h2>[Nama Tim Kandang] Diunggulkan, [Nama Tim Tandang] Punya Kejutan</h2> — Ganti dengan frasa prediksi yang relevan. Tutup dengan prediksi yang didukung analisis: bagaimana laga diperkirakan berjalan, fase krusial, dan kemungkinan hasil paling realistis.
 
-Sentuh head-to-head dan tren terkini HANYA jika benar-benar relevan dan memperkuat analisa taktis di atas — jangan dipaksakan jadi bagian terpisah.
+Sentuh head-to-head dan tren terkini HANYA jika benar-benar relevan dan memperkuat analisa — leburkan ke bagian yang paling sesuai, bukan bagian terpisah.
 
 Nada: seperti analis taktis yang juga bisa bercerita.
 Panjang: 600–800 kata`,
 
   hasil: `Tipe: LAPORAN HASIL PERTANDINGAN
-Struktur artikel WAJIB mengikuti urutan berikut, ditulis sebagai satu narasi yang mengalir lewat paragraf biasa (TANPA heading/subheading literal — setiap bagian harus mengalir natural ke bagian berikutnya):
+Struktur artikel WAJIB menggunakan judul <h2> berikut secara berurutan, diikuti paragraf narasi di bawahnya:
 
-1. NARASI PEMBUKA — Tangkap esensi pertandingan dalam satu atau dua kalimat pembuka yang kuat. Jangan dibuka dengan skor atau nama pencetak gol.
-2. JALANNYA BABAK PERTAMA — Ceritakan ritme 45 menit pertama: bagaimana permainan terbangun, momen-momen yang membentuk arah laga, gol-gol yang lahir di babak ini lengkap dengan konteksnya — bukan play-by-play menit per menit.
-3. JALANNYA BABAK KEDUA — Lanjutkan dengan apa yang berubah setelah turun minum: pergantian taktik, perubahan intensitas permainan, gol-gol tambahan, dan bagaimana situasi berkembang hingga peluit panjang.
-4. MOMENT PENGUBAH JALANNYA PERTANDINGAN — Soroti satu titik balik paling krusial di laga ini — kartu merah, pergantian pemain, keputusan wasit, atau momen individu — yang benar-benar mengubah arah pertandingan. Jelaskan secara konkret mengapa momen ini menjadi pembeda.
-5. DAMPAK DARI HASIL AKHIR — Tutup dengan apa arti hasil ini untuk gambaran besar: posisi klasemen, momentum menuju laga berikutnya, atau narasi musim masing-masing tim.
-
-Sisipkan satu observasi taktis singkat tentang mengapa pemenang menang dan mengapa yang kalah gagal — leburkan secara alami ke salah satu bagian di atas, bukan sebagai bagian terpisah.
+1. <h2>Babak Pertama</h2> — Buka dengan narasi yang menangkap esensi pertandingan (JANGAN dibuka dengan skor atau nama pencetak gol). Ceritakan ritme 45 menit pertama: bagaimana permainan terbangun, momen-momen pembentuk arah laga, gol-gol yang lahir beserta konteksnya.
+2. <h2>Babak Kedua</h2> — Apa yang berubah setelah turun minum: pergantian taktik, perubahan intensitas, gol-gol tambahan, bagaimana situasi berkembang hingga peluit panjang.
+3. <h2>Momen Penentu</h2> — Satu titik balik paling krusial di laga ini — kartu merah, pergantian pemain, keputusan wasit, atau momen individu — yang benar-benar mengubah arah pertandingan. Sisipkan observasi taktis singkat tentang mengapa pemenang menang dan yang kalah gagal.
+4. <h2>Dampak Hasil Akhir</h2> — Apa arti hasil ini untuk gambaran besar: posisi klasemen, momentum menuju laga berikutnya, atau narasi musim masing-masing tim.
 
 Nada: ini bukan laporan pertandingan biasa — ini esai tentang apa yang terjadi dan mengapa itu penting.
 Panjang: 700–900 kata`,
 
   trivia: `Tipe: ARTIKEL TRIVIA SEPAK BOLA
-Panduan narasi:
-• Buka dengan fakta yang mengejutkan atau paradoks yang membuat pembaca berpikir "tunggu, serius?"
-• Bangun konteks sejarah secara bertahap — biarkan pembaca merasa seperti sedang menggali lapisan demi lapisan
-• Hubungkan fakta-fakta pendukung dengan cara yang tidak terduga — kejutan kecil di setiap paragraf membuat pembaca terus lanjut
-• Jembatani ke era modern: apakah ini masih relevan? Apakah ada yang mendekati rekor ini hari ini?
-• Tutup dengan perspektif yang membuat pembaca melihat sesuatu yang familiar dengan cara yang berbeda
+Struktur artikel WAJIB menggunakan judul <h2> berikut secara berurutan, diikuti paragraf narasi di bawahnya:
+
+1. <h2>Fakta yang Mengejutkan</h2> — Buka dengan fakta atau paradoks yang membuat pembaca berpikir "tunggu, serius?".
+2. <h2>Konteks Sejarah</h2> — Bangun konteks sejarah secara bertahap, hubungkan fakta-fakta pendukung dengan cara yang tidak terduga — kejutan kecil di setiap paragraf.
+3. <h2>Era Modern</h2> — Jembatani ke era modern: apakah ini masih relevan? Apakah ada yang mendekati rekor ini hari ini? Tutup dengan perspektif yang membuat pembaca melihat sesuatu yang familiar dengan cara berbeda.
 
 Nada: ringan, kadang sedikit jenaka, tapi selalu ada substansinya. Seperti ngobrol dengan teman yang sangat tahu sepak bola.
 Boleh gunakan satu atau dua kalimat pendek yang menghentak sebagai penekanan.
@@ -209,38 +202,17 @@ function sseEvent(event: string, data: unknown): string {
 // Catatan: roster model ":free" di OpenRouter berubah-ubah dari waktu ke waktu.
 // Kalau salah satu ID di bawah sudah tidak aktif, cek daftar terbaru di
 // https://openrouter.ai/models?max_price=0 dan update FALLBACK_MODELS.
-// Catatan: roster model ":free" di OpenRouter berubah-ubah dari waktu ke waktu
-// (model bisa di-deprecate tanpa pemberitahuan, contoh: qwen/qwen3-235b-a22b:free
-// sudah tidak aktif per Juni 2026 dan akan menghasilkan 404). Kalau salah satu
-// ID di bawah sudah tidak aktif, cek daftar terbaru di
-// https://openrouter.ai/models?max_price=0 dan update DEFAULT_FREE_MODELS
-// (dan AI_MODEL_OPTIONS yang senada di create-article-view.tsx).
 const DEFAULT_FREE_MODELS = [
   "meta-llama/llama-3.3-70b-instruct:free",
   "deepseek/deepseek-chat-v3.1:free",
-  "deepseek/deepseek-r1:free",
-  "qwen/qwen3-coder:free",
-  "google/gemma-3-12b-it:free",
-  "openai/gpt-oss-120b:free",
-  "stepfun/step-3.5-flash:free",
+  "qwen/qwen3-235b-a22b:free",
 ]
 
-async function openRouterGenerateJson(
-  apiKey: string,
-  systemPrompt: string,
-  userPrompt: string,
-  preferredModel?: string,
-): Promise<string> {
+async function openRouterGenerateJson(apiKey: string, systemPrompt: string, userPrompt: string): Promise<string> {
   const configuredModel = process.env.OPENROUTER_MODEL?.trim()
-
-  // Urutan prioritas: (1) model yang dipilih manual oleh admin dari dropdown
-  // editor, (2) OPENROUTER_MODEL dari env (kalau diisi), (3) daftar fallback
-  // default. Duplikat dibuang supaya model yang sama tidak dicoba dua kali.
-  const candidates = [preferredModel, configuredModel, ...DEFAULT_FREE_MODELS]
-    .map((m) => m?.trim())
-    .filter((m): m is string => !!m)
-
-  const modelsToTry = [...new Set(candidates)]
+  const modelsToTry = configuredModel
+    ? [configuredModel, ...DEFAULT_FREE_MODELS.filter((m) => m !== configuredModel)]
+    : DEFAULT_FREE_MODELS
 
   let lastError: Error | null = null
 
@@ -307,64 +279,21 @@ async function openRouterGenerateJson(
 // Gemini di sini berperan sebagai editor senior — bukan menulis dari nol,
 // tapi membaca draft yang sudah ada dan mengembalikan versi revisi final
 // dalam format JSON yang sama (title + content).
-//
-// Gemini API kadang mengembalikan 503 "UNAVAILABLE" saat servernya sedang
-// overload sementara (high demand) — ini BUKAN masalah di API key atau
-// kuota, dan biasanya hilang sendiri dalam beberapa detik. Jadi di sini
-// ditambahkan retry otomatis dengan backoff sebelum benar-benar menyerah.
-const GEMINI_MAX_RETRIES   = 1 // total panggilan ke Gemini maksimal 2x (1 awal + 1 retry) — hemat kuota free tier
-const GEMINI_RETRY_DELAY_MS = 1500
-
-function sleep(ms: number) {
-  return new Promise((resolve) => setTimeout(resolve, ms))
-}
-
-function isRetryableGeminiError(err: unknown): boolean {
-  const msg = err instanceof Error ? err.message : String(err)
-  return msg.includes("503") || msg.includes("UNAVAILABLE") || msg.includes("overloaded")
-}
-
 async function geminiReviseJson(apiKey: string, systemPrompt: string, userPrompt: string): Promise<string> {
   const genai = new GoogleGenAI({ apiKey })
 
-  let lastError: unknown = null
+  const response = await genai.models.generateContent({
+    model: "gemini-2.5-flash",
+    contents: userPrompt,
+    config: {
+      systemInstruction: systemPrompt,
+      temperature:       0.7,
+      maxOutputTokens:   8192,
+      responseMimeType:  "application/json",
+    },
+  })
 
-  for (let attempt = 0; attempt <= GEMINI_MAX_RETRIES; attempt++) {
-    try {
-      const response = await genai.models.generateContent({
-        model: "gemini-3.5-flash",
-        contents: userPrompt,
-        config: {
-          systemInstruction: systemPrompt,
-          temperature:       0.7,
-          maxOutputTokens:   8192,
-          responseMimeType:  "application/json",
-        },
-      })
-
-      return (response.text ?? "").trim()
-    } catch (err) {
-      lastError = err
-
-      // Kalau errornya bukan 503/overload (misal 400/403/429), jangan retry —
-      // langsung lempar supaya pesan error spesifiknya tetap muncul ke admin.
-      if (!isRetryableGeminiError(err)) throw err
-
-      // Sudah percobaan terakhir → menyerah, lempar error aslinya.
-      if (attempt === GEMINI_MAX_RETRIES) break
-
-      const delay = GEMINI_RETRY_DELAY_MS * Math.pow(2, attempt)
-      console.warn(
-        `[generate-article] Gemini 503/overload, retry ${attempt + 1}/${GEMINI_MAX_RETRIES} setelah ${delay}ms...`
-      )
-      await sleep(delay)
-    }
-  }
-
-  throw new Error(
-    "Gemini: server sedang mengalami lonjakan permintaan tinggi (503 UNAVAILABLE) dan tetap gagal setelah beberapa kali percobaan ulang. Ini biasanya sementara — tunggu 1-2 menit lalu coba generate lagi."
-    + (lastError instanceof Error ? ` Detail: ${lastError.message.slice(0, 150)}` : "")
-  )
+  return (response.text ?? "").trim()
 }
 
 // System prompt khusus untuk tahap editor — Gemini diposisikan sebagai editor
@@ -382,7 +311,8 @@ fakta, dan struktur yang sudah ada di draft. Fokus revisi:
 - Pastikan penyebutan nama/tim sudah divariasikan, tidak diulang berlebihan
 - Rapikan transisi antar paragraf agar mengalir lebih natural
 - JANGAN mengubah fakta, angka, atau detail yang sudah ada di draft — hanya kualitas penulisannya
-- JANGAN menambah heading/subheading — hanya <p> dan <blockquote>
+- PERTAHANKAN semua tag <h2> persis seperti di draft — jangan hapus, ganti teks, atau pindahkan posisinya
+- JANGAN menambah heading baru selain yang sudah ada — hanya <p>, <h2>, dan <blockquote>
 - Output tetap HANYA JSON murni dengan struktur {"title": "...", "content": "..."}, tanpa markdown fence, tanpa komentar`
 
 // Parsing JSON dengan beberapa fallback, karena model kadang tetap menyisipkan
@@ -446,7 +376,7 @@ export async function POST(req: NextRequest) {
     return NextResponse.json({ error: "Request body tidak valid." }, { status: 400 })
   }
 
-  const { newsType, topic, context, model } = body
+  const { newsType, topic, context } = body
 
   if (!newsType || !topic?.trim() || !context?.trim()) {
     return NextResponse.json(
@@ -492,7 +422,7 @@ Kembalikan HANYA JSON dengan format berikut (tidak ada teks di luar JSON):
         // ── STEP 2: OpenRouter menulis draft pertama ────────────────────────
         send("progress", { step: 2, label: "Menulis Draft dengan OpenRouter" })
 
-        const rawDraft = await openRouterGenerateJson(openRouterKey, BASE_SYSTEM, userPrompt, model)
+        const rawDraft = await openRouterGenerateJson(openRouterKey, BASE_SYSTEM, userPrompt)
 
         if (!rawDraft) {
           throw new Error("OpenRouter tidak menghasilkan output. Coba lagi.")
