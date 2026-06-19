@@ -39,7 +39,9 @@
 //   ke endpoint v1beta lama.
 // - OPENROUTER_MODEL (opsional) → kalau diisi, dicoba duluan sebelum fallback ke
 //   daftar model gratis. Kosongkan saja kalau memang mau pakai free tier sepenuhnya.
-// - Model Gemini untuk tahap editor: gemini-2.5-flash
+// - Model Gemini untuk tahap editor: gemini-3.5-flash (sebelumnya gemini-2.5-flash —
+//   diganti 19 Jun 2026 karena gemini-2.5-flash sedang dalam proses sunset/shutdown
+//   dan free-tier-nya konsisten balas 503 UNAVAILABLE)
 
 import { NextRequest, NextResponse } from "next/server"
 import { GoogleGenAI } from "@google/genai"
@@ -293,7 +295,7 @@ async function geminiReviseJson(apiKey: string, systemPrompt: string, userPrompt
   const genai = new GoogleGenAI({ apiKey })
 
   const response = await genai.models.generateContent({
-    model: "gemini-2.5-flash",
+    model: "gemini-3.5-flash",
     contents: userPrompt,
     config: {
       systemInstruction: systemPrompt,
