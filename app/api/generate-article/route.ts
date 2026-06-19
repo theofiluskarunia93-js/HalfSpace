@@ -307,21 +307,64 @@ async function openRouterGenerateJson(
 // Gemini di sini berperan sebagai editor senior — bukan menulis dari nol,
 // tapi membaca draft yang sudah ada dan mengembalikan versi revisi final
 // dalam format JSON yang sama (title + content).
+//
+// Gemini API kadang mengembalikan 503 "UNAVAILABLE" saat servernya sedang
+// overload sementara (high demand) — ini BUKAN masalah di API key atau
+// kuota, dan biasanya hilang sendiri dalam beberapa detik. Jadi di sini
+// ditambahkan retry otomatis dengan backoff sebelum benar-benar menyerah.
+const GEMINI_MAX_RETRIES   = 1 // total panggilan ke Gemini maksimal 2x (1 awal + 1 retry) — hemat kuota free tier
+const GEMINI_RETRY_DELAY_MS = 1500
+
+function sleep(ms: number) {
+  return new Promise((resolve) => setTimeout(resolve, ms))
+}
+
+function isRetryableGeminiError(err: unknown): boolean {
+  const msg = err instanceof Error ? err.message : String(err)
+  return msg.includes("503") || msg.includes("UNAVAILABLE") || msg.includes("overloaded")
+}
+
 async function geminiReviseJson(apiKey: string, systemPrompt: string, userPrompt: string): Promise<string> {
   const genai = new GoogleGenAI({ apiKey })
 
-  const response = await genai.models.generateContent({
-    model: "gemini-3.5-flash",
-    contents: userPrompt,
-    config: {
-      systemInstruction: systemPrompt,
-      temperature:       0.7,
-      maxOutputTokens:   8192,
-      responseMimeType:  "application/json",
-    },
-  })
+  let lastError: unknown = null
 
-  return (response.text ?? "").trim()
+  for (let attempt = 0; attempt <= GEMINI_MAX_RETRIES; attempt++) {
+    try {
+      const response = await genai.models.generateContent({
+        model: "gemini-3.5-flash",
+        contents: userPrompt,
+        config: {
+          systemInstruction: systemPrompt,
+          temperature:       0.7,
+          maxOutputTokens:   8192,
+          responseMimeType:  "application/json",
+        },
+      })
+
+      return (response.text ?? "").trim()
+    } catch (err) {
+      lastError = err
+
+      // Kalau errornya bukan 503/overload (misal 400/403/429), jangan retry —
+      // langsung lempar supaya pesan error spesifiknya tetap muncul ke admin.
+      if (!isRetryableGeminiError(err)) throw err
+
+      // Sudah percobaan terakhir → menyerah, lempar error aslinya.
+      if (attempt === GEMINI_MAX_RETRIES) break
+
+      const delay = GEMINI_RETRY_DELAY_MS * Math.pow(2, attempt)
+      console.warn(
+        `[generate-article] Gemini 503/overload, retry ${attempt + 1}/${GEMINI_MAX_RETRIES} setelah ${delay}ms...`
+      )
+      await sleep(delay)
+    }
+  }
+
+  throw new Error(
+    "Gemini: server sedang mengalami lonjakan permintaan tinggi (503 UNAVAILABLE) dan tetap gagal setelah beberapa kali percobaan ulang. Ini biasanya sementara — tunggu 1-2 menit lalu coba generate lagi."
+    + (lastError instanceof Error ? ` Detail: ${lastError.message.slice(0, 150)}` : "")
+  )
 }
 
 // System prompt khusus untuk tahap editor — Gemini diposisikan sebagai editor
