@@ -57,6 +57,10 @@ interface RequestBody {
   newsType: NewsType
   topic:    string
   context:  string
+  // Opsional: model OpenRouter spesifik yang dipilih admin dari dropdown
+  // di editor (lihat AI_MODEL_OPTIONS di create-article-view.tsx). Kalau
+  // diisi, dicoba PALING PERTAMA sebelum fallback ke DEFAULT_FREE_MODELS.
+  model?:   string
 }
 
 // ─── BASE SYSTEM PROMPT ───────────────────────────────────────────────────────
@@ -205,17 +209,38 @@ function sseEvent(event: string, data: unknown): string {
 // Catatan: roster model ":free" di OpenRouter berubah-ubah dari waktu ke waktu.
 // Kalau salah satu ID di bawah sudah tidak aktif, cek daftar terbaru di
 // https://openrouter.ai/models?max_price=0 dan update FALLBACK_MODELS.
+// Catatan: roster model ":free" di OpenRouter berubah-ubah dari waktu ke waktu
+// (model bisa di-deprecate tanpa pemberitahuan, contoh: qwen/qwen3-235b-a22b:free
+// sudah tidak aktif per Juni 2026 dan akan menghasilkan 404). Kalau salah satu
+// ID di bawah sudah tidak aktif, cek daftar terbaru di
+// https://openrouter.ai/models?max_price=0 dan update DEFAULT_FREE_MODELS
+// (dan AI_MODEL_OPTIONS yang senada di create-article-view.tsx).
 const DEFAULT_FREE_MODELS = [
   "meta-llama/llama-3.3-70b-instruct:free",
   "deepseek/deepseek-chat-v3.1:free",
-  "qwen/qwen3-235b-a22b:free",
+  "deepseek/deepseek-r1:free",
+  "qwen/qwen3-coder:free",
+  "google/gemma-3-12b-it:free",
+  "openai/gpt-oss-120b:free",
+  "stepfun/step-3.5-flash:free",
 ]
 
-async function openRouterGenerateJson(apiKey: string, systemPrompt: string, userPrompt: string): Promise<string> {
+async function openRouterGenerateJson(
+  apiKey: string,
+  systemPrompt: string,
+  userPrompt: string,
+  preferredModel?: string,
+): Promise<string> {
   const configuredModel = process.env.OPENROUTER_MODEL?.trim()
-  const modelsToTry = configuredModel
-    ? [configuredModel, ...DEFAULT_FREE_MODELS.filter((m) => m !== configuredModel)]
-    : DEFAULT_FREE_MODELS
+
+  // Urutan prioritas: (1) model yang dipilih manual oleh admin dari dropdown
+  // editor, (2) OPENROUTER_MODEL dari env (kalau diisi), (3) daftar fallback
+  // default. Duplikat dibuang supaya model yang sama tidak dicoba dua kali.
+  const candidates = [preferredModel, configuredModel, ...DEFAULT_FREE_MODELS]
+    .map((m) => m?.trim())
+    .filter((m): m is string => !!m)
+
+  const modelsToTry = [...new Set(candidates)]
 
   let lastError: Error | null = null
 
@@ -378,7 +403,7 @@ export async function POST(req: NextRequest) {
     return NextResponse.json({ error: "Request body tidak valid." }, { status: 400 })
   }
 
-  const { newsType, topic, context } = body
+  const { newsType, topic, context, model } = body
 
   if (!newsType || !topic?.trim() || !context?.trim()) {
     return NextResponse.json(
@@ -424,7 +449,7 @@ Kembalikan HANYA JSON dengan format berikut (tidak ada teks di luar JSON):
         // ── STEP 2: OpenRouter menulis draft pertama ────────────────────────
         send("progress", { step: 2, label: "Menulis Draft dengan OpenRouter" })
 
-        const rawDraft = await openRouterGenerateJson(openRouterKey, BASE_SYSTEM, userPrompt)
+        const rawDraft = await openRouterGenerateJson(openRouterKey, BASE_SYSTEM, userPrompt, model)
 
         if (!rawDraft) {
           throw new Error("OpenRouter tidak menghasilkan output. Coba lagi.")

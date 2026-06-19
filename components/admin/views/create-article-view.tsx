@@ -350,6 +350,21 @@ function cleanLegacyBadgeContent(content: string): string {
   return doc.body.innerHTML
 }
 
+// ─── Pilihan Model Free Tier OpenRouter ───────────────────────────────────────
+// Daftar ini HARUS sinkron dengan DEFAULT_FREE_MODELS di
+// app/api/generate-article/route.ts. Kalau ada model yang mati di OpenRouter
+// (cek openrouter.ai/models), update di KEDUA tempat.
+const AI_MODEL_OPTIONS = [
+  { value: "",                                     label: "Otomatis (fallback)" },
+  { value: "meta-llama/llama-3.3-70b-instruct:free", label: "Llama 3.3 70B (Meta)" },
+  { value: "deepseek/deepseek-chat-v3.1:free",       label: "DeepSeek Chat v3.1" },
+  { value: "deepseek/deepseek-r1:free",              label: "DeepSeek R1 (Reasoning)" },
+  { value: "qwen/qwen3-coder:free",                  label: "Qwen3 Coder" },
+  { value: "google/gemma-3-12b-it:free",             label: "Gemma 3 12B (Google)" },
+  { value: "openai/gpt-oss-120b:free",               label: "GPT-OSS 120B (OpenAI)" },
+  { value: "stepfun/step-3.5-flash:free",            label: "Step 3.5 Flash (StepFun)" },
+] as const
+
 // ─── Main Component ───────────────────────────────────────────────────────────
 
 export function CreateArticleView({ onBack, articleId }: CreateArticleViewProps) {
@@ -444,6 +459,9 @@ export function CreateArticleView({ onBack, articleId }: CreateArticleViewProps)
   const [aiNewsType,    setAiNewsType]    = useState<"transfer" | "konpers" | "cedera" | "preview" | "hasil" | "trivia">("transfer")
   const [aiTopic,       setAiTopic]       = useState("")
   const [aiContext,     setAiContext]     = useState("")
+  // "" = otomatis (pakai urutan fallback default di server). Selain itu, model
+  // ini akan dicoba PALING PERTAMA sebelum fallback ke daftar default.
+  const [aiModel,       setAiModel]       = useState("")
   const [aiGenerating,  setAiGenerating]  = useState(false)
   const [aiError,       setAiError]       = useState<string | null>(null)
   const [aiProgress,    setAiProgress]    = useState<{ step: number; label: string } | null>(null)
@@ -740,6 +758,7 @@ export function CreateArticleView({ onBack, articleId }: CreateArticleViewProps)
           newsType: aiNewsType,
           topic:    aiTopic,
           context:  aiContext,
+          model:    aiModel || undefined,
         }),
       })
 
@@ -1638,6 +1657,25 @@ export function CreateArticleView({ onBack, articleId }: CreateArticleViewProps)
                   </button>
                 ))}
               </div>
+            </div>
+
+            {/* Model AI (Free Tier OpenRouter) */}
+            <div>
+              <label className="mb-1.5 block text-xs font-semibold text-muted-foreground uppercase tracking-wide">
+                Model AI (Free Tier)
+              </label>
+              <select
+                value={aiModel}
+                onChange={(e) => setAiModel(e.target.value)}
+                className="w-full rounded-lg border border-border bg-secondary/50 px-3 py-2 text-sm text-foreground focus:outline-none focus:ring-1 focus:ring-primary"
+              >
+                {AI_MODEL_OPTIONS.map((m) => (
+                  <option key={m.value} value={m.value}>{m.label}</option>
+                ))}
+              </select>
+              <p className="mt-1 text-[11px] text-muted-foreground">
+                "Otomatis" akan mencoba beberapa model gratis secara berurutan kalau ada yang sedang limit/down. Pilih manual kalau kamu tahu model tertentu sedang lancar.
+              </p>
             </div>
 
             {/* Topik */}
