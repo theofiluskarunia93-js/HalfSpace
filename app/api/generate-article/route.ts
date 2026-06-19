@@ -47,6 +47,17 @@ import { NextRequest, NextResponse } from "next/server"
 import { GoogleGenAI } from "@google/genai"
 import { requireAdmin } from "@/lib/supabase/server-auth"
 
+// Pipeline ini memanggil OpenRouter (dengan kemungkinan beberapa kali fallback
+// model gratis) lalu Gemini (dengan retry + fallback model) — total durasi
+// gampang lewat 10 detik (default timeout Vercel Hobby tanpa konfigurasi ini).
+// Kalau function dimatikan Vercel di tengah jalan, koneksi SSE ke browser
+// putus mendadak dan muncul sebagai "network error" generik, bukan pesan
+// error yang rapi dari handler di bawah.
+// Catatan: di Hobby plan, durasi >10 detik hanya berlaku kalau Fluid Compute
+// aktif (Project Settings → Functions → Fluid Compute), yang mengizinkan
+// sampai 60 detik di plan gratis. Tanpa itu, nilai ini akan di-cap balik ke 10.
+export const maxDuration = 60
+
 export type NewsType =
   | "transfer"
   | "konpers"
@@ -291,21 +302,76 @@ async function openRouterGenerateJson(apiKey: string, systemPrompt: string, user
 // Gemini di sini berperan sebagai editor senior — bukan menulis dari nol,
 // tapi membaca draft yang sudah ada dan mengembalikan versi revisi final
 // dalam format JSON yang sama (title + content).
+// Daftar model Gemini yang dicoba berurutan. gemini-3.5-flash masih status
+// "Preview" di Google (kapasitas server terbatas) sehingga sering balas 503
+// UNAVAILABLE walau quota/billing aman — ini server-side, bukan masalah di
+// akun kita. gemini-3.1-flash-lite & gemini-2.5-flash dipakai sebagai fallback
+// karena keduanya rilis stabil dengan ketersediaan server yang jauh lebih baik.
+const GEMINI_MODEL_FALLBACKS = [
+  "gemini-3.5-flash",
+  "gemini-3.1-flash-lite",
+  "gemini-2.5-flash",
+]
+
+function isRetryableGeminiError(err: unknown): boolean {
+  const msg = err instanceof Error ? err.message : String(err)
+  return (
+    msg.includes("503") ||
+    msg.includes("UNAVAILABLE") ||
+    msg.includes("overloaded") ||
+    msg.includes("429") ||
+    msg.includes("RESOURCE_EXHAUSTED")
+  )
+}
+
 async function geminiReviseJson(apiKey: string, systemPrompt: string, userPrompt: string): Promise<string> {
   const genai = new GoogleGenAI({ apiKey })
 
-  const response = await genai.models.generateContent({
-    model: "gemini-3.5-flash",
-    contents: userPrompt,
-    config: {
-      systemInstruction: systemPrompt,
-      temperature:       0.7,
-      maxOutputTokens:   8192,
-      responseMimeType:  "application/json",
-    },
-  })
+  let lastError: Error | null = null
 
-  return (response.text ?? "").trim()
+  for (const model of GEMINI_MODEL_FALLBACKS) {
+    // Retry ringan (2x percobaan per model) dengan backoff singkat — 503
+    // sering hilang sendiri dalam beberapa detik karena ini soal kapasitas
+    // server sesaat, bukan error permanen.
+    for (let attempt = 1; attempt <= 2; attempt++) {
+      try {
+        const response = await genai.models.generateContent({
+          model,
+          contents: userPrompt,
+          config: {
+            systemInstruction: systemPrompt,
+            temperature:       0.7,
+            maxOutputTokens:   8192,
+            responseMimeType:  "application/json",
+          },
+        })
+
+        const text = (response.text ?? "").trim()
+        if (text) return text
+
+        lastError = new Error(`Gemini (${model}) mengembalikan output kosong.`)
+      } catch (err) {
+        lastError = err instanceof Error ? err : new Error("Error tidak diketahui dari Gemini.")
+
+        if (!isRetryableGeminiError(lastError)) {
+          // Error non-retryable (mis. 400 INVALID_ARGUMENT, 403 PERMISSION_DENIED)
+          // → langsung lempar, percuma dicoba ulang atau ganti model.
+          throw lastError
+        }
+
+        console.warn(`[generate-article] Gemini model ${model} attempt ${attempt} gagal (${lastError.message}). ${attempt < 2 ? "Retry..." : "Pindah model fallback..."}`)
+        if (attempt < 2) {
+          await new Promise((r) => setTimeout(r, 1500 * attempt))
+        }
+      }
+    }
+  }
+
+  throw new Error(
+    lastError?.message
+      ? `Semua model Gemini gagal dicoba (server Google sedang overload). Error terakhir: ${lastError.message}`
+      : "Semua model Gemini gagal dicoba. Tunggu beberapa saat lalu coba lagi."
+  )
 }
 
 // System prompt khusus untuk tahap editor — Gemini diposisikan sebagai editor
@@ -503,6 +569,8 @@ Revisi draft di atas sesuai instruksi editor yang sudah diberikan. Kembalikan HA
           send("error", { error: "Gemini: API key tidak memiliki akses. Cek quota atau billing di Google AI Studio." })
         } else if (message.includes("429") || message.includes("RESOURCE_EXHAUSTED")) {
           send("error", { error: "Gemini: quota free tier habis. Tunggu beberapa saat atau upgrade plan." })
+        } else if (message.includes("503") || message.includes("UNAVAILABLE") || message.includes("overloaded")) {
+          send("error", { error: "Gemini: server Google sedang overload di semua model fallback (gemini-3.5-flash, gemini-3.1-flash-lite, gemini-2.5-flash). Ini bukan masalah quota/key — tunggu beberapa menit lalu coba lagi." })
         } else {
           send("error", { error: message })
         }
