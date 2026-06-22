@@ -206,7 +206,7 @@ async function groqGenerateJson(apiKey: string, systemPrompt: string, userPrompt
     body: JSON.stringify({
       model:       "openai/gpt-oss-120b",
       temperature: 0.85,
-      max_tokens:  8192,
+      max_tokens:  6000,
       messages: [
         { role: "system", content: systemPrompt },
         { role: "user",   content: userPrompt },
