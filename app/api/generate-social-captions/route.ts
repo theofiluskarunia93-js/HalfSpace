@@ -2,20 +2,19 @@
 //
 // Generate caption media sosial — pipeline DUA TAHAP:
 //
-//   Tahap 1 (Penulis) : Groq (llama-3.3-70b-versatile) menulis draft caption
-//                        untuk SEMUA platform sekaligus (Instagram, TikTok, X,
-//                        Facebook, Threads) dalam satu panggilan, dengan aturan
-//                        per-platform yang sudah di-embed di prompt di bawah.
-//   Tahap 2 (Editor)   : Gemini membaca draft caption dari Groq, lalu MEREVISI
-//                        sebagai social media editor — memperkuat hook/baris
-//                        pembuka, mempertajam CTA, dan memastikan setiap caption
-//                        tetap mengikuti aturan per-platform yang sama persis.
+//   Tahap 1 (Penulis) : Groq (GPT-OSS-20B)
+//                        menulis draft caption untuk SEMUA platform sekaligus
+//                        (Instagram, TikTok, X, Facebook, Threads) dalam satu
+//                        panggilan, dengan aturan per-platform yang sudah
+//                        di-embed di prompt di bawah.
+//   Tahap 2 (Editor)   : Gemini 3.5 Flash membaca draft caption dari Groq, lalu
+//                        MEREVISI sebagai social media editor — memperkuat hook/
+//                        baris pembuka, mempertajam CTA, dan memastikan setiap
+//                        caption tetap mengikuti aturan per-platform yang sama.
 //
-// Kedua tahap ini berjalan otomatis di background dalam satu request — klien
-// hanya menerima HASIL AKHIR yang sudah melalui kedua proses tersebut (sudah
-// final, sudah direvisi). Kontrak response TIDAK berubah dari sebelumnya:
-// tetap objek datar { instagram, tiktok, x, facebook, threads }, supaya
-// frontend (social-media-view.tsx) tidak perlu diubah sama sekali.
+// Kedua tahap ini berjalan otomatis dalam satu request — klien hanya menerima
+// HASIL AKHIR yang sudah direvisi. Kontrak response tidak berubah:
+// tetap objek datar { instagram, tiktok, x, facebook, threads }.
 //
 // Input : title (wajib), excerpt, firstSentence (kalimat pertama artikel,
 //         dipakai sebagai hook literal untuk caption X), slug (untuk
@@ -23,10 +22,10 @@
 // Output: { instagram, tiktok, x, facebook, threads }
 //
 // Catatan API key:
-// - GROQ_API_KEY   → tahap penulisan draft caption awal (semua platform sekaligus)
-// - GEMINI_API_KEY → tahap revisi/editor caption (format Google AI Studio terbaru:
-//   "AQ.xxx"). SDK: @google/genai (class GoogleGenAI) — jangan fetch manual ke
-//   endpoint v1beta lama. Model: gemini-3.5-flash
+// - GROQ_API_KEY   → tahap penulisan draft caption awal (GPT-OSS-20).
+//                    Model Groq: GPT-OSS-20B
+// - GEMINI_API_KEY → tahap revisi/editor caption. SDK: @google/genai (GoogleGenAI).
+//                    Model: gemini-3.5-flash
 
 import { NextRequest, NextResponse } from "next/server"
 import { GoogleGenAI } from "@google/genai"
@@ -110,6 +109,10 @@ Output HANYA JSON murni dengan struktur berikut, tanpa markdown fence, tanpa kom
   "threads": "..."
 }`
 
+// ─── TAHAP 1 (Penulis): Groq menulis draft caption (GPT-OSS-20) ──────────────
+// Model: GPT-OSS-20B — versi mini/20B GPT-OSS dari OpenAI,
+// dikenal sebagai GPT-OSS-20B di Groq. Cepat dan efisien untuk tugas caption
+// yang tidak memerlukan reasoning berat seperti draft artikel.
 async function groqChat(apiKey: string, prompt: string): Promise<string> {
   const res = await fetch("https://api.groq.com/openai/v1/chat/completions", {
     method:  "POST",
@@ -118,7 +121,7 @@ async function groqChat(apiKey: string, prompt: string): Promise<string> {
       "Authorization": `Bearer ${apiKey}`,
     },
     body: JSON.stringify({
-      model:       "llama-3.3-70b-versatile",
+      model:       "openai/gpt-oss-20b",
       temperature: 0.85,
       max_tokens:  2200,
       messages: [{ role: "user", content: prompt }],
@@ -138,7 +141,7 @@ async function groqChat(apiKey: string, prompt: string): Promise<string> {
   return (data.choices?.[0]?.message?.content ?? "").trim()
 }
 
-// ─── TAHAP 2 (Editor): Gemini merevisi caption dari Groq ─────────────────────
+// ─── TAHAP 2 (Editor): Gemini 3.5 Flash merevisi caption dari Groq ───────────
 // Gemini berperan sebagai social media editor — membaca draft caption yang
 // sudah ditulis Groq untuk 5 platform, lalu mengembalikan versi revisi final
 // dalam JSON dengan struktur yang sama, dengan hook & CTA yang lebih kuat.
@@ -285,7 +288,7 @@ Jawab HANYA dalam format JSON seperti ini, tanpa teks lain apapun, tanpa markdow
 }`
 
   try {
-    // ── TAHAP 1: Groq menulis draft caption untuk 5 platform ────────────────
+    // ── TAHAP 1: Groq menulis draft caption untuk 5 platform (GPT-OSS-20) ───
     const raw = await groqChat(apiKey, prompt)
 
     const draftCaptions = extractJsonObject<Captions>(raw)
@@ -303,7 +306,7 @@ Jawab HANYA dalam format JSON seperti ini, tanpa teks lain apapun, tanpa markdow
       if (!draftCaptions[key]) draftCaptions[key] = ""
     }
 
-    // ── TAHAP 2: Gemini merevisi draft sebagai social media editor ──────────
+    // ── TAHAP 2: Gemini 3.5 Flash merevisi draft sebagai social media editor ─
     const editorUserPrompt = `Berikut draft caption 5 platform yang perlu kamu revisi sebagai social media editor.
 
 JUDUL ARTIKEL: ${title}

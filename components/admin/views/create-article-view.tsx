@@ -350,23 +350,18 @@ function cleanLegacyBadgeContent(content: string): string {
   return doc.body.innerHTML
 }
 
-// ─── Pilihan Model Free Tier OpenRouter ───────────────────────────────────────
-// Daftar ini HARUS sinkron dengan DEFAULT_FREE_MODELS di
-// app/api/generate-article/route.ts. Kalau ada model yang mati di OpenRouter
-// (cek openrouter.ai/models), update di KEDUA tempat.
+// ─── Info Pipeline Generate Artikel ──────────────────────────────────────────
+// Sejak update 22 Jun 2026, pipeline generate artikel berubah menjadi:
+//   Tahap 1 (Draft)  : Groq GPT-OSS-120B (moonshotai/kimi-k2-instruct) — FIXED, tidak bisa dipilih manual
+//   Tahap 2 (Editor) : OpenRouter Nemutron 3 Ultra → fallback Nemutron 3 Super (otomatis di server)
 //
-// Update 19 Jun 2026: daftar lama (llama-3.3-70b-instruct:free, deepseek-chat-v3.1:free,
-// deepseek-r1:free, gemma-3-12b-it:free, stepfun step-3.5-flash:free) sudah dihapus dari
-// katalog gratis OpenRouter (cek live via GET /api/v1/models). qwen3-coder:free dan
-// gpt-oss-120b:free masih gratis TAPI tidak mendukung response_format (JSON mode) yang
-// dipakai route.ts, jadi tidak dimasukkan lagi ke sini supaya tidak memicu error 400.
+// Pilihan model di UI ini dulunya dipakai untuk memilih model draft OpenRouter.
+// Sekarang tahap draft sudah fixed ke Groq, sehingga dropdown ini hanya
+// dipertahankan untuk kompatibilitas UI — nilai yang dipilih tidak dikirim
+// ke server (field `model` diabaikan di route.ts yang baru).
+// Jika ke depan ada kebutuhan memilih model editor, update daftar di sini.
 const AI_MODEL_OPTIONS = [
-  { value: "",                                          label: "Otomatis (fallback)" },
-  { value: "nvidia/nemotron-3-super-120b-a12b:free",     label: "Nemotron 3 Super 120B (NVIDIA)" },
-  { value: "qwen/qwen3-next-80b-a3b-instruct:free",      label: "Qwen3 Next 80B Instruct" },
-  { value: "google/gemma-4-31b-it:free",                 label: "Gemma 4 31B (Google)" },
-  { value: "google/gemma-4-26b-a4b-it:free",             label: "Gemma 4 26B A4B (Google)" },
-  { value: "nvidia/nemotron-nano-9b-v2:free",            label: "Nemotron Nano 9B V2 (ringan)" },
+  { value: "", label: "Groq GPT-OSS-120B → Nemutron Editor (default)" },
 ] as const
 
 // ─── Inject section-label otomatis ke hasil AI generate ──────────────────────
@@ -1727,7 +1722,7 @@ export function CreateArticleView({ onBack, articleId }: CreateArticleViewProps)
                 ))}
               </select>
               <p className="mt-1 text-[11px] text-muted-foreground">
-                "Otomatis" akan mencoba beberapa model gratis secara berurutan kalau ada yang sedang limit/down. Pilih manual kalau kamu tahu model tertentu sedang lancar.
+                Draft ditulis oleh Groq GPT-OSS-120B, lalu direvisi editor oleh OpenRouter Nemutron 3 Ultra (fallback: Nemutron 3 Super). Pipeline berjalan otomatis.
               </p>
             </div>
 

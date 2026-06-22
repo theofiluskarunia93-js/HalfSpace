@@ -2,12 +2,13 @@
 //
 // Generate artikel sepak bola bergaya The Athletic — pipeline DUA TAHAP:
 //
-//   Tahap 1 (Penulis) : OpenRouter menulis draft lengkap (judul + isi)
+//   Tahap 1 (Penulis) : Groq (gpt-oss-120b) menulis draft lengkap (judul + isi)
 //                        berdasarkan prompt editorial (gaya The Athletic) di bawah.
-//   Tahap 2 (Editor)   : Gemini membaca draft dari OpenRouter, lalu MEREVISI
-//                        sebagai editor senior — memperkuat hook, ritme kalimat,
-//                        membuang frasa AI-fingerprint yang lolos, dan menjaga
-//                        draft tetap sesuai aturan struktur/tipe berita.
+//   Tahap 2 (Editor)   : OpenRouter (Nemutron 3 Ultra, fallback Nemutron 3 Super)
+//                        membaca draft dari Groq, lalu MEREVISI sebagai editor
+//                        senior — memperkuat hook, ritme kalimat, membuang frasa
+//                        AI-fingerprint yang lolos, dan menjaga draft tetap sesuai
+//                        aturan struktur/tipe berita.
 //
 // Kedua tahap ini berjalan otomatis di background dalam satu request —
 // klien hanya menerima HASIL AKHIR yang sudah melalui kedua proses tersebut
@@ -16,8 +17,8 @@
 //
 // Pipeline:
 //   Step 1 : Menyusun prompt editorial (gaya penulisan + tipe berita + topik/konteks)
-//   Step 2 : OpenRouter menulis draft pertama (judul + isi)
-//   Step 3 : Gemini merevisi draft sebagai editor (output final)
+//   Step 2 : Groq menulis draft pertama (judul + isi) via gpt-oss-120b
+//   Step 3 : OpenRouter merevisi draft sebagai editor (Nemutron 3 Ultra / Super)
 //   Step 4 : Draft final dikirim ke editor artikel
 //
 // Streaming progress via SSE (Server-Sent Events) ke client — kontrak event
@@ -28,34 +29,20 @@
 // Output: SSE stream → { event: "progress"|"done"|"error", data: ... }
 //
 // Catatan API key:
-// - OPENROUTER_API_KEY  → dipakai untuk tahap penulisan draft awal (OpenRouter REST API,
-//   format kompatibel OpenAI chat completions: https://openrouter.ai/api/v1/chat/completions).
-//   Akun ini memakai FREE TIER OpenRouter — model default & fallback semua memakai
-//   suffix ":free" (lihat DEFAULT_FREE_MODELS di bawah). Free tier rate limit-nya
-//   ketat (umumnya ~20 req/menit, 50-1000 req/hari), jadi sudah disiapkan fallback
-//   otomatis antar beberapa model gratis kalau salah satu kena limit.
-// - GEMINI_API_KEY      → dipakai untuk tahap revisi/editor (format Google AI Studio
-//   terbaru: "AQ.xxx"). SDK: @google/genai (class GoogleGenAI) — jangan fetch manual
-//   ke endpoint v1beta lama.
-// - OPENROUTER_MODEL (opsional) → kalau diisi, dicoba duluan sebelum fallback ke
-//   daftar model gratis. Kosongkan saja kalau memang mau pakai free tier sepenuhnya.
-// - Model Gemini untuk tahap editor: gemini-3.5-flash (sebelumnya gemini-2.5-flash —
-//   diganti 19 Jun 2026 karena gemini-2.5-flash sedang dalam proses sunset/shutdown
-//   dan free-tier-nya konsisten balas 503 UNAVAILABLE)
+// - GROQ_API_KEY       → dipakai untuk tahap penulisan draft awal (Groq REST API,
+//   format kompatibel OpenAI chat completions). Model: moonshotai/kimi-k2-instruct
+//   (alias gpt-oss-120b di Groq). Free tier Groq jauh lebih longgar dari OpenRouter.
+// - OPENROUTER_API_KEY → dipakai untuk tahap revisi/editor. Model utama:
+//   nvidia/llama-3.1-nemotron-ultra-253b-v1:free (Nemutron 3 Ultra), fallback ke
+//   nvidia/nemotron-3-super-120b-a12b:free (Nemutron 3 Super) jika Ultra unavailable.
 
 import { NextRequest, NextResponse } from "next/server"
-import { GoogleGenAI } from "@google/genai"
 import { requireAdmin } from "@/lib/supabase/server-auth"
 
-// Pipeline ini memanggil OpenRouter (dengan kemungkinan beberapa kali fallback
-// model gratis) lalu Gemini (dengan retry + fallback model) — total durasi
-// gampang lewat 10 detik (default timeout Vercel Hobby tanpa konfigurasi ini).
-// Kalau function dimatikan Vercel di tengah jalan, koneksi SSE ke browser
-// putus mendadak dan muncul sebagai "network error" generik, bukan pesan
-// error yang rapi dari handler di bawah.
-// Catatan: di Hobby plan, durasi >10 detik hanya berlaku kalau Fluid Compute
-// aktif (Project Settings → Functions → Fluid Compute), yang mengizinkan
-// sampai 60 detik di plan gratis. Tanpa itu, nilai ini akan di-cap balik ke 10.
+// Pipeline ini memanggil Groq lalu OpenRouter — total durasi bisa lewat 10 detik.
+// Catatan: di Hobby plan, durasi >10 detik hanya berlaku kalau Fluid Compute aktif
+// (Project Settings → Functions → Fluid Compute), yang mengizinkan sampai 60 detik
+// di plan gratis.
 export const maxDuration = 60
 
 export type NewsType =
@@ -70,7 +57,7 @@ interface RequestBody {
   newsType: NewsType
   topic:    string
   context:  string
-  model?:   string  // model OpenRouter pilihan manual dari UI (opsional, lihat AI_MODEL_OPTIONS di create-article-view.tsx)
+  model?:   string  // opsional, tidak dipakai di tahap draft (Groq fixed), tapi dipertahankan untuk kompatibilitas UI
 }
 
 // ─── BASE SYSTEM PROMPT ───────────────────────────────────────────────────────
@@ -204,54 +191,70 @@ function sseEvent(event: string, data: unknown): string {
   return `event: ${event}\ndata: ${JSON.stringify(data)}\n\n`
 }
 
-// ─── TAHAP 1 (Penulis): OpenRouter menulis draft pertama ─────────────────────
-// Memakai endpoint REST OpenRouter (kompatibel format chat completions OpenAI).
-// Model bisa dikonfigurasi lewat env OPENROUTER_MODEL — default ke model GRATIS
-// (suffix ":free") karena akun ini memakai free tier OpenRouter, bukan berbayar.
-// Free tier rate limit-nya ketat (umumnya ~20 req/menit, 50-1000 req/hari
-// tergantung histori top-up), jadi disiapkan beberapa model fallback gratis:
-// kalau model utama kena 429 (rate limit) atau lagi unavailable, otomatis
-// coba model gratis berikutnya di daftar sebelum benar-benar gagal.
+// ─── TAHAP 1 (Penulis): Groq menulis draft pertama ───────────────────────────
+// Memakai Groq REST API (kompatibel OpenAI chat completions).
+// Model: moonshotai/kimi-k2-instruct — ini adalah model yang di Groq dikenal
+// sebagai GPT-OSS-120B. Groq free tier jauh lebih longgar dari OpenRouter
+// (umumnya 6000 RPM, 500K tokens/menit), sehingga jarang kena rate limit.
+async function groqGenerateJson(apiKey: string, systemPrompt: string, userPrompt: string): Promise<string> {
+  const res = await fetch("https://api.groq.com/openai/v1/chat/completions", {
+    method:  "POST",
+    headers: {
+      "Content-Type":  "application/json",
+      "Authorization": `Bearer ${apiKey}`,
+    },
+    body: JSON.stringify({
+      model:       "openai/gpt-oss-120b",
+      temperature: 0.85,
+      max_tokens:  8192,
+      messages: [
+        { role: "system", content: systemPrompt },
+        { role: "user",   content: userPrompt },
+      ],
+      response_format: { type: "json_object" },
+    }),
+  })
+
+  if (!res.ok) {
+    const errText = await res.text()
+    if (res.status === 429) throw new Error("Groq API rate limit tercapai. Tunggu beberapa detik lalu coba lagi.")
+    if (res.status === 401) throw new Error("GROQ_API_KEY tidak valid. Hubungi administrator.")
+    if (res.status === 400) throw new Error("Request ke Groq gagal (400). Coba kurangi panjang konteks.")
+    throw new Error(`Groq API error ${res.status}: ${errText.slice(0, 200)}`)
+  }
+
+  const data = await res.json() as { choices?: { message?: { content?: string } }[] }
+  return (data.choices?.[0]?.message?.content ?? "").trim()
+}
+
+// ─── TAHAP 2 (Editor): OpenRouter merevisi draft dari Groq ───────────────────
+// Model utama: nvidia/llama-3.1-nemotron-ultra-253b-v1:free (Nemutron 3 Ultra)
+// Fallback   : nvidia/nemotron-3-super-120b-a12b:free     (Nemutron 3 Super)
 //
-// Catatan roster (terakhir diverifikasi via GET https://openrouter.ai/api/v1/models
-// pada 19 Juni 2026): meta-llama/llama-3.3-70b-instruct:free, deepseek/deepseek-chat-v3.1:free,
-// dan qwen/qwen3-235b-a22b:free SUDAH TIDAK ADA lagi di katalog gratis OpenRouter — ketiganya
-// sudah dihapus/dipindah ke tier berbayar. Daftar di bawah ini sudah diganti dengan model gratis
-// yang masih aktif DAN mendukung parameter response_format (wajib untuk JSON mode di
-// openRouterGenerateJson — model gratis yang tidak mendukung response_format akan gagal dengan
-// error 400 saat dipanggil).
-const DEFAULT_FREE_MODELS = [
-  "nvidia/nemotron-3-super-120b-a12b:free",   // 120B MoE (12B aktif), context besar, kualitas terbaik di free tier saat ini
-  "qwen/qwen3-next-80b-a3b-instruct:free",    // 80B-A3B MoE, instruction-following kuat, multilingual
-  "google/gemma-4-31b-it:free",               // 30.7B dense, provider berbeda (redundansi kalau NVIDIA/Qwen kena limit)
-  "google/gemma-4-26b-a4b-it:free",           // varian MoE lebih ringan dari Gemma 4, fallback tambahan
-  "nvidia/nemotron-nano-9b-v2:free",          // 9B, fallback terakhir paling ringan
+// Nemutron 3 Ultra adalah model 253B instruksi NVIDIA yang tersedia gratis di
+// OpenRouter. Jika Ultra sedang unavailable/rate-limited (429/503/404), pipeline
+// otomatis jatuh ke Nemutron 3 Super (120B) tanpa perlu intervensi manual.
+const EDITOR_OPENROUTER_MODELS = [
+  "nvidia/nemotron-3-ultra-550b-a55b:free",         // Nemutron 3 Ultra — model utama editor
+  "nvidia/nemotron-3-super-120b-a12b:free",          // Nemutron 3 Super — fallback jika Ultra down
 ]
 
-async function openRouterGenerateJson(apiKey: string, systemPrompt: string, userPrompt: string, preferredModel?: string): Promise<string> {
-  // Prioritas: model yang dipilih manual lewat UI (preferredModel) > OPENROUTER_MODEL (env) > daftar default
-  const configuredModel = preferredModel?.trim() || process.env.OPENROUTER_MODEL?.trim()
-  const modelsToTry = configuredModel
-    ? [configuredModel, ...DEFAULT_FREE_MODELS.filter((m) => m !== configuredModel)]
-    : DEFAULT_FREE_MODELS
-
+async function openRouterReviseJson(apiKey: string, systemPrompt: string, userPrompt: string): Promise<string> {
   let lastError: Error | null = null
 
-  for (const model of modelsToTry) {
+  for (const model of EDITOR_OPENROUTER_MODELS) {
     try {
       const res = await fetch("https://openrouter.ai/api/v1/chat/completions", {
         method:  "POST",
         headers: {
           "Content-Type":  "application/json",
           "Authorization": `Bearer ${apiKey}`,
-          // Header opsional yang direkomendasikan OpenRouter untuk identifikasi app —
-          // tidak wajib diisi dengan URL valid, tapi membantu tracking di dashboard mereka.
           "HTTP-Referer":  process.env.NEXT_PUBLIC_SITE_URL ?? "https://halfspacesport.com",
-          "X-Title":       "HalfSpace.id Article Generator",
+          "X-Title":       "HalfSpace.id Article Editor",
         },
         body: JSON.stringify({
           model,
-          temperature: 0.85,
+          temperature: 0.7,
           max_tokens:  8192,
           messages: [
             { role: "system", content: systemPrompt },
@@ -264,119 +267,40 @@ async function openRouterGenerateJson(apiKey: string, systemPrompt: string, user
       if (!res.ok) {
         const errText = await res.text()
 
-        // 429 (rate limit), 404/503 (model gratis lagi penuh/unavailable), atau 400
-        // (mis. model tidak mendukung response_format/parameter lain) → jangan langsung
-        // gagal, coba model fallback berikutnya di daftar. Hanya 401/402 yang benar-benar
-        // fatal di level akun (lihat di bawah) dan layak menghentikan seluruh percobaan.
         if (res.status === 429 || res.status === 404 || res.status === 503 || res.status === 400) {
-          lastError = new Error(`Model ${model} tidak tersedia/tidak didukung saat ini (${res.status}). Mencoba model fallback...`)
+          lastError = new Error(`Editor model ${model} tidak tersedia saat ini (${res.status}). Mencoba fallback...`)
           console.warn(`[generate-article] ${lastError.message}`)
           continue
         }
 
         if (res.status === 401) throw new Error("OPENROUTER_API_KEY tidak valid. Hubungi administrator.")
         if (res.status === 402) throw new Error("OpenRouter: kredit/saldo akun habis atau melebihi limit free tier harian.")
-        throw new Error(`OpenRouter API error ${res.status}: ${errText.slice(0, 200)}`)
+        throw new Error(`OpenRouter Editor API error ${res.status}: ${errText.slice(0, 200)}`)
       }
 
       const data = await res.json() as { choices?: { message?: { content?: string } }[] }
       const content = (data.choices?.[0]?.message?.content ?? "").trim()
       if (content) return content
 
-      lastError = new Error(`Model ${model} mengembalikan output kosong. Mencoba model fallback...`)
+      lastError = new Error(`Editor model ${model} mengembalikan output kosong. Mencoba fallback...`)
     } catch (err) {
-      // Error network/parsing sementara → tetap coba model fallback berikutnya
-      lastError = err instanceof Error ? err : new Error("Error tidak diketahui saat memanggil OpenRouter.")
-      if (lastError.message.includes("OPENROUTER_API_KEY tidak valid")) throw lastError
+      lastError = err instanceof Error ? err : new Error("Error tidak diketahui saat memanggil OpenRouter Editor.")
+      if (
+        lastError.message.includes("OPENROUTER_API_KEY tidak valid") ||
+        lastError.message.includes("kredit/saldo akun habis")
+      ) throw lastError
     }
   }
 
   throw new Error(
     lastError?.message
-      ? `Semua model gratis OpenRouter gagal dicoba. Error terakhir: ${lastError.message}`
-      : "OpenRouter rate limit tercapai di semua model gratis. Tunggu beberapa saat lalu coba lagi."
+      ? `Semua model editor OpenRouter (Nemutron Ultra & Super) gagal dicoba. Error terakhir: ${lastError.message}`
+      : "OpenRouter Editor tidak merespons di semua model fallback. Tunggu beberapa saat lalu coba lagi."
   )
 }
 
-// ─── TAHAP 2 (Editor): Gemini merevisi draft dari OpenRouter ─────────────────
-// Gemini di sini berperan sebagai editor senior — bukan menulis dari nol,
-// tapi membaca draft yang sudah ada dan mengembalikan versi revisi final
-// dalam format JSON yang sama (title + content).
-// Daftar model Gemini yang dicoba berurutan. gemini-3.5-flash masih status
-// "Preview" di Google (kapasitas server terbatas) sehingga sering balas 503
-// UNAVAILABLE walau quota/billing aman — ini server-side, bukan masalah di
-// akun kita. gemini-3.1-flash-lite & gemini-2.5-flash dipakai sebagai fallback
-// karena keduanya rilis stabil dengan ketersediaan server yang jauh lebih baik.
-const GEMINI_MODEL_FALLBACKS = [
-  "gemini-3.5-flash",
-  "gemini-3.1-flash-lite",
-  "gemini-2.5-flash",
-]
-
-function isRetryableGeminiError(err: unknown): boolean {
-  const msg = err instanceof Error ? err.message : String(err)
-  return (
-    msg.includes("503") ||
-    msg.includes("UNAVAILABLE") ||
-    msg.includes("overloaded") ||
-    msg.includes("429") ||
-    msg.includes("RESOURCE_EXHAUSTED")
-  )
-}
-
-async function geminiReviseJson(apiKey: string, systemPrompt: string, userPrompt: string): Promise<string> {
-  const genai = new GoogleGenAI({ apiKey })
-
-  let lastError: Error | null = null
-
-  for (const model of GEMINI_MODEL_FALLBACKS) {
-    // Retry ringan (2x percobaan per model) dengan backoff singkat — 503
-    // sering hilang sendiri dalam beberapa detik karena ini soal kapasitas
-    // server sesaat, bukan error permanen.
-    for (let attempt = 1; attempt <= 2; attempt++) {
-      try {
-        const response = await genai.models.generateContent({
-          model,
-          contents: userPrompt,
-          config: {
-            systemInstruction: systemPrompt,
-            temperature:       0.7,
-            maxOutputTokens:   8192,
-            responseMimeType:  "application/json",
-          },
-        })
-
-        const text = (response.text ?? "").trim()
-        if (text) return text
-
-        lastError = new Error(`Gemini (${model}) mengembalikan output kosong.`)
-      } catch (err) {
-        lastError = err instanceof Error ? err : new Error("Error tidak diketahui dari Gemini.")
-
-        if (!isRetryableGeminiError(lastError)) {
-          // Error non-retryable (mis. 400 INVALID_ARGUMENT, 403 PERMISSION_DENIED)
-          // → langsung lempar, percuma dicoba ulang atau ganti model.
-          throw lastError
-        }
-
-        console.warn(`[generate-article] Gemini model ${model} attempt ${attempt} gagal (${lastError.message}). ${attempt < 2 ? "Retry..." : "Pindah model fallback..."}`)
-        if (attempt < 2) {
-          await new Promise((r) => setTimeout(r, 1500 * attempt))
-        }
-      }
-    }
-  }
-
-  throw new Error(
-    lastError?.message
-      ? `Semua model Gemini gagal dicoba (server Google sedang overload). Error terakhir: ${lastError.message}`
-      : "Semua model Gemini gagal dicoba. Tunggu beberapa saat lalu coba lagi."
-  )
-}
-
-// System prompt khusus untuk tahap editor — Gemini diposisikan sebagai editor
-// senior yang mengoreksi draft, BUKAN menulis ulang dari nol. Aturan gaya/struktur
-// dari BASE_SYSTEM tetap dilampirkan supaya revisi tidak melenceng dari standar editorial.
+// System prompt khusus untuk tahap editor — OpenRouter Nemutron diposisikan sebagai
+// editor senior yang mengoreksi draft dari Groq, BUKAN menulis ulang dari nol.
 const EDITOR_SYSTEM = `${BASE_SYSTEM}
 
 ━━━ PERAN KAMU SEKARANG: EDITOR SENIOR ━━━
@@ -431,18 +355,18 @@ export async function POST(req: NextRequest) {
     return NextResponse.json({ error: "Unauthorized" }, { status: 401 })
   }
 
-  const openRouterKey = process.env.OPENROUTER_API_KEY
-  const geminiKey      = process.env.GEMINI_API_KEY
+  const groqKey         = process.env.GROQ_API_KEY
+  const openRouterKey   = process.env.OPENROUTER_API_KEY
 
-  if (!openRouterKey) {
+  if (!groqKey) {
     return NextResponse.json(
-      { error: "OPENROUTER_API_KEY belum dikonfigurasi di environment variables." },
+      { error: "GROQ_API_KEY belum dikonfigurasi di environment variables." },
       { status: 500 }
     )
   }
-  if (!geminiKey) {
+  if (!openRouterKey) {
     return NextResponse.json(
-      { error: "GEMINI_API_KEY belum dikonfigurasi di environment variables." },
+      { error: "OPENROUTER_API_KEY belum dikonfigurasi di environment variables." },
       { status: 500 }
     )
   }
@@ -454,7 +378,7 @@ export async function POST(req: NextRequest) {
     return NextResponse.json({ error: "Request body tidak valid." }, { status: 400 })
   }
 
-  const { newsType, topic, context, model } = body
+  const { newsType, topic, context } = body
 
   if (!newsType || !topic?.trim() || !context?.trim()) {
     return NextResponse.json(
@@ -497,24 +421,24 @@ Kembalikan HANYA JSON dengan format berikut (tidak ada teks di luar JSON):
   "content": "<konten artikel dalam HTML — gunakan <p> untuk paragraf dan <blockquote> untuk kutipan langsung dari narasumber. JANGAN gunakan tag HTML lain apapun, termasuk heading.>"
 }`
 
-        // ── STEP 2: OpenRouter menulis draft pertama ────────────────────────
-        send("progress", { step: 2, label: "Menulis Draft dengan OpenRouter" })
+        // ── STEP 2: Groq menulis draft pertama (GPT-OSS-120B) ───────────────
+        send("progress", { step: 2, label: "Menulis Draft dengan Groq (GPT-OSS-120B)" })
 
-        const rawDraft = await openRouterGenerateJson(openRouterKey, BASE_SYSTEM, userPrompt, model)
+        const rawDraft = await groqGenerateJson(groqKey, BASE_SYSTEM, userPrompt)
 
         if (!rawDraft) {
-          throw new Error("OpenRouter tidak menghasilkan output. Coba lagi.")
+          throw new Error("Groq tidak menghasilkan output. Coba lagi.")
         }
 
         const draft = extractJsonObject<{ title: string; content: string }>(rawDraft)
 
         if (!draft?.title?.trim() || !draft?.content?.trim()) {
-          console.error("[generate-article] Gagal parse hasil OpenRouter. Raw:", rawDraft.slice(0, 800))
-          throw new Error("Gagal memproses hasil OpenRouter. Coba lagi dalam beberapa detik.")
+          console.error("[generate-article] Gagal parse hasil Groq. Raw:", rawDraft.slice(0, 800))
+          throw new Error("Gagal memproses hasil Groq. Coba lagi dalam beberapa detik.")
         }
 
-        // ── STEP 3: Gemini merevisi draft sebagai editor ────────────────────
-        send("progress", { step: 3, label: "Revisi Editor oleh Gemini" })
+        // ── STEP 3: OpenRouter Nemutron merevisi draft sebagai editor ────────
+        send("progress", { step: 3, label: "Revisi Editor oleh OpenRouter Nemutron" })
 
         const editorUserPrompt = `Berikut draft artikel yang perlu kamu revisi sebagai editor senior.
 
@@ -532,16 +456,16 @@ Revisi draft di atas sesuai instruksi editor yang sudah diberikan. Kembalikan HA
   "content": "<konten hasil revisi dalam HTML — gunakan <p> untuk paragraf dan <blockquote> untuk kutipan langsung. JANGAN gunakan tag HTML lain apapun, termasuk heading.>"
 }`
 
-        const rawFinal = await geminiReviseJson(geminiKey, EDITOR_SYSTEM, editorUserPrompt)
+        const rawFinal = await openRouterReviseJson(openRouterKey, EDITOR_SYSTEM, editorUserPrompt)
 
         if (!rawFinal) {
-          throw new Error("Gemini (editor) tidak menghasilkan output. Coba lagi.")
+          throw new Error("OpenRouter Editor (Nemutron) tidak menghasilkan output. Coba lagi.")
         }
 
         const final = extractJsonObject<{ title: string; content: string }>(rawFinal)
 
         if (!final?.title?.trim() || !final?.content?.trim()) {
-          console.error("[generate-article] Gagal parse hasil revisi Gemini. Raw:", rawFinal.slice(0, 800))
+          console.error("[generate-article] Gagal parse hasil revisi OpenRouter. Raw:", rawFinal.slice(0, 800))
           throw new Error("Gagal memproses hasil revisi editor. Coba lagi dalam beberapa detik.")
         }
 
@@ -557,20 +481,14 @@ Revisi draft di atas sesuai instruksi editor yang sudah diberikan. Kembalikan HA
         const message = err instanceof Error ? err.message : "Terjadi error. Coba lagi."
         console.error("[generate-article] Error:", err)
 
-        // Error dari OpenRouter (tahap 1) sudah punya pesan jelas sendiri
-        // (lihat openRouterGenerateJson) — jangan ditimpa label Gemini.
-        if (message.includes("OpenRouter") || message.includes("OPENROUTER")) {
+        if (message.includes("Groq") || message.includes("GROQ")) {
           send("error", { error: message })
-        }
-        // Deteksi error spesifik Gemini (tahap 2/editor) agar pesannya jelas bagi admin
-        else if (message.includes("400") || message.includes("INVALID_ARGUMENT")) {
-          send("error", { error: "Gemini: request tidak valid. Pastikan GEMINI_API_KEY benar dan model tersedia." })
-        } else if (message.includes("403") || message.includes("PERMISSION_DENIED")) {
-          send("error", { error: "Gemini: API key tidak memiliki akses. Cek quota atau billing di Google AI Studio." })
-        } else if (message.includes("429") || message.includes("RESOURCE_EXHAUSTED")) {
-          send("error", { error: "Gemini: quota free tier habis. Tunggu beberapa saat atau upgrade plan." })
-        } else if (message.includes("503") || message.includes("UNAVAILABLE") || message.includes("overloaded")) {
-          send("error", { error: "Gemini: server Google sedang overload di semua model fallback (gemini-3.5-flash, gemini-3.1-flash-lite, gemini-2.5-flash). Ini bukan masalah quota/key — tunggu beberapa menit lalu coba lagi." })
+        } else if (message.includes("OPENROUTER_API_KEY tidak valid") || message.includes("kredit/saldo akun habis")) {
+          send("error", { error: message })
+        } else if (message.includes("Nemutron") || message.includes("OpenRouter Editor")) {
+          send("error", { error: message })
+        } else if (message.includes("401") || message.includes("402")) {
+          send("error", { error: message })
         } else {
           send("error", { error: message })
         }
