@@ -361,7 +361,7 @@ function cleanLegacyBadgeContent(content: string): string {
 // ke server (field `model` diabaikan di route.ts yang baru).
 // Jika ke depan ada kebutuhan memilih model editor, update daftar di sini.
 const AI_MODEL_OPTIONS = [
-  { value: "", label: "Groq GPT-OSS-120B → Nemutron Editor (default)" },
+  { value: "", label: "Groq GPT-OSS-120B → Qwen 3.6 27B Editor (default)" },
 ] as const
 
 // ─── Inject section-label otomatis ke hasil AI generate ──────────────────────
@@ -819,6 +819,7 @@ export function CreateArticleView({ onBack, articleId }: CreateArticleViewProps)
       if (!reader) throw new Error("Gagal membaca stream dari server.")
 
       let buffer = ""
+      let receivedDone = false
       while (true) {
         const { done, value } = await reader.read()
         if (done) break
@@ -843,6 +844,7 @@ export function CreateArticleView({ onBack, articleId }: CreateArticleViewProps)
           if (event === "progress") {
             setAiProgress({ step: payload.step, label: payload.label })
           } else if (event === "done") {
+            receivedDone = true
             setTitle(payload.title)
             if (editor) {
               const contentWithLabels = injectSectionLabels(payload.content, aiNewsType)
@@ -859,6 +861,12 @@ export function CreateArticleView({ onBack, articleId }: CreateArticleViewProps)
             throw new Error(payload.error ?? "Gagal generate artikel. Coba lagi.")
           }
         }
+      }
+
+      // Stream selesai tanpa event "done" — koneksi putus prematur
+      // (timeout Vercel, model tidak merespons, dll) tanpa error message dari server.
+      if (!receivedDone) {
+        throw new Error("Koneksi ke server terputus sebelum selesai. Kemungkinan model editor (Nemutron) timeout atau tidak merespons. Coba lagi.")
       }
     } catch (err: any) {
       setAiError(err.message ?? "Gagal generate artikel. Coba lagi.")
@@ -1797,8 +1805,8 @@ export function CreateArticleView({ onBack, articleId }: CreateArticleViewProps)
                 <div className="flex flex-col gap-1.5">
                   {[
                     { step: 1, label: "Menyusun Prompt Editorial" },
-                    { step: 2, label: "Menulis Draft dengan OpenRouter" },
-                    { step: 3, label: "Revisi Editor oleh Gemini" },
+                    { step: 2, label: "Menulis Draft dengan Groq (GPT-OSS-120B)" },
+                    { step: 3, label: "Revisi Editor oleh Groq Qwen 3.6 27B" },
                     { step: 4, label: "Draft Final Selesai" },
                   ].map(({ step, label }) => {
                     const isDone    = aiProgress.step > step

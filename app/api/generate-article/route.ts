@@ -4,8 +4,8 @@
 //
 //   Tahap 1 (Penulis) : Groq (gpt-oss-120b) menulis draft lengkap (judul + isi)
 //                        berdasarkan prompt editorial (gaya The Athletic) di bawah.
-//   Tahap 2 (Editor)   : OpenRouter (Nemutron 3 Ultra, fallback Nemutron 3 Super)
-//                        membaca draft dari Groq, lalu MEREVISI sebagai editor
+//   Tahap 2 (Editor)   : Groq (Qwen 3.6 27B / qwen/qwen3-6-27b-instruct) membaca
+//                        draft dari Groq tahap 1, lalu MEREVISI sebagai editor
 //                        senior — memperkuat hook, ritme kalimat, membuang frasa
 //                        AI-fingerprint yang lolos, dan menjaga draft tetap sesuai
 //                        aturan struktur/tipe berita.
@@ -18,7 +18,7 @@
 // Pipeline:
 //   Step 1 : Menyusun prompt editorial (gaya penulisan + tipe berita + topik/konteks)
 //   Step 2 : Groq menulis draft pertama (judul + isi) via gpt-oss-120b
-//   Step 3 : OpenRouter merevisi draft sebagai editor (Nemutron 3 Ultra / Super)
+//   Step 3 : Groq Qwen 3.6 27B merevisi draft sebagai editor
 //   Step 4 : Draft final dikirim ke editor artikel
 //
 // Streaming progress via SSE (Server-Sent Events) ke client — kontrak event
@@ -29,17 +29,14 @@
 // Output: SSE stream → { event: "progress"|"done"|"error", data: ... }
 //
 // Catatan API key:
-// - GROQ_API_KEY       → dipakai untuk tahap penulisan draft awal (Groq REST API,
-//   format kompatibel OpenAI chat completions). Model: moonshotai/kimi-k2-instruct
-//   (alias gpt-oss-120b di Groq). Free tier Groq jauh lebih longgar dari OpenRouter.
-// - OPENROUTER_API_KEY → dipakai untuk tahap revisi/editor. Model utama:
-//   nvidia/llama-3.1-nemotron-ultra-253b-v1:free (Nemutron 3 Ultra), fallback ke
-//   nvidia/nemotron-3-super-120b-a12b:free (Nemutron 3 Super) jika Ultra unavailable.
+// - GROQ_API_KEY → dipakai untuk kedua tahap (draft + editor). Model draft:
+//   openai/gpt-oss-120b. Model editor: qwen/qwen3-6-27b-instruct (Qwen 3.6 27B).
+//   OpenRouter tidak dipakai sama sekali.
 
 import { NextRequest, NextResponse } from "next/server"
 import { requireAdmin } from "@/lib/supabase/server-auth"
 
-// Pipeline ini memanggil Groq lalu OpenRouter — total durasi bisa lewat 10 detik.
+// Pipeline ini memanggil Groq dua kali (draft + editor) — total durasi bisa lewat 10 detik.
 // Catatan: di Hobby plan, durasi >10 detik hanya berlaku kalau Fluid Compute aktif
 // (Project Settings → Functions → Fluid Compute), yang mengizinkan sampai 60 detik
 // di plan gratis.
@@ -194,8 +191,8 @@ function sseEvent(event: string, data: unknown): string {
 // ─── TAHAP 1 (Penulis): Groq menulis draft pertama ───────────────────────────
 // Memakai Groq REST API (kompatibel OpenAI chat completions).
 // Model: moonshotai/kimi-k2-instruct — ini adalah model yang di Groq dikenal
-// sebagai GPT-OSS-120B. Groq free tier jauh lebih longgar dari OpenRouter
-// (umumnya 6000 RPM, 500K tokens/menit), sehingga jarang kena rate limit.
+// sebagai GPT-OSS-120B. Groq free tier jauh lebih longgar (umumnya 6000 RPM,
+// 500K tokens/menit), sehingga jarang kena rate limit.
 async function groqGenerateJson(apiKey: string, systemPrompt: string, userPrompt: string): Promise<string> {
   const res = await fetch("https://api.groq.com/openai/v1/chat/completions", {
     method:  "POST",
@@ -227,79 +224,42 @@ async function groqGenerateJson(apiKey: string, systemPrompt: string, userPrompt
   return (data.choices?.[0]?.message?.content ?? "").trim()
 }
 
-// ─── TAHAP 2 (Editor): OpenRouter merevisi draft dari Groq ───────────────────
-// Model utama: nvidia/llama-3.1-nemotron-ultra-253b-v1:free (Nemutron 3 Ultra)
-// Fallback   : nvidia/nemotron-3-super-120b-a12b:free     (Nemutron 3 Super)
-//
-// Nemutron 3 Ultra adalah model 253B instruksi NVIDIA yang tersedia gratis di
-// OpenRouter. Jika Ultra sedang unavailable/rate-limited (429/503/404), pipeline
-// otomatis jatuh ke Nemutron 3 Super (120B) tanpa perlu intervensi manual.
-const EDITOR_OPENROUTER_MODELS = [
-  "nvidia/nemotron-3-ultra-550b-a55b:free",         // Nemutron 3 Ultra — model utama editor
-  "nvidia/nemotron-3-super-120b-a12b:free",          // Nemutron 3 Super — fallback jika Ultra down
-]
+// ─── TAHAP 2 (Editor): Groq Qwen 3.6 27B merevisi draft ─────────────────────
+// Model: qwen/qwen3-6-27b-instruct di Groq — lebih cepat dan stabil untuk
+// tahap editor. Groq dipakai di kedua tahap sehingga hanya butuh satu API key.
+// OpenRouter tidak dipakai sama sekali.
+async function groqReviseJson(apiKey: string, systemPrompt: string, userPrompt: string): Promise<string> {
+  const res = await fetch("https://api.groq.com/openai/v1/chat/completions", {
+    method:  "POST",
+    headers: {
+      "Content-Type":  "application/json",
+      "Authorization": `Bearer ${apiKey}`,
+    },
+    body: JSON.stringify({
+      model:       "qwen/qwen3-6-27b-instruct",
+      temperature: 0.7,
+      max_tokens:  6000,
+      messages: [
+        { role: "system", content: systemPrompt },
+        { role: "user",   content: userPrompt },
+      ],
+      response_format: { type: "json_object" },
+    }),
+  })
 
-async function openRouterReviseJson(apiKey: string, systemPrompt: string, userPrompt: string): Promise<string> {
-  let lastError: Error | null = null
-
-  for (const model of EDITOR_OPENROUTER_MODELS) {
-    try {
-      const res = await fetch("https://openrouter.ai/api/v1/chat/completions", {
-        method:  "POST",
-        headers: {
-          "Content-Type":  "application/json",
-          "Authorization": `Bearer ${apiKey}`,
-          "HTTP-Referer":  process.env.NEXT_PUBLIC_SITE_URL ?? "https://halfspacesport.com",
-          "X-Title":       "HalfSpace.id Article Editor",
-        },
-        body: JSON.stringify({
-          model,
-          temperature: 0.7,
-          max_tokens:  8192,
-          messages: [
-            { role: "system", content: systemPrompt },
-            { role: "user",   content: userPrompt },
-          ],
-          response_format: { type: "json_object" },
-        }),
-      })
-
-      if (!res.ok) {
-        const errText = await res.text()
-
-        if (res.status === 429 || res.status === 404 || res.status === 503 || res.status === 400) {
-          lastError = new Error(`Editor model ${model} tidak tersedia saat ini (${res.status}). Mencoba fallback...`)
-          console.warn(`[generate-article] ${lastError.message}`)
-          continue
-        }
-
-        if (res.status === 401) throw new Error("OPENROUTER_API_KEY tidak valid. Hubungi administrator.")
-        if (res.status === 402) throw new Error("OpenRouter: kredit/saldo akun habis atau melebihi limit free tier harian.")
-        throw new Error(`OpenRouter Editor API error ${res.status}: ${errText.slice(0, 200)}`)
-      }
-
-      const data = await res.json() as { choices?: { message?: { content?: string } }[] }
-      const content = (data.choices?.[0]?.message?.content ?? "").trim()
-      if (content) return content
-
-      lastError = new Error(`Editor model ${model} mengembalikan output kosong. Mencoba fallback...`)
-    } catch (err) {
-      lastError = err instanceof Error ? err : new Error("Error tidak diketahui saat memanggil OpenRouter Editor.")
-      if (
-        lastError.message.includes("OPENROUTER_API_KEY tidak valid") ||
-        lastError.message.includes("kredit/saldo akun habis")
-      ) throw lastError
-    }
+  if (!res.ok) {
+    const errText = await res.text()
+    if (res.status === 429) throw new Error("Groq Editor (Qwen 3.6 27B) rate limit tercapai. Tunggu beberapa detik lalu coba lagi.")
+    if (res.status === 401) throw new Error("GROQ_API_KEY tidak valid. Hubungi administrator.")
+    if (res.status === 400) throw new Error("Request ke Groq Editor gagal (400). Coba lagi.")
+    throw new Error(`Groq Editor API error ${res.status}: ${errText.slice(0, 200)}`)
   }
 
-  throw new Error(
-    lastError?.message
-      ? `Semua model editor OpenRouter (Nemutron Ultra & Super) gagal dicoba. Error terakhir: ${lastError.message}`
-      : "OpenRouter Editor tidak merespons di semua model fallback. Tunggu beberapa saat lalu coba lagi."
-  )
+  const data = await res.json() as { choices?: { message?: { content?: string } }[] }
+  return (data.choices?.[0]?.message?.content ?? "").trim()
 }
 
-// System prompt khusus untuk tahap editor — OpenRouter Nemutron diposisikan sebagai
+// System prompt khusus untuk tahap editor — Groq Qwen 3.6 27B diposisikan sebagai
 // editor senior yang mengoreksi draft dari Groq, BUKAN menulis ulang dari nol.
 const EDITOR_SYSTEM = `${BASE_SYSTEM}
 
@@ -355,18 +315,11 @@ export async function POST(req: NextRequest) {
     return NextResponse.json({ error: "Unauthorized" }, { status: 401 })
   }
 
-  const groqKey         = process.env.GROQ_API_KEY
-  const openRouterKey   = process.env.OPENROUTER_API_KEY
+  const groqKey = process.env.GROQ_API_KEY
 
   if (!groqKey) {
     return NextResponse.json(
       { error: "GROQ_API_KEY belum dikonfigurasi di environment variables." },
-      { status: 500 }
-    )
-  }
-  if (!openRouterKey) {
-    return NextResponse.json(
-      { error: "OPENROUTER_API_KEY belum dikonfigurasi di environment variables." },
       { status: 500 }
     )
   }
@@ -437,8 +390,8 @@ Kembalikan HANYA JSON dengan format berikut (tidak ada teks di luar JSON):
           throw new Error("Gagal memproses hasil Groq. Coba lagi dalam beberapa detik.")
         }
 
-        // ── STEP 3: OpenRouter Nemutron merevisi draft sebagai editor ────────
-        send("progress", { step: 3, label: "Revisi Editor oleh OpenRouter Nemutron" })
+        // ── STEP 3: Groq Qwen 3.6 27B merevisi draft sebagai editor ──────────
+        send("progress", { step: 3, label: "Revisi Editor oleh Groq Qwen 3.6 27B" })
 
         const editorUserPrompt = `Berikut draft artikel yang perlu kamu revisi sebagai editor senior.
 
@@ -456,16 +409,16 @@ Revisi draft di atas sesuai instruksi editor yang sudah diberikan. Kembalikan HA
   "content": "<konten hasil revisi dalam HTML — gunakan <p> untuk paragraf dan <blockquote> untuk kutipan langsung. JANGAN gunakan tag HTML lain apapun, termasuk heading.>"
 }`
 
-        const rawFinal = await openRouterReviseJson(openRouterKey, EDITOR_SYSTEM, editorUserPrompt)
+        const rawFinal = await groqReviseJson(groqKey, EDITOR_SYSTEM, editorUserPrompt)
 
         if (!rawFinal) {
-          throw new Error("OpenRouter Editor (Nemutron) tidak menghasilkan output. Coba lagi.")
+          throw new Error("Groq Editor (Qwen 3.6 27B) tidak menghasilkan output. Coba lagi.")
         }
 
         const final = extractJsonObject<{ title: string; content: string }>(rawFinal)
 
         if (!final?.title?.trim() || !final?.content?.trim()) {
-          console.error("[generate-article] Gagal parse hasil revisi OpenRouter. Raw:", rawFinal.slice(0, 800))
+          console.error("[generate-article] Gagal parse hasil revisi Groq Editor. Raw:", rawFinal.slice(0, 800))
           throw new Error("Gagal memproses hasil revisi editor. Coba lagi dalam beberapa detik.")
         }
 
@@ -481,17 +434,7 @@ Revisi draft di atas sesuai instruksi editor yang sudah diberikan. Kembalikan HA
         const message = err instanceof Error ? err.message : "Terjadi error. Coba lagi."
         console.error("[generate-article] Error:", err)
 
-        if (message.includes("Groq") || message.includes("GROQ")) {
-          send("error", { error: message })
-        } else if (message.includes("OPENROUTER_API_KEY tidak valid") || message.includes("kredit/saldo akun habis")) {
-          send("error", { error: message })
-        } else if (message.includes("Nemutron") || message.includes("OpenRouter Editor")) {
-          send("error", { error: message })
-        } else if (message.includes("401") || message.includes("402")) {
-          send("error", { error: message })
-        } else {
-          send("error", { error: message })
-        }
+        send("error", { error: message })
       } finally {
         controller.close()
       }
