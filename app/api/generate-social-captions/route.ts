@@ -16,14 +16,15 @@
 // HASIL AKHIR yang sudah direvisi. Kontrak response tidak berubah:
 // tetap objek datar { instagram, tiktok, x, facebook, threads }.
 //
+// Batas kata semua platform: MAKSIMAL 150 kata per caption.
+//
 // Input : title (wajib), excerpt, firstSentence (kalimat pertama artikel,
 //         dipakai sebagai hook literal untuk caption X), slug (untuk
 //         membangun link artikel)
 // Output: { instagram, tiktok, x, facebook, threads }
 //
 // Catatan API key:
-// - GROQ_API_KEY   → tahap penulisan draft caption awal (GPT-OSS-20).
-//                    Model Groq: GPT-OSS-20B
+// - GROQ_API_KEY   → tahap penulisan draft caption awal (GPT-OSS-20B).
 // - GEMINI_API_KEY → tahap revisi/editor caption. SDK: @google/genai (GoogleGenAI).
 //                    Model: gemini-3.5-flash
 
@@ -55,27 +56,26 @@ interface Captions {
 // System prompt untuk tahap editor caption — Gemini diposisikan sebagai social
 // media editor yang menyunting draft caption dari Groq, BUKAN menulis ulang dari
 // nol. Aturan per-platform sengaja diulang di sini agar revisi tidak melenceng
-// dari batasan format yang sama (mis. limit karakter X, jumlah hashtag, dll).
+// dari batasan format yang sama.
 const EDITOR_SYSTEM = `Kamu adalah editor caption olahraga Indonesia yang spesialis konten viral untuk media sepak bola HalfSpace Sport.
 Tugasmu BUKAN merapikan — tapi MEMPERKUAT dan MENGEMBANGKAN draft caption yang sudah ditulis penulis lain.
 JANGAN ubah fakta dari artikel asli. JANGAN buat caption baru dari nol — kembangkan draft yang ada.
 Jika draft sudah bagus, cukup perkuat hook dan CTA-nya saja.
 
+BATAS KERAS: Setiap caption MAKSIMAL 150 kata. Jika draft melebihi 150 kata, potong bagian yang tidak esensial tanpa mengorbankan hook dan CTA.
+
 Untuk setiap platform, pastikan:
 
 [X]
 - Hook baris pertama harus bikin orang berhenti scroll
-- Jika draft terlalu panjang, potong yang tidak perlu — MAKSIMAL 280 karakter total termasuk link
+- MAKSIMAL 280 karakter total termasuk link (batas keras platform)
 - Pastikan ada urgensi atau emosi kuat
 - CTA harus eksplisit mengarah ke website
 
 [THREADS]
-- Jika draft terlalu pendek, kembangkan dengan insight tambahan dari konteks artikel
-- Tambahkan 1 kalimat relatable untuk komunitas atlet/penggemar sepak bola
-- Hook harus lebih kuat dari draft asli
-- CTA harus terasa organik, bukan seperti iklan
-- Nada paling santai/personal — seperti curhat ke teman, cukup 1-2 kalimat
+- Nada paling santai/personal — seperti curhat ke teman, cukup 3-4 kalimat
 - TIDAK ADA link atau hashtag
+- Hook harus kuat meski singkat
 
 [TIKTOK]
 - Pastikan baris pertama adalah hook yang langsung "nyangkut"
@@ -87,18 +87,15 @@ Untuk setiap platform, pastikan:
 [FACEBOOK]
 - Pastikan ada minimal 1 pertanyaan yang memancing komentar
 - Hook harus lebih kuat dari draft — ubah jika perlu
-- Jika draft terlalu datar, tambahkan angle emosional atau fakta mengejutkan
-- CTA harus jelas mengarah ke link artikel, menyatu inline dalam kalimat, bukan ditempel di akhir
+- CTA harus jelas mengarah ke link artikel, menyatu inline dalam kalimat
 - Tone energik tapi sedikit lebih dewasa
 
 [INSTAGRAM]
 - Periksa baris pertama — harus bisa berdiri sendiri sebagai hook sebelum tombol "more"
-- Pastikan ada alur storytelling: pembuka → konteks/insight → CTA
 - Line break konsisten setiap 2-3 kalimat untuk readability di mobile
 - Emoji digunakan strategis sebagai penanda visual, bukan dekorasi
 - CTA: "link di bio 🔗"
-- Hashtag: 15-20 hashtag terstruktur di akhir (umum → medium → niche)
-- Jika draft kurang emosional, tambahkan angle perjuangan atau pencapaian
+- Hashtag: 10-15 hashtag terstruktur di akhir (umum → medium → niche)
 
 Output HANYA JSON murni dengan struktur berikut, tanpa markdown fence, tanpa komentar, tanpa teks lain apapun:
 {
@@ -109,10 +106,7 @@ Output HANYA JSON murni dengan struktur berikut, tanpa markdown fence, tanpa kom
   "threads": "..."
 }`
 
-// ─── TAHAP 1 (Penulis): Groq menulis draft caption (GPT-OSS-20) ──────────────
-// Model: GPT-OSS-20B — versi mini/20B GPT-OSS dari OpenAI,
-// dikenal sebagai GPT-OSS-20B di Groq. Cepat dan efisien untuk tugas caption
-// yang tidak memerlukan reasoning berat seperti draft artikel.
+// ─── TAHAP 1 (Penulis): Groq menulis draft caption (GPT-OSS-20B) ─────────────
 async function groqChat(apiKey: string, prompt: string): Promise<string> {
   const res = await fetch("https://api.groq.com/openai/v1/chat/completions", {
     method:  "POST",
@@ -123,7 +117,7 @@ async function groqChat(apiKey: string, prompt: string): Promise<string> {
     body: JSON.stringify({
       model:       "openai/gpt-oss-20b",
       temperature: 0.85,
-      max_tokens:  2200,
+      max_tokens:  1500,
       messages: [{ role: "user", content: prompt }],
       response_format: { type: "json_object" },
     }),
@@ -141,10 +135,7 @@ async function groqChat(apiKey: string, prompt: string): Promise<string> {
   return (data.choices?.[0]?.message?.content ?? "").trim()
 }
 
-// ─── TAHAP 2 (Editor): Gemini 3.5 Flash merevisi caption dari Groq ───────────
-// Gemini berperan sebagai social media editor — membaca draft caption yang
-// sudah ditulis Groq untuk 5 platform, lalu mengembalikan versi revisi final
-// dalam JSON dengan struktur yang sama, dengan hook & CTA yang lebih kuat.
+// ─── TAHAP 2 (Editor): Gemini 3.5 Flash merevisi caption dari Groq ────────────
 async function geminiReviseCaptions(apiKey: string, systemPrompt: string, userPrompt: string): Promise<string> {
   const genai = new GoogleGenAI({ apiKey })
 
@@ -154,7 +145,7 @@ async function geminiReviseCaptions(apiKey: string, systemPrompt: string, userPr
     config: {
       systemInstruction: systemPrompt,
       temperature:       0.7,
-      maxOutputTokens:   2200,
+      maxOutputTokens:   1500,
       responseMimeType:  "application/json",
     },
   })
@@ -223,59 +214,64 @@ export async function POST(request: NextRequest) {
 
   const articleUrl = slug?.trim() ? `${SITE_URL}/article/${slug.trim()}` : ""
 
-  // ─── Prompt: aturan per platform di-embed langsung di sini ──────────────────
+  // Potong excerpt dan firstSentence sebelum dimasukkan ke prompt
+  // untuk mencegah error 400 Groq akibat total token terlalu panjang.
+  const safeExcerpt      = (excerpt?.trim()       ?? "").slice(0, 500)
+  const safeFirstSentence = (firstSentence?.trim() ?? "").slice(0, 200)
+
+  // ─── Prompt: aturan per platform — semua dibatasi 150 kata ──────────────────
   const prompt = `Kamu adalah copywriter olahraga Indonesia yang energik dan hype untuk media sepak bola HalfSpace Sport (${SITE_URL.replace(/^https?:\/\//, "")}).
 Target audiens: penggemar dan komunitas sepak bola Indonesia.
 
 Berdasarkan artikel berikut, buat caption untuk 5 platform sekaligus: Instagram, TikTok, X (Twitter), Facebook, dan Threads.
 
 JUDUL ARTIKEL: ${title}
-EXCERPT/RINGKASAN: ${excerpt?.trim() || "(tidak ada excerpt)"}
-KALIMAT PERTAMA ARTIKEL (hook asli dari isi artikel): ${firstSentence?.trim() || "(tidak tersedia — gunakan judul sebagai dasar hook)"}
+EXCERPT/RINGKASAN: ${safeExcerpt || "(tidak ada excerpt)"}
+KALIMAT PERTAMA ARTIKEL (hook asli dari isi artikel): ${safeFirstSentence || "(tidak tersedia — gunakan judul sebagai dasar hook)"}
 LINK ARTIKEL: ${articleUrl || "(tidak tersedia)"}
 
 Tulis dalam Bahasa Indonesia yang natural — jangan terasa seperti terjemahan kaku, dan jangan memakai frasa generik AI seperti "tentu saja" atau "tidak dapat dipungkiri".
 
+BATAS KATA SEMUA PLATFORM: MAKSIMAL 150 kata per caption (termasuk hashtag). Ini batas keras — jangan dilanggar.
+
 ━━━ ATURAN PER PLATFORM (WAJIB DIIKUTI PERSIS, JANGAN DICAMPUR ANTAR PLATFORM) ━━━
 
 [INSTAGRAM]
-- 200-300 kata dengan struktur storytelling
+- Maksimal 200 kata termasuk hashtag
 - Baris pertama (sebelum "more"): hook yang sangat kuat, maksimal 1-2 kalimat
-- Struktur: Hook → Cerita/konteks → Insight/pelajaran → CTA
-- Gunakan line break setiap 2-3 kalimat untuk readability di mobile
+- Struktur: Hook → Konteks singkat → CTA
+- Line break setiap 2-3 kalimat untuk readability di mobile
 - Emoji digunakan strategis sebagai penanda visual, bukan dekorasi
 - CTA: "Link di bio 🔗" atau "Klik link di bio untuk baca selengkapnya"
-- Tone: storytelling yang menginspirasi dan relate untuk penggemar bola
-- Hashtag: 15-20 hashtag di akhir, mix besar dan niche
+- Hashtag: 10-15 hashtag di akhir, mix besar dan niche
   Contoh mix: #sepakbola #football #bola + #ligaindonesia #halfspacesport + niche topik artikel
 
 [X (TWITTER)]
-- MAKSIMAL 280 karakter total termasuk link — batas keras, jangan dilanggar
-- Hook kuat di kalimat pertama — HARUS memakai/mengadaptasi langsung kalimat pertama artikel, tanpa basa-basi
+- MAKSIMAL 200 karakter total termasuk link — batas keras platform, jangan dilanggar
+- Hook kuat di kalimat pertama — HARUS memakai/mengadaptasi langsung kalimat pertama artikel
 - Sisipkan link artikel (${articleUrl || "(tidak tersedia, lewati jika kosong)"}) secara natural
 - Gunakan 2-3 hashtag relevan
 - Tone: to the point, berani, sedikit provokatif
 
 [FACEBOOK]
-- 150-250 kata
+- Maksimal 200 kata
 - Hook di kalimat pertama: fakta menarik atau pertanyaan yang memancing diskusi
-- Kembangkan isi artikel jadi konten yang informatif dan mengundang komentar
-- Sisipkan 1-2 pertanyaan di tengah atau akhir untuk mendorong engagement
-- Sisipkan link artikel (${articleUrl || "(tidak tersedia, lewati jika kosong)"}) secara inline menyatu dalam kalimat, bukan ditempel di akhir
+- Sisipkan 1 pertanyaan untuk mendorong engagement
+- Sisipkan link artikel (${articleUrl || "(tidak tersedia, lewati jika kosong)"}) secara inline menyatu dalam kalimat
 - Tone: energik tapi sedikit lebih dewasa dari TikTok
 - Hashtag: 3-5 saja, relevan dan tidak berlebihan
 
 [TIKTOK]
-- 100-150 kata, caption PENDAMPING untuk video/slide artikel — harus pendek dan kasual
+- Maksimal 200 kata termasuk hashtag — harus pendek dan kasual
 - Hook baris pertama pakai format: "POV:", "Fakta:", atau pertanyaan langsung
-- Bullet point atau emoji untuk readability
+- Emoji secukupnya untuk energi visual
 - CTA persis: "kunjungi www.halfspacesport.com"
 - Tone: hype, singkat, energik, pakai bahasa gaul
-- 5-8 hashtag campuran besar dan niche, salah satunya WAJIB #halfspacesport
+- 4-5 hashtag campuran besar dan niche, salah satunya WAJIB #halfspacesport
 
 [THREADS]
 - Nada PALING santai dan personal — seperti curhat ke teman, bukan promosi
-- Cukup 1-2 kalimat saja dengan hook yang kuat, jangan bertele-tele
+- Cukup 3-4 kalimat saja dengan hook yang kuat, jangan bertele-tele
 - TIDAK ADA CTA, link, atau hashtag
 
 Jawab HANYA dalam format JSON seperti ini, tanpa teks lain apapun, tanpa markdown backtick:
@@ -288,7 +284,7 @@ Jawab HANYA dalam format JSON seperti ini, tanpa teks lain apapun, tanpa markdow
 }`
 
   try {
-    // ── TAHAP 1: Groq menulis draft caption untuk 5 platform (GPT-OSS-20) ───
+    // ── TAHAP 1: Groq menulis draft caption untuk 5 platform (GPT-OSS-20B) ───
     const raw = await groqChat(apiKey, prompt)
 
     const draftCaptions = extractJsonObject<Captions>(raw)
@@ -315,7 +311,7 @@ LINK ARTIKEL: ${articleUrl || "(tidak tersedia)"}
 DRAFT CAPTION (JSON):
 ${JSON.stringify(draftCaptions, null, 2)}
 
-Revisi draft di atas sesuai instruksi editor yang sudah diberikan — fokus memperkuat hook dan CTA di setiap platform, tanpa melanggar aturan format per platform. Kembalikan HASIL REVISI FINAL dalam format JSON yang sama persis (instagram, tiktok, x, facebook, threads).`
+Revisi draft di atas sesuai instruksi editor yang sudah diberikan — fokus memperkuat hook dan CTA di setiap platform, tanpa melanggar aturan format per platform, dan PASTIKAN setiap caption MAKSIMAL 150 kata. Kembalikan HASIL REVISI FINAL dalam format JSON yang sama persis (instagram, tiktok, x, facebook, threads).`
 
     let finalCaptions = draftCaptions
     try {
