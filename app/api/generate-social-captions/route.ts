@@ -73,7 +73,7 @@ Untuk setiap platform, pastikan:
 - CTA harus eksplisit mengarah ke website
 
 [THREADS]
-- Nada paling santai/personal — seperti curhat ke teman, cukup 3-4 kalimat
+- Nada paling santai/personal — seperti curhat ke teman, cukup 1-2 kalimat
 - TIDAK ADA link atau hashtag
 - Hook harus kuat meski singkat
 
@@ -118,6 +118,7 @@ async function groqChat(apiKey: string, prompt: string): Promise<string> {
       model:       "openai/gpt-oss-20b",
       temperature: 0.85,
       max_tokens:  1500,
+      include_reasoning: false,
       messages: [{ role: "user", content: prompt }],
       response_format: { type: "json_object" },
     }),
@@ -237,7 +238,7 @@ BATAS KATA SEMUA PLATFORM: MAKSIMAL 150 kata per caption (termasuk hashtag). Ini
 ━━━ ATURAN PER PLATFORM (WAJIB DIIKUTI PERSIS, JANGAN DICAMPUR ANTAR PLATFORM) ━━━
 
 [INSTAGRAM]
-- Maksimal 200 kata termasuk hashtag
+- Maksimal 150 kata termasuk hashtag
 - Baris pertama (sebelum "more"): hook yang sangat kuat, maksimal 1-2 kalimat
 - Struktur: Hook → Konteks singkat → CTA
 - Line break setiap 2-3 kalimat untuk readability di mobile
@@ -247,14 +248,14 @@ BATAS KATA SEMUA PLATFORM: MAKSIMAL 150 kata per caption (termasuk hashtag). Ini
   Contoh mix: #sepakbola #football #bola + #ligaindonesia #halfspacesport + niche topik artikel
 
 [X (TWITTER)]
-- MAKSIMAL 200 karakter total termasuk link — batas keras platform, jangan dilanggar
+- MAKSIMAL 280 karakter total termasuk link — batas keras platform, jangan dilanggar
 - Hook kuat di kalimat pertama — HARUS memakai/mengadaptasi langsung kalimat pertama artikel
 - Sisipkan link artikel (${articleUrl || "(tidak tersedia, lewati jika kosong)"}) secara natural
 - Gunakan 2-3 hashtag relevan
 - Tone: to the point, berani, sedikit provokatif
 
 [FACEBOOK]
-- Maksimal 200 kata
+- Maksimal 150 kata
 - Hook di kalimat pertama: fakta menarik atau pertanyaan yang memancing diskusi
 - Sisipkan 1 pertanyaan untuk mendorong engagement
 - Sisipkan link artikel (${articleUrl || "(tidak tersedia, lewati jika kosong)"}) secara inline menyatu dalam kalimat
@@ -262,16 +263,16 @@ BATAS KATA SEMUA PLATFORM: MAKSIMAL 150 kata per caption (termasuk hashtag). Ini
 - Hashtag: 3-5 saja, relevan dan tidak berlebihan
 
 [TIKTOK]
-- Maksimal 200 kata termasuk hashtag — harus pendek dan kasual
+- Maksimal 150 kata termasuk hashtag — harus pendek dan kasual
 - Hook baris pertama pakai format: "POV:", "Fakta:", atau pertanyaan langsung
 - Emoji secukupnya untuk energi visual
 - CTA persis: "kunjungi www.halfspacesport.com"
 - Tone: hype, singkat, energik, pakai bahasa gaul
-- 4-5 hashtag campuran besar dan niche, salah satunya WAJIB #halfspacesport
+- 5-8 hashtag campuran besar dan niche, salah satunya WAJIB #halfspacesport
 
 [THREADS]
 - Nada PALING santai dan personal — seperti curhat ke teman, bukan promosi
-- Cukup 3-4 kalimat saja dengan hook yang kuat, jangan bertele-tele
+- Cukup 1-2 kalimat saja dengan hook yang kuat, jangan bertele-tele
 - TIDAK ADA CTA, link, atau hashtag
 
 Jawab HANYA dalam format JSON seperti ini, tanpa teks lain apapun, tanpa markdown backtick:

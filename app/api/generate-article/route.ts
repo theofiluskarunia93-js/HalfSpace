@@ -2,7 +2,8 @@
 //
 // Generate DRAFT artikel sepak bola bergaya The Athletic — HANYA Tahap 1
 // (Penulis). Sejak 22 Jun 2026, tahap editor (revisi) DIPISAH ke route
-// tersendiri: app/api/edit-article/route.ts (Gemini 3.5 Flash). Route ini TIDAK lagi memanggil tahap editor
+// tersendiri: app/api/edit-article/route.ts (OpenRouter Nemotron 3 Ultra,
+// fallback Nemotron 3 Super). Route ini TIDAK lagi memanggil tahap editor
 // secara otomatis — klien (create-article-view.tsx) memanggil endpoint
 // editor lewat tombol terpisah, setelah draft ini selesai dan (kalau perlu)
 // sudah diedit manual oleh admin.
@@ -21,7 +22,7 @@
 //
 // Catatan API key:
 // - GROQ_API_KEY → dipakai untuk tahap draft. Model: openai/gpt-oss-120b.
-//   Gemini TIDAK dipakai di route ini — Gemini 3.5 Flash hanya dipakai di
+//   OpenRouter TIDAK dipakai di route ini — OpenRouter hanya dipakai di
 //   app/api/edit-article/route.ts (tahap editor).
 
 import { NextRequest, NextResponse } from "next/server"
@@ -65,6 +66,7 @@ async function groqGenerateJson(apiKey: string, systemPrompt: string, userPrompt
       model:       "openai/gpt-oss-120b",
       temperature: 0.85,
       max_tokens:  6000,
+      include_reasoning: false,
       messages: [
         { role: "system", content: systemPrompt },
         { role: "user",   content: userPrompt },
