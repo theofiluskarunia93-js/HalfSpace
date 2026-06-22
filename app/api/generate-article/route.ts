@@ -1,31 +1,21 @@
 // app/api/generate-article/route.ts
 //
-// Generate DRAFT artikel sepak bola bergaya The Athletic — HANYA Tahap 1
-// (Penulis). Sejak 22 Jun 2026, tahap editor (revisi) DIPISAH ke route
-// tersendiri: app/api/edit-article/route.ts (OpenRouter Nemotron 3 Ultra,
-// fallback Nemotron 3 Super). Route ini TIDAK lagi memanggil tahap editor
-// secara otomatis — klien (create-article-view.tsx) memanggil endpoint
-// editor lewat tombol terpisah, setelah draft ini selesai dan (kalau perlu)
-// sudah diedit manual oleh admin.
+// Generate artikel sepak bola bergaya The Athletic menggunakan Gemini 3.5 Flash.
+// Satu langkah — tidak ada tahap editor terpisah.
 //
 // Pipeline:
-//   Step 1 : Menyusun prompt editorial (gaya penulisan + tipe berita + topik/konteks)
-//   Step 2 : Groq menulis draft (judul + isi) via openai/gpt-oss-120b
-//   Step 3 : Draft dikirim ke editor artikel (BELUM final, belum direvisi)
-//
-// Streaming progress via SSE (Server-Sent Events) ke client — kontrak event
-// SSE ("progress" | "done" | "error") dipertahankan sama seperti sebelumnya
-// agar frontend tidak perlu mengubah cara baca stream.
+//   Step 1 : Susun system prompt per tipe berita + user prompt dari topic & context
+//   Step 2 : Gemini 3.5 Flash menulis artikel final (title + content HTML)
+//   Step 3 : Kirim hasil ke client via SSE
 //
 // Input : newsType + topic + context
 // Output: SSE stream → { event: "progress"|"done"|"error", data: ... }
 //
 // Catatan API key:
-// - GROQ_API_KEY → dipakai untuk tahap draft. Model: openai/gpt-oss-120b.
-//   OpenRouter TIDAK dipakai di route ini — OpenRouter hanya dipakai di
-//   app/api/edit-article/route.ts (tahap editor).
+// - GEMINI_API_KEY → dipakai untuk generate artikel. Model: gemini-3.5-flash.
 
 import { NextRequest, NextResponse } from "next/server"
+import { GoogleGenAI } from "@google/genai"
 import { requireAdmin } from "@/lib/supabase/server-auth"
 import {
   BASE_SYSTEM,
@@ -37,54 +27,37 @@ import {
 
 export type { NewsType }
 
-// Draft-only sekarang jauh lebih cepat dari pipeline lama (tidak lagi
-// menunggu tahap editor di request yang sama), tapi maxDuration tetap
-// dipertahankan di 60s sebagai jaga-jaga kalau Groq lambat merespons.
 export const maxDuration = 60
+
+const MODEL = "gemini-3.5-flash"
 
 interface RequestBody {
   newsType: NewsType
   topic:    string
   context:  string
-  model?:   string  // tidak dipakai — draft fixed ke Groq, dipertahankan untuk kompatibilitas UI lama
+  model?:   string  // tidak dipakai — dipertahankan untuk kompatibilitas UI
 }
 
-// ─── Helpers ──────────────────────────────────────────────────────────────────
+// ─── Gemini 3.5 Flash: generate artikel ──────────────────────────────────────
+async function geminiGenerateJson(
+  apiKey: string,
+  systemPrompt: string,
+  userPrompt: string,
+): Promise<string> {
+  const genai = new GoogleGenAI({ apiKey })
 
-// ─── TAHAP 1 (Penulis): Groq menulis draft pertama ───────────────────────────
-// Memakai Groq REST API (kompatibel OpenAI chat completions).
-// Model: openai/gpt-oss-120b. Groq free tier jauh lebih longgar (umumnya 6000
-// RPM, 500K tokens/menit), sehingga jarang kena rate limit.
-async function groqGenerateJson(apiKey: string, systemPrompt: string, userPrompt: string): Promise<string> {
-  const res = await fetch("https://api.groq.com/openai/v1/chat/completions", {
-    method:  "POST",
-    headers: {
-      "Content-Type":  "application/json",
-      "Authorization": `Bearer ${apiKey}`,
+  const response = await genai.models.generateContent({
+    model: MODEL,
+    contents: userPrompt,
+    config: {
+      systemInstruction: systemPrompt,
+      temperature:       0.85,
+      maxOutputTokens:   8000,
+      responseMimeType:  "application/json",
     },
-    body: JSON.stringify({
-      model:       "openai/gpt-oss-120b",
-      temperature: 0.85,
-      max_tokens:  6000,
-      include_reasoning: false,
-      messages: [
-        { role: "system", content: systemPrompt },
-        { role: "user",   content: userPrompt },
-      ],
-      response_format: { type: "json_object" },
-    }),
   })
 
-  if (!res.ok) {
-    const errText = await res.text()
-    if (res.status === 429) throw new Error("Groq API rate limit tercapai. Tunggu beberapa detik lalu coba lagi.")
-    if (res.status === 401) throw new Error("GROQ_API_KEY tidak valid. Hubungi administrator.")
-    if (res.status === 400) throw new Error("Request ke Groq gagal (400). Coba kurangi panjang konteks.")
-    throw new Error(`Groq API error ${res.status}: ${errText.slice(0, 200)}`)
-  }
-
-  const data = await res.json() as { choices?: { message?: { content?: string } }[] }
-  return (data.choices?.[0]?.message?.content ?? "").trim()
+  return (response.text ?? "").trim()
 }
 
 // ─── POST handler ─────────────────────────────────────────────────────────────
@@ -96,11 +69,10 @@ export async function POST(req: NextRequest) {
     return NextResponse.json({ error: "Unauthorized" }, { status: 401 })
   }
 
-  const groqKey = process.env.GROQ_API_KEY
-
-  if (!groqKey) {
+  const geminiKey = process.env.GEMINI_API_KEY
+  if (!geminiKey) {
     return NextResponse.json(
-      { error: "GROQ_API_KEY belum dikonfigurasi di environment variables." },
+      { error: "GEMINI_API_KEY belum dikonfigurasi di environment variables." },
       { status: 500 }
     )
   }
@@ -136,7 +108,7 @@ export async function POST(req: NextRequest) {
       }
 
       try {
-        // ── STEP 1: Susun prompt editorial ───────────────────────────────────
+        // ── STEP 1: Susun prompt ──────────────────────────────────────────────
         send("progress", { step: 1, label: "Menyusun Prompt Editorial" })
 
         const userPrompt = `${TYPE_INSTRUCTION[newsType]}
@@ -147,42 +119,42 @@ KONTEKS / FAKTA YANG DIKETAHUI:
 ${context.trim()}
 
 Tulis artikel berdasarkan topik dan konteks di atas.
-Ingat: kamu jurnalis senior — bukan generator teks. Pilih angle yang paling menarik dari konteks yang diberikan, dan biarkan narasi berkembang secara organik mengikuti struktur yang sudah ditentukan di atas.
+Gunakan HANYA informasi yang ada di konteks — jangan tambahkan fakta, nama, skor, atau angka yang tidak disebutkan.
+Pilih angle paling menarik dari konteks, dan biarkan narasi berkembang sesuai struktur tipe berita di atas.
 
 Kembalikan HANYA JSON dengan format berikut (tidak ada teks di luar JSON):
 {
-  "title": "<judul artikel: menarik, informatif, max 80 karakter, tanpa tanda tanya, tanpa clickbait>",
-  "content": "<konten artikel dalam HTML — gunakan <p> untuk paragraf dan <blockquote> untuk kutipan langsung dari narasumber. JANGAN gunakan tag HTML lain apapun, termasuk heading.>"
+  "title": "<judul artikel: menarik, max 80 karakter, tanpa tanda tanya, tanpa clickbait, bukan format 'Tim A vs Tim B'>",
+  "content": "<konten artikel dalam HTML — gunakan <h2> untuk judul bagian, <p> untuk paragraf, <blockquote> untuk kutipan langsung dari narasumber. JANGAN gunakan tag HTML lain apapun.>"
 }`
 
-        // ── STEP 2: Groq menulis draft pertama (GPT-OSS-120B) ───────────────
-        send("progress", { step: 2, label: "Menulis Draft dengan Groq (GPT-OSS-120B)" })
+        // ── STEP 2: Gemini 3.5 Flash menulis artikel ─────────────────────────
+        send("progress", { step: 2, label: "Menulis Artikel dengan Gemini 3.5 Flash" })
 
-        const rawDraft = await groqGenerateJson(groqKey, BASE_SYSTEM, userPrompt)
+        const raw = await geminiGenerateJson(geminiKey, BASE_SYSTEM, userPrompt)
 
-        if (!rawDraft) {
-          throw new Error("Groq tidak menghasilkan output. Coba lagi.")
+        if (!raw) {
+          throw new Error("Gemini 3.5 Flash tidak menghasilkan output. Coba lagi.")
         }
 
-        const draft = extractJsonObject<{ title: string; content: string }>(rawDraft)
+        const result = extractJsonObject<{ title: string; content: string }>(raw)
 
-        if (!draft?.title?.trim() || !draft?.content?.trim()) {
-          console.error("[generate-article] Gagal parse hasil Groq. Raw:", rawDraft.slice(0, 800))
-          throw new Error("Gagal memproses hasil Groq. Coba lagi dalam beberapa detik.")
+        if (!result?.title?.trim() || !result?.content?.trim()) {
+          console.error("[generate-article] Gagal parse hasil Gemini. Raw:", raw.slice(0, 800))
+          throw new Error("Gagal memproses hasil Gemini 3.5 Flash. Coba lagi dalam beberapa detik.")
         }
 
-        // ── STEP 3: Done — draft mentah, BELUM melalui editor ────────────────
-        send("progress", { step: 3, label: "Draft Selesai" })
+        // ── STEP 3: Done ──────────────────────────────────────────────────────
+        send("progress", { step: 3, label: "Artikel Selesai" })
 
         send("done", {
-          title:   draft.title.trim(),
-          content: draft.content.trim(),
+          title:   result.title.trim(),
+          content: result.content.trim(),
         })
 
       } catch (err: unknown) {
         const message = err instanceof Error ? err.message : "Terjadi error. Coba lagi."
-        console.error("[generate-article] Error:", err)
-
+        console.error("[generate-article] Gemini error:", err)
         send("error", { error: message })
       } finally {
         controller.close()
