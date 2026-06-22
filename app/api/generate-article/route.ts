@@ -30,7 +30,7 @@
 //
 // Catatan API key:
 // - GROQ_API_KEY → dipakai untuk kedua tahap (draft + editor). Model draft:
-//   openai/gpt-oss-120b. Model editor: qwen/qwen3-6-27b-instruct (Qwen 3.6 27B).
+//   openai/gpt-oss-120b. Model editor: qwen/qwen3-6-27b (Qwen 3.6 27B).
 //   OpenRouter tidak dipakai sama sekali.
 
 import { NextRequest, NextResponse } from "next/server"
@@ -236,7 +236,7 @@ async function groqReviseJson(apiKey: string, systemPrompt: string, userPrompt: 
       "Authorization": `Bearer ${apiKey}`,
     },
     body: JSON.stringify({
-      model:       "qwen/qwen3-6-27b-instruct",
+      model:       "qwen/qwen3.6-27b",
       temperature: 0.7,
       max_tokens:  6000,
       messages: [
