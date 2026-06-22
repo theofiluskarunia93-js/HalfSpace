@@ -64,6 +64,17 @@ function extractFirstSentence(html: string): string {
   return (match ? match[0] : text.slice(0, 160)).trim()
 }
 
+// Bersihkan HTML dan potong excerpt ke maks 300 karakter sebelum dikirim ke API.
+// Ini mencegah error 400 Groq akibat total token prompt terlalu panjang.
+function sanitizeExcerpt(raw: string): string {
+  return raw
+    .replace(/<[^>]+>/g, " ")
+    .replace(/&nbsp;/g, " ")
+    .replace(/\s+/g, " ")
+    .trim()
+    .slice(0, 300)
+}
+
 // ─── Content type meta ────────────────────────────────────────────────────────
 
 const CONTENT_TYPE_LABELS: Record<ContentType, string> = {
@@ -452,7 +463,7 @@ export function SocialMediaView({ onBack, articleId }: SocialMediaViewProps) {
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
           title: article.title,
-          excerpt: article.excerpt,
+          excerpt: sanitizeExcerpt(article.excerpt),
           firstSentence,
           slug: article.slug,
         }),
