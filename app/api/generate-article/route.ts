@@ -1,17 +1,22 @@
 // app/api/generate-article/route.ts
 //
-// Generate artikel sepak bola bergaya The Athletic menggunakan Groq GPT-OSS 120B.
+// Generate artikel sepak bola bergaya The Athletic menggunakan OpenRouter.
 // Satu langkah — tidak ada tahap editor terpisah.
 //
 // Pipeline:
 //   Step 1 : Ambil data pendukung otomatis sesuai tipe berita (lihat di bawah)
 //   Step 2 : Susun system prompt per tipe berita + user prompt dari topic & context gabungan
-//   Step 3 : Groq GPT-OSS 120B menulis artikel final (title + content HTML)
+//   Step 3 : OpenRouter menulis artikel final (title + content HTML)
 //   Step 4 : Kirim hasil ke client via SSE
+//
+// ━━━ MODEL YANG TERSEDIA (FREE TIER OPENROUTER) ━━━
+//   - openai/gpt-oss-120b:free       → GPT-OSS 120B  (default)
+//   - nvidia/nemotron-3-ultra-550b-a55b:free → Nemotron 3 Ultra 550B
+//   - google/gemma-4-31b-it:free     → Google Gemma 4 31B
 //
 // ━━━ SUMBER DATA OTOMATIS PER TIPE BERITA ━━━
 // Supaya artikel minim halusinasi, sebagian tipe berita sekarang mengambil
-// data FAKTUAL secara otomatis sebelum dikirim ke Groq, alih-alih murni
+// data FAKTUAL secara otomatis sebelum dikirim ke OpenRouter, alih-alih murni
 // mengandalkan ketikan manual admin di kolom "context":
 //
 //   - hasil   (Hasil Pertandingan)   → Bzzoiro (skor, insiden, statistik) +
@@ -30,14 +35,13 @@
 // fetchAutoContext), supaya admin tidak terblokir total saat API eksternal
 // down atau topiknya belum ada datanya.
 //
-// Input : newsType + topic + context
+// Input : newsType + topic + context + model (opsional, default GPT-OSS 120B)
 // Output: SSE stream → { event: "progress"|"done"|"error", data: ... }
 //
 // Catatan API key:
-// - GROQ_API_KEY     → dipakai untuk generate artikel. Model: openai/gpt-oss-120b.
-// - BZZOIRO_API_KEY  → dipakai untuk konteks Hasil/Preview/Injury (sudah ada,
-//                       sebelumnya hanya dipakai live-scores & standings).
-// - TAVILY_API_KEY   → dipakai untuk konteks Konpers & Transfer Rumor.
+// - OPENROUTER_API_KEY → dipakai untuk generate artikel via OpenRouter.
+// - BZZOIRO_API_KEY    → dipakai untuk konteks Hasil/Preview/Injury.
+// - TAVILY_API_KEY     → dipakai untuk konteks Konpers & Transfer Rumor.
 
 import { NextRequest, NextResponse } from "next/server"
 import OpenAI from "openai"
@@ -60,13 +64,31 @@ export type { NewsType }
 
 export const maxDuration = 60
 
-const MODEL = "openai/gpt-oss-120b"
+// ━━━ MODEL OPENROUTER YANG TERSEDIA ━━━
+export const OPENROUTER_MODELS = [
+  {
+    value: "openai/gpt-oss-120b:free",
+    label: "GPT-OSS 120B",
+  },
+  {
+    value: "nvidia/nemotron-3-ultra-550b-a55b:free",
+    label: "Nemotron 3 Ultra 550B",
+  },
+  {
+    value: "google/gemma-4-31b-it:free",
+    label: "Google Gemma 4 31B",
+  },
+] as const
+
+export type OpenRouterModelId = typeof OPENROUTER_MODELS[number]["value"]
+
+const DEFAULT_MODEL: OpenRouterModelId = "openai/gpt-oss-120b:free"
 
 interface RequestBody {
   newsType: NewsType
   topic:    string
   context:  string
-  model?:   string  // tidak dipakai — dipertahankan untuk kompatibilitas UI
+  model?:   OpenRouterModelId
 }
 
 // ─── Label sumber data otomatis per tipe — dipakai untuk progress UI ───────
@@ -79,10 +101,12 @@ const AUTO_SOURCE_LABEL: Record<NewsType, string> = {
   trivia:   "Tidak ada — konteks manual admin",
 }
 
+// ─── Helper: ambil label model dari model ID ─────────────────────────────────
+function getModelLabel(modelId: string): string {
+  return OPENROUTER_MODELS.find((m) => m.value === modelId)?.label ?? modelId
+}
+
 // ─── Ambil konteks otomatis sesuai tipe berita ─────────────────────────────
-// Mengembalikan teks konteks gabungan: [DATA API TERVERIFIKASI] + [CATATAN
-// TAMBAHAN ADMIN]. Kalau fetch otomatis gagal, fallback ke konteks manual
-// admin saja (dengan warning yang diteruskan ke event "progress").
 async function fetchAutoContext(
   newsType: NewsType,
   topic: string,
@@ -122,12 +146,10 @@ async function fetchAutoContext(
 
     return { combinedContext, warning, sourceUsed: AUTO_SOURCE_LABEL[newsType] }
   } catch (err: unknown) {
-    // Fetch otomatis gagal total → fallback ke konteks manual admin saja.
     const message = err instanceof Error ? err.message : "Gagal mengambil data otomatis."
     console.error(`[generate-article] Auto-context gagal untuk newsType="${newsType}":`, message)
 
     if (!manualBlock.trim()) {
-      // Tidak ada fallback sama sekali — lempar error supaya admin tahu harus isi manual.
       throw new Error(
         `Gagal mengambil data otomatis dari ${AUTO_SOURCE_LABEL[newsType]} (${message}), dan kolom konteks manual masih kosong. Isi konteks manual lalu coba lagi.`
       )
@@ -141,29 +163,35 @@ async function fetchAutoContext(
   }
 }
 
-// ─── Groq GPT-OSS 120B: generate artikel ─────────────────────────────────────
-// Groq mendukung OpenAI-compatible API — pakai openai SDK dengan baseURL Groq.
-async function groqGenerateJson(
+// ─── OpenRouter: generate artikel ────────────────────────────────────────────
+// OpenRouter mendukung OpenAI-compatible API — pakai openai SDK dengan
+// baseURL OpenRouter. Model dipilih oleh admin lewat dropdown di UI.
+async function openrouterGenerateJson(
   apiKey: string,
+  modelId: string,
   systemPrompt: string,
   userPrompt: string,
 ): Promise<string> {
-  const groq = new OpenAI({
+  const client = new OpenAI({
     apiKey,
-    baseURL: "https://api.groq.com/openai/v1",
+    baseURL: "https://openrouter.ai/api/v1",
+    defaultHeaders: {
+      "HTTP-Referer": process.env.NEXT_PUBLIC_SITE_URL ?? "https://localhost:3000",
+      "X-Title": "HalfSpace Article Generator",
+    },
   })
 
-  const response = await groq.chat.completions.create({
-    model:              MODEL,
+  const response = await client.chat.completions.create({
+    model:            modelId,
     messages: [
       { role: "system", content: systemPrompt },
       { role: "user",   content: userPrompt },
     ],
-    temperature:        0.7,
-    max_tokens:         8000,
-    top_p:              0.80,
-    presence_penalty:   1.5,
-    response_format:    { type: "json_object" },
+    temperature:      0.7,
+    max_tokens:       4000,
+    top_p:            0.80,
+    presence_penalty: 1.5,
+    response_format:  { type: "json_object" },
   })
 
   return (response.choices[0]?.message?.content ?? "").trim()
@@ -178,10 +206,10 @@ export async function POST(req: NextRequest) {
     return NextResponse.json({ error: "Unauthorized" }, { status: 401 })
   }
 
-  const groqKey = process.env.GROQ_API_KEY
-  if (!groqKey) {
+  const openrouterKey = process.env.OPENROUTER_API_KEY
+  if (!openrouterKey) {
     return NextResponse.json(
-      { error: "GROQ_API_KEY belum dikonfigurasi di environment variables." },
+      { error: "OPENROUTER_API_KEY belum dikonfigurasi di environment variables." },
       { status: 500 }
     )
   }
@@ -193,7 +221,7 @@ export async function POST(req: NextRequest) {
     return NextResponse.json({ error: "Request body tidak valid." }, { status: 400 })
   }
 
-  const { newsType, topic, context } = body
+  const { newsType, topic, context, model } = body
 
   if (!newsType || !topic?.trim()) {
     return NextResponse.json(
@@ -206,6 +234,12 @@ export async function POST(req: NextRequest) {
   if (!validTypes.includes(newsType)) {
     return NextResponse.json({ error: "newsType tidak valid." }, { status: 400 })
   }
+
+  const validModels = OPENROUTER_MODELS.map((m) => m.value)
+  const selectedModel: OpenRouterModelId =
+    model && validModels.includes(model) ? model : DEFAULT_MODEL
+
+  const modelLabel = getModelLabel(selectedModel)
 
   // Untuk trivia, context manual tetap wajib (tidak ada sumber data otomatis).
   if (newsType === "trivia" && !context?.trim()) {
@@ -262,20 +296,25 @@ Kembalikan HANYA JSON dengan format berikut (tidak ada teks di luar JSON):
   "content": "<konten artikel dalam HTML — gunakan <h2> untuk judul bagian, <p> untuk paragraf, <blockquote> untuk kutipan langsung dari narasumber. JANGAN gunakan tag HTML lain apapun.>"
 }`
 
-        // ── STEP 3: Groq GPT-OSS 120B menulis artikel ───────────────────────
-        send("progress", { step: 3, label: "Menulis Artikel dengan Groq GPT-OSS 120B", source: sourceUsed })
+        // ── STEP 3: OpenRouter menulis artikel ───────────────────────────────
+        send("progress", {
+          step: 3,
+          label: `Menulis Artikel dengan OpenRouter · ${modelLabel}`,
+          source: sourceUsed,
+          model: selectedModel,
+        })
 
-        const raw = await groqGenerateJson(groqKey, BASE_SYSTEM, userPrompt)
+        const raw = await openrouterGenerateJson(openrouterKey, selectedModel, BASE_SYSTEM, userPrompt)
 
         if (!raw) {
-          throw new Error("Groq GPT-OSS 120B tidak menghasilkan output. Coba lagi.")
+          throw new Error(`OpenRouter (${modelLabel}) tidak menghasilkan output. Coba lagi.`)
         }
 
         const result = extractJsonObject<{ title: string; content: string }>(raw)
 
         if (!result?.title?.trim() || !result?.content?.trim()) {
-          console.error("[generate-article] Gagal parse hasil Groq. Raw:", raw.slice(0, 800))
-          throw new Error("Gagal memproses hasil Groq GPT-OSS 120B. Coba lagi dalam beberapa detik.")
+          console.error("[generate-article] Gagal parse hasil OpenRouter. Raw:", raw.slice(0, 800))
+          throw new Error(`Gagal memproses hasil dari OpenRouter (${modelLabel}). Coba lagi dalam beberapa detik.`)
         }
 
         // ── STEP 4: Done ──────────────────────────────────────────────────────
@@ -285,6 +324,8 @@ Kembalikan HANYA JSON dengan format berikut (tidak ada teks di luar JSON):
           title:      result.title.trim(),
           content:    result.content.trim(),
           sourceUsed,
+          modelUsed:  selectedModel,
+          modelLabel,
         })
 
       } catch (err: unknown) {

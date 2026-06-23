@@ -352,7 +352,7 @@ function cleanLegacyBadgeContent(content: string): string {
 
 // ─── Info Pipeline Generate Artikel ──────────────────────────────────────────
 // Generate Draft (tombol Sparkles) → POST /api/generate-article
-//   Groq GPT-OSS 120B — FIXED, tidak bisa dipilih manual.
+//   Model dipilih lewat dropdown di modal — default GPT-OSS 120B via OpenRouter.
 //   Sejak integrasi sumber data per tipe berita, server otomatis mengambil
 //   data faktual sebelum menulis (admin tidak perlu isi context manual,
 //   kecuali untuk Trivia yang tetap wajib manual):
@@ -365,12 +365,14 @@ function cleanLegacyBadgeContent(content: string): string {
 // DIHAPUS dari UI ini sesuai permintaan — sudah tidak dipakai. Generate Draft
 // di atas sekarang satu-satunya jalur AI di view ini.
 //
-// Pilihan model di UI ini dulunya dipakai untuk memilih model draft.
-// Sekarang tahap draft sudah fixed ke Groq GPT-OSS 120B, sehingga dropdown ini
-// hanya dipertahankan untuk kompatibilitas UI — nilai yang dipilih tidak
-// dikirim ke server (field `model` diabaikan di route.ts).
+// Model yang tersedia (free tier OpenRouter):
+//   - openai/gpt-oss-120b:free                → GPT-OSS 120B (default)
+//   - nvidia/nemotron-3-ultra-550b-a55b:free  → Nemotron 3 Ultra 550B
+//   - google/gemma-4-31b-it:free              → Google Gemma 4 31B
 const AI_MODEL_OPTIONS = [
-  { value: "", label: "Groq GPT-OSS 120B (default)" },
+  { value: "openai/gpt-oss-120b:free",               label: "GPT-OSS 120B (default)" },
+  { value: "nvidia/nemotron-3-ultra-550b-a55b:free", label: "Nemotron 3 Ultra 550B" },
+  { value: "google/gemma-4-31b-it:free",             label: "Google Gemma 4 31B" },
 ] as const
 
 // ─── Inject section-label otomatis ke hasil AI generate ──────────────────────
@@ -421,7 +423,7 @@ function injectSectionLabels(html: string, newsType: string): string {
 
 // ─── Sumber data otomatis per tipe berita ───────────────────────────────────
 // Ditampilkan di modal Generate Draft supaya admin tahu dari mana data
-// faktual artikel ini diambil sebelum ditulis oleh Groq GPT-OSS 120B.
+// faktual artikel ini diambil sebelum ditulis oleh model pilihan via OpenRouter.
 //   - Hasil       → Bzzoiro (skor/insiden/statistik) + Tavily (laporan post-match ~30 menit)
 //   - Preview     → Bzzoiro (jadwal/prediksi ML) + Tavily (analisis pra-laga ~12 jam)
 //   - Injury      → Bzzoiro (profil/menit main) + Tavily (berita cedera 3 hari)
@@ -538,7 +540,7 @@ export function CreateArticleView({ onBack, articleId }: CreateArticleViewProps)
   const [aiContext,     setAiContext]     = useState("")
   // "" = otomatis (pakai urutan fallback default di server). Selain itu, model
   // ini akan dicoba PALING PERTAMA sebelum fallback ke daftar default.
-  const [aiModel,       setAiModel]       = useState("")
+  const [aiModel,       setAiModel]       = useState("openai/gpt-oss-120b:free")
   const [aiGenerating,  setAiGenerating]  = useState(false)
   const [aiError,       setAiError]       = useState<string | null>(null)
   const [aiProgress,    setAiProgress]    = useState<{ step: number; label: string; source?: string; warning?: boolean } | null>(null)
@@ -906,7 +908,7 @@ export function CreateArticleView({ onBack, articleId }: CreateArticleViewProps)
       // Stream selesai tanpa event "done" — koneksi putus prematur
       // (timeout Vercel, model tidak merespons, dll) tanpa error message dari server.
       if (!receivedDone) {
-        throw new Error("Koneksi ke server terputus sebelum selesai. Kemungkinan Groq GPT-OSS 120B timeout atau tidak merespons. Coba lagi.")
+        throw new Error(`Koneksi ke server terputus sebelum selesai. Kemungkinan OpenRouter (${aiModel}) timeout atau tidak merespons. Coba lagi.`)
       }
     } catch (err: any) {
       setAiError(err.message ?? "Gagal generate artikel. Coba lagi.")
@@ -1765,11 +1767,11 @@ export function CreateArticleView({ onBack, articleId }: CreateArticleViewProps)
               </div>
               <p className="mt-1 text-[11px] text-muted-foreground">
                 {aiNewsType === "hasil" || aiNewsType === "preview" || aiNewsType === "cedera" ? (
-                  <>Server otomatis mengambil data faktual dari Bzzoiro Sports Data API berdasarkan Topik di bawah sebelum draft ditulis oleh Groq GPT-OSS 120B{aiNewsType === "cedera" && " — Bzzoiro tidak punya endpoint cedera resmi, jadi pastikan isi fakta cedera sebenarnya di kolom Konteks"}.</>
+                  <>Server otomatis mengambil data faktual dari Bzzoiro Sports Data API berdasarkan Topik di bawah sebelum draft ditulis via OpenRouter{aiNewsType === "cedera" && " — Bzzoiro tidak punya endpoint cedera resmi, jadi pastikan isi fakta cedera sebenarnya di kolom Konteks"}.</>
                 ) : aiNewsType === "konpers" || aiNewsType === "transfer" ? (
-                  <>Server otomatis mencari berita terbaru (Tavily, window 2 hari terakhir) berdasarkan Topik di bawah sebelum draft ditulis oleh Groq GPT-OSS 120B.</>
+                  <>Server otomatis mencari berita terbaru (Tavily, window 2 hari terakhir) berdasarkan Topik di bawah sebelum draft ditulis via OpenRouter.</>
                 ) : (
-                  <>Tidak ada sumber data otomatis untuk Trivia — draft ditulis oleh Groq GPT-OSS 120B murni dari Konteks & Fakta yang kamu isi manual.</>
+                  <>Tidak ada sumber data otomatis untuk Trivia — draft ditulis via OpenRouter murni dari Konteks & Fakta yang kamu isi manual.</>
                 )}
               </p>
             </div>
@@ -1842,6 +1844,32 @@ export function CreateArticleView({ onBack, articleId }: CreateArticleViewProps)
               </p>
             </div>
 
+            {/* Model Switcher */}
+            <div>
+              <label className="mb-1.5 block text-xs font-semibold text-muted-foreground uppercase tracking-wide">
+                Model OpenRouter
+              </label>
+              <div className="grid grid-cols-3 gap-2">
+                {AI_MODEL_OPTIONS.map((m) => (
+                  <button
+                    key={m.value}
+                    type="button"
+                    onClick={() => setAiModel(m.value)}
+                    disabled={aiGenerating}
+                    className={[
+                      "rounded-lg border px-3 py-2 text-left text-xs transition-all disabled:pointer-events-none disabled:opacity-40",
+                      aiModel === m.value
+                        ? "border-primary bg-primary/10 ring-1 ring-primary text-foreground font-semibold"
+                        : "border-border bg-secondary/30 hover:bg-secondary/60 text-muted-foreground",
+                    ].join(" ")}
+                  >
+                    {m.label}
+                  </button>
+                ))}
+              </div>
+              <p className="mt-1 text-[11px] text-muted-foreground">Semua model gratis via OpenRouter free tier.</p>
+            </div>
+
             {/* Error */}
             {aiError && (
               <p className="rounded-lg bg-destructive/10 px-3 py-2 text-xs text-destructive">
@@ -1863,7 +1891,7 @@ export function CreateArticleView({ onBack, articleId }: CreateArticleViewProps)
                   {[
                     { step: 1, label: `Mengambil Data dari ${NEWS_TYPE_SOURCE[aiNewsType]}` },
                     { step: 2, label: "Menyusun Prompt Editorial" },
-                    { step: 3, label: "Menulis Draft dengan Groq GPT-OSS 120B" },
+                    { step: 3, label: `Menulis Artikel · ${AI_MODEL_OPTIONS.find(m => m.value === aiModel)?.label ?? "OpenRouter"}` },
                     { step: 4, label: "Draft Selesai" },
                   ].map(({ step, label }) => {
                     const isDone    = aiProgress.step > step
@@ -1908,7 +1936,7 @@ export function CreateArticleView({ onBack, articleId }: CreateArticleViewProps)
           {/* Footer */}
           <div className="flex items-center justify-between border-t border-border px-6 py-4">
             <p className="text-[11px] text-muted-foreground">
-              Draft Stage — Powered by Groq GPT-OSS 120B · {NEWS_TYPE_SOURCE[aiNewsType].split(" — ")[0]}
+              Draft Stage — Powered by OpenRouter · {AI_MODEL_OPTIONS.find(m => m.value === aiModel)?.label ?? "GPT-OSS 120B"}
             </p>
             <div className="flex gap-3">
               <button
