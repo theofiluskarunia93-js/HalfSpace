@@ -1,22 +1,29 @@
 // app/api/generate-article/route.ts
 //
-// Generate artikel sepak bola bergaya The Athletic menggunakan OpenRouter.
-// Satu langkah — tidak ada tahap editor terpisah.
+// Generate artikel sepak bola bergaya The Athletic menggunakan Gemini API
+// LANGSUNG (Google AI Studio) — TIDAK lagi lewat OpenRouter. Satu langkah —
+// tidak ada tahap editor terpisah.
 //
 // Pipeline:
 //   Step 1 : Ambil data pendukung otomatis sesuai tipe berita (lihat di bawah)
 //   Step 2 : Susun system prompt per tipe berita + user prompt dari topic & context gabungan
-//   Step 3 : OpenRouter menulis artikel final (title + content HTML)
+//   Step 3 : Gemini 3.5 Flash (Gemini API langsung) menulis artikel final (title + content HTML)
 //   Step 4 : Kirim hasil ke client via SSE
 //
-// ━━━ MODEL YANG TERSEDIA (FREE TIER OPENROUTER) ━━━
-//   - openai/gpt-oss-120b:free       → GPT-OSS 120B  (default)
-//   - nvidia/nemotron-3-ultra-550b-a55b:free → Nemotron 3 Ultra 550B
-//   - google/gemma-4-31b-it:free     → Google Gemma 4 31B
+// ━━━ MODEL YANG DIPAKAI ━━━
+// Sebelumnya pipeline ini lewat OpenRouter (sempat 3 model free tier yang
+// sering timeout, lalu disederhanakan ke 1 model OpenRouter). Sekarang
+// OpenRouter DIHAPUS SEPENUHNYA — request dikirim langsung ke Gemini API
+// pakai SDK resmi Google (@google/genai):
+//   - gemini-3.5-flash → Gemini 3.5 Flash (Google, Gemini API langsung)
+//
+// Catatan: butuh GEMINI_API_KEY dari Google AI Studio (https://aistudio.google.com),
+// BUKAN lagi OPENROUTER_API_KEY. Gemini 3.5 Flash bukan model gratis tanpa
+// batas — cek kuota/billing di Google AI Studio.
 //
 // ━━━ SUMBER DATA OTOMATIS PER TIPE BERITA ━━━
 // Supaya artikel minim halusinasi, sebagian tipe berita sekarang mengambil
-// data FAKTUAL secara otomatis sebelum dikirim ke OpenRouter, alih-alih murni
+// data FAKTUAL secara otomatis sebelum dikirim ke Gemini, alih-alih murni
 // mengandalkan ketikan manual admin di kolom "context":
 //
 //   - hasil   (Hasil Pertandingan)   → Bzzoiro (skor, insiden, statistik) +
@@ -35,16 +42,16 @@
 // fetchAutoContext), supaya admin tidak terblokir total saat API eksternal
 // down atau topiknya belum ada datanya.
 //
-// Input : newsType + topic + context + model (opsional, default GPT-OSS 120B)
+// Input : newsType + topic + context
 // Output: SSE stream → { event: "progress"|"done"|"error", data: ... }
 //
 // Catatan API key:
-// - OPENROUTER_API_KEY → dipakai untuk generate artikel via OpenRouter.
-// - BZZOIRO_API_KEY    → dipakai untuk konteks Hasil/Preview/Injury.
-// - TAVILY_API_KEY     → dipakai untuk konteks Konpers & Transfer Rumor.
+// - GEMINI_API_KEY  → dipakai untuk generate artikel via Gemini API langsung (Google AI Studio).
+// - BZZOIRO_API_KEY → dipakai untuk konteks Hasil/Preview/Injury.
+// - TAVILY_API_KEY  → dipakai untuk konteks Konpers & Transfer Rumor.
 
 import { NextRequest, NextResponse } from "next/server"
-import OpenAI from "openai"
+import { GoogleGenAI } from "@google/genai"
 import { requireAdmin } from "@/lib/supabase/server-auth"
 import {
   BASE_SYSTEM,
@@ -62,33 +69,25 @@ import { fetchTavilyContext } from "@/lib/news-context/tavily"
 
 export type { NewsType }
 
-export const maxDuration = 60
+// maxDuration dinaikkan dari 60s → 120s. Salah satu penyebab timeout
+// sebelumnya adalah OpenRouter (terutama saat masih pakai model free tier).
+// Sekarang request langsung ke Gemini API tanpa proxy OpenRouter, seharusnya
+// lebih cepat & stabil, tapi durasi tetap dilonggarkan untuk jaga-jaga.
+// CATATAN: di Vercel Hobby plan, maxDuration di-cap di 60s — nilai di bawah
+// ini hanya efektif kalau project memakai Pro/Enterprise plan (atau platform
+// lain yang mendukung durasi lebih lama).
+export const maxDuration = 120
 
-// ━━━ MODEL OPENROUTER YANG TERSEDIA ━━━
-export const OPENROUTER_MODELS = [
-  {
-    value: "openai/gpt-oss-120b:free",
-    label: "GPT-OSS 120B",
-  },
-  {
-    value: "nvidia/nemotron-3-ultra-550b-a55b:free",
-    label: "Nemotron 3 Ultra 550B",
-  },
-  {
-    value: "google/gemma-4-31b-it:free",
-    label: "Google Gemma 4 31B",
-  },
-] as const
-
-export type OpenRouterModelId = typeof OPENROUTER_MODELS[number]["value"]
-
-const DEFAULT_MODEL: OpenRouterModelId = "openai/gpt-oss-120b:free"
+// ━━━ MODEL GEMINI YANG DIPAKAI ━━━
+// Hanya satu model — tidak ada lagi dropdown pemilihan model di UI, dan
+// tidak ada lagi OpenRouter sebagai perantara.
+export const GEMINI_MODEL = "gemini-3.5-flash" as const
+export const GEMINI_MODEL_LABEL = "Gemini 3.5 Flash" as const
 
 interface RequestBody {
   newsType: NewsType
   topic:    string
   context:  string
-  model?:   OpenRouterModelId
 }
 
 // ─── Label sumber data otomatis per tipe — dipakai untuk progress UI ───────
@@ -101,10 +100,7 @@ const AUTO_SOURCE_LABEL: Record<NewsType, string> = {
   trivia:   "Tidak ada — konteks manual admin",
 }
 
-// ─── Helper: ambil label model dari model ID ─────────────────────────────────
-function getModelLabel(modelId: string): string {
-  return OPENROUTER_MODELS.find((m) => m.value === modelId)?.label ?? modelId
-}
+// (getModelLabel dihapus — model sekarang fix satu, gunakan GEMINI_MODEL_LABEL langsung)
 
 // ─── Ambil konteks otomatis sesuai tipe berita ─────────────────────────────
 async function fetchAutoContext(
@@ -163,38 +159,33 @@ async function fetchAutoContext(
   }
 }
 
-// ─── OpenRouter: generate artikel ────────────────────────────────────────────
-// OpenRouter mendukung OpenAI-compatible API — pakai openai SDK dengan
-// baseURL OpenRouter. Model dipilih oleh admin lewat dropdown di UI.
-async function openrouterGenerateJson(
+// ─── Gemini API langsung: generate artikel ───────────────────────────────────
+// TIDAK lagi lewat OpenRouter — request dikirim langsung ke Gemini API
+// (Google AI Studio) pakai SDK resmi @google/genai. Model fix Gemini 3.5
+// Flash, tidak ada lagi pilihan model dari admin.
+//
+// Catatan: untuk model Gemini 3.x, Google merekomendasikan TIDAK mengubah
+// temperature/top_p dari default (reasoning model-nya sudah dioptimalkan
+// untuk default itu) — jadi di sini cuma diatur responseMimeType (JSON) dan
+// maxOutputTokens, system prompt dikirim lewat systemInstruction.
+async function geminiGenerateJson(
   apiKey: string,
-  modelId: string,
   systemPrompt: string,
   userPrompt: string,
 ): Promise<string> {
-  const client = new OpenAI({
-    apiKey,
-    baseURL: "https://openrouter.ai/api/v1",
-    defaultHeaders: {
-      "HTTP-Referer": process.env.NEXT_PUBLIC_SITE_URL ?? "https://localhost:3000",
-      "X-Title": "HalfSpace Article Generator",
+  const client = new GoogleGenAI({ apiKey })
+
+  const response = await client.models.generateContent({
+    model: GEMINI_MODEL,
+    contents: userPrompt,
+    config: {
+      systemInstruction:  systemPrompt,
+      responseMimeType:   "application/json",
+      maxOutputTokens:    4000,
     },
   })
 
-  const response = await client.chat.completions.create({
-    model:            modelId,
-    messages: [
-      { role: "system", content: systemPrompt },
-      { role: "user",   content: userPrompt },
-    ],
-    temperature:      0.7,
-    max_tokens:       4000,
-    top_p:            0.80,
-    presence_penalty: 1.5,
-    response_format:  { type: "json_object" },
-  })
-
-  return (response.choices[0]?.message?.content ?? "").trim()
+  return (response.text ?? "").trim()
 }
 
 // ─── POST handler ─────────────────────────────────────────────────────────────
@@ -206,10 +197,10 @@ export async function POST(req: NextRequest) {
     return NextResponse.json({ error: "Unauthorized" }, { status: 401 })
   }
 
-  const openrouterKey = process.env.OPENROUTER_API_KEY
-  if (!openrouterKey) {
+  const geminiKey = process.env.GEMINI_API_KEY
+  if (!geminiKey) {
     return NextResponse.json(
-      { error: "OPENROUTER_API_KEY belum dikonfigurasi di environment variables." },
+      { error: "GEMINI_API_KEY belum dikonfigurasi di environment variables. Ambil API key dari Google AI Studio (https://aistudio.google.com)." },
       { status: 500 }
     )
   }
@@ -221,7 +212,7 @@ export async function POST(req: NextRequest) {
     return NextResponse.json({ error: "Request body tidak valid." }, { status: 400 })
   }
 
-  const { newsType, topic, context, model } = body
+  const { newsType, topic, context } = body
 
   if (!newsType || !topic?.trim()) {
     return NextResponse.json(
@@ -235,11 +226,7 @@ export async function POST(req: NextRequest) {
     return NextResponse.json({ error: "newsType tidak valid." }, { status: 400 })
   }
 
-  const validModels = OPENROUTER_MODELS.map((m) => m.value)
-  const selectedModel: OpenRouterModelId =
-    model && validModels.includes(model) ? model : DEFAULT_MODEL
-
-  const modelLabel = getModelLabel(selectedModel)
+  // Model fix Gemini 3.5 Flash — tidak ada lagi pemilihan model dari client.
 
   // Untuk trivia, context manual tetap wajib (tidak ada sumber data otomatis).
   if (newsType === "trivia" && !context?.trim()) {
@@ -296,25 +283,25 @@ Kembalikan HANYA JSON dengan format berikut (tidak ada teks di luar JSON):
   "content": "<konten artikel dalam HTML — gunakan <h2> untuk judul bagian, <p> untuk paragraf, <blockquote> untuk kutipan langsung dari narasumber. JANGAN gunakan tag HTML lain apapun.>"
 }`
 
-        // ── STEP 3: OpenRouter menulis artikel ───────────────────────────────
+        // ── STEP 3: Gemini 3.5 Flash menulis artikel (Gemini API langsung) ───
         send("progress", {
           step: 3,
-          label: `Menulis Artikel dengan OpenRouter · ${modelLabel}`,
+          label: `Menulis Artikel dengan ${GEMINI_MODEL_LABEL}`,
           source: sourceUsed,
-          model: selectedModel,
+          model: GEMINI_MODEL,
         })
 
-        const raw = await openrouterGenerateJson(openrouterKey, selectedModel, BASE_SYSTEM, userPrompt)
+        const raw = await geminiGenerateJson(geminiKey, BASE_SYSTEM, userPrompt)
 
         if (!raw) {
-          throw new Error(`OpenRouter (${modelLabel}) tidak menghasilkan output. Coba lagi.`)
+          throw new Error(`${GEMINI_MODEL_LABEL} tidak menghasilkan output. Kemungkinan timeout, request diblokir safety filter, atau kuota/billing Gemini API habis. Coba lagi.`)
         }
 
         const result = extractJsonObject<{ title: string; content: string }>(raw)
 
         if (!result?.title?.trim() || !result?.content?.trim()) {
-          console.error("[generate-article] Gagal parse hasil OpenRouter. Raw:", raw.slice(0, 800))
-          throw new Error(`Gagal memproses hasil dari OpenRouter (${modelLabel}). Coba lagi dalam beberapa detik.`)
+          console.error("[generate-article] Gagal parse hasil Gemini. Raw:", raw.slice(0, 800))
+          throw new Error(`Gagal memproses hasil dari ${GEMINI_MODEL_LABEL}. Coba lagi dalam beberapa detik.`)
         }
 
         // ── STEP 4: Done ──────────────────────────────────────────────────────
@@ -324,8 +311,8 @@ Kembalikan HANYA JSON dengan format berikut (tidak ada teks di luar JSON):
           title:      result.title.trim(),
           content:    result.content.trim(),
           sourceUsed,
-          modelUsed:  selectedModel,
-          modelLabel,
+          modelUsed:  GEMINI_MODEL,
+          modelLabel: GEMINI_MODEL_LABEL,
         })
 
       } catch (err: unknown) {
