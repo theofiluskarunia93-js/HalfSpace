@@ -1706,7 +1706,7 @@ export function CreateArticleView({ onBack, articleId }: CreateArticleViewProps)
     {/* ── AI Generate Modal ── */}
     {aiModalOpen && (
       <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/70 px-4">
-        <div className="w-full max-w-lg rounded-xl border border-border bg-card shadow-2xl">
+        <div className="w-full max-w-lg rounded-xl border border-border bg-card shadow-2xl flex flex-col max-h-[90vh]">
           {/* Header */}
           <div className="flex items-center justify-between border-b border-border px-6 py-4">
             <div className="flex items-center gap-2">
@@ -1724,7 +1724,7 @@ export function CreateArticleView({ onBack, articleId }: CreateArticleViewProps)
           </div>
 
           {/* Body */}
-          <div className="space-y-4 px-6 py-5">
+          <div className="space-y-4 px-6 py-5 overflow-y-auto flex-1">
             {/* Tipe Berita */}
             <div>
               <label className="mb-2 block text-xs font-semibold text-muted-foreground uppercase tracking-wide">
