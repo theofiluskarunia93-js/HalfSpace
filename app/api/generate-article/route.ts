@@ -1,29 +1,33 @@
 // app/api/generate-article/route.ts
 //
-// Generate artikel sepak bola bergaya The Athletic menggunakan Gemini API
-// LANGSUNG (Google AI Studio) — TIDAK lagi lewat OpenRouter. Satu langkah —
-// tidak ada tahap editor terpisah.
+// Generate artikel sepak bola bergaya The Athletic menggunakan Groq API
+// LANGSUNG (GroqCloud) — TIDAK lagi lewat Gemini/Google AI Studio maupun
+// OpenRouter. Satu langkah — tidak ada tahap editor terpisah.
 //
 // Pipeline:
 //   Step 1 : Ambil data pendukung otomatis sesuai tipe berita (lihat di bawah)
 //   Step 2 : Susun system prompt per tipe berita + user prompt dari topic & context gabungan
-//   Step 3 : Gemini 3.5 Flash (Gemini API langsung) menulis artikel final (title + content HTML)
+//   Step 3 : Groq GPT-OSS-120B menulis artikel final (title + content HTML)
 //   Step 4 : Kirim hasil ke client via SSE
 //
 // ━━━ MODEL YANG DIPAKAI ━━━
-// Sebelumnya pipeline ini lewat OpenRouter (sempat 3 model free tier yang
-// sering timeout, lalu disederhanakan ke 1 model OpenRouter). Sekarang
-// OpenRouter DIHAPUS SEPENUHNYA — request dikirim langsung ke Gemini API
-// pakai SDK resmi Google (@google/genai):
-//   - gemini-3.5-flash → Gemini 3.5 Flash (Google, Gemini API langsung)
+// Sebelumnya pipeline ini lewat Gemini API langsung (Google AI Studio).
+// Gemini DIHAPUS SEPENUHNYA — request sekarang dikirim langsung ke Groq API
+// pakai SDK resmi (groq-sdk), yang OpenAI-compatible:
+//   - openai/gpt-oss-120b → GPT-OSS 120B (OpenAI open-weight, dihosting di GroqCloud)
 //
-// Catatan: butuh GEMINI_API_KEY dari Google AI Studio (https://aistudio.google.com),
-// BUKAN lagi OPENROUTER_API_KEY. Gemini 3.5 Flash bukan model gratis tanpa
-// batas — cek kuota/billing di Google AI Studio.
+// Catatan: butuh GROQ_API_KEY dari GroqCloud Console (https://console.groq.com/keys),
+// BUKAN lagi GEMINI_API_KEY. GPT-OSS-120B di Groq adalah model reasoning
+// (Harmony format) dengan parameter reasoning_effort low/medium/high — di
+// pipeline ini di-set "low" karena GPT-OSS-120B hanya bertugas MENULIS draft
+// dari data yang sudah difetch (Bzzoiro + Tavily), bukan melakukan reasoning
+// berat. Ini juga menghemat token: reasoning trace model ikut menghitung ke
+// kuota max_tokens, jadi reasoning_effort rendah memastikan kuota token lebih
+// banyak tersisa untuk konten artikel itu sendiri, bukan habis untuk "berpikir".
 //
 // ━━━ SUMBER DATA OTOMATIS PER TIPE BERITA ━━━
-// Supaya artikel minim halusinasi, sebagian tipe berita sekarang mengambil
-// data FAKTUAL secara otomatis sebelum dikirim ke Gemini, alih-alih murni
+// Supaya artikel minim halusinasi, sebagian tipe berita mengambil data
+// FAKTUAL secara otomatis sebelum dikirim ke Groq, alih-alih murni
 // mengandalkan ketikan manual admin di kolom "context":
 //
 //   - hasil   (Hasil Pertandingan)   → Bzzoiro (skor, insiden, statistik) +
@@ -46,12 +50,12 @@
 // Output: SSE stream → { event: "progress"|"done"|"error", data: ... }
 //
 // Catatan API key:
-// - GEMINI_API_KEY  → dipakai untuk generate artikel via Gemini API langsung (Google AI Studio).
+// - GROQ_API_KEY    → dipakai untuk generate artikel via Groq API langsung (GPT-OSS-120B).
 // - BZZOIRO_API_KEY → dipakai untuk konteks Hasil/Preview/Injury.
 // - TAVILY_API_KEY  → dipakai untuk konteks Konpers & Transfer Rumor.
 
 import { NextRequest, NextResponse } from "next/server"
-import { GoogleGenAI } from "@google/genai"
+import Groq from "groq-sdk"
 import { requireAdmin } from "@/lib/supabase/server-auth"
 import {
   BASE_SYSTEM,
@@ -69,20 +73,31 @@ import { fetchTavilyContext } from "@/lib/news-context/tavily"
 
 export type { NewsType }
 
-// maxDuration dinaikkan dari 60s → 120s. Salah satu penyebab timeout
-// sebelumnya adalah OpenRouter (terutama saat masih pakai model free tier).
-// Sekarang request langsung ke Gemini API tanpa proxy OpenRouter, seharusnya
-// lebih cepat & stabil, tapi durasi tetap dilonggarkan untuk jaga-jaga.
+// maxDuration tetap 120s. Request langsung ke Groq API (inference Groq
+// terkenal cepat — biasanya hitungan detik untuk artikel sepanjang ini),
+// tapi durasi tetap dilonggarkan untuk jaga-jaga saat traffic tinggi.
 // CATATAN: di Vercel Hobby plan, maxDuration di-cap di 60s — nilai di bawah
 // ini hanya efektif kalau project memakai Pro/Enterprise plan (atau platform
 // lain yang mendukung durasi lebih lama).
 export const maxDuration = 120
 
-// ━━━ MODEL GEMINI YANG DIPAKAI ━━━
-// Hanya satu model — tidak ada lagi dropdown pemilihan model di UI, dan
-// tidak ada lagi OpenRouter sebagai perantara.
-export const GEMINI_MODEL = "gemini-3.5-flash" as const
-export const GEMINI_MODEL_LABEL = "Gemini 3.5 Flash" as const
+// ━━━ MODEL GROQ YANG DIPAKAI ━━━
+// Hanya satu model — tidak ada lagi dropdown pemilihan model di UI.
+export const GROQ_MODEL = "openai/gpt-oss-120b" as const
+export const GROQ_MODEL_LABEL = "GPT-OSS 120B (Groq)" as const
+
+// Reasoning effort di-set rendah: tugas model di sini murni menulis draft
+// artikel dari data yang SUDAH difetch (Bzzoiro + Tavily), bukan melakukan
+// riset atau penalaran berat. Reasoning effort tinggi hanya membuang kuota
+// token (reasoning trace ikut menghitung ke max_tokens) tanpa menambah
+// kualitas tulisan untuk task sejenis ini.
+const GROQ_REASONING_EFFORT = "low" as const
+
+// Batas token completion. 8000 jauh lebih dari cukup untuk artikel + JSON
+// overhead (kebutuhan riil biasanya ~1200-2500 token untuk artikel
+// 500-900 kata), tapi tetap diberi keleluasaan untuk artikel yang lebih
+// panjang dari data yang kaya (mis. hasil pertandingan dengan banyak insiden).
+const GROQ_MAX_TOKENS = 8000
 
 interface RequestBody {
   newsType: NewsType
@@ -99,8 +114,6 @@ const AUTO_SOURCE_LABEL: Record<NewsType, string> = {
   transfer: "Tavily Search (2 hari terakhir)",
   trivia:   "Tidak ada — konteks manual admin",
 }
-
-// (getModelLabel dihapus — model sekarang fix satu, gunakan GEMINI_MODEL_LABEL langsung)
 
 // ─── Ambil konteks otomatis sesuai tipe berita ─────────────────────────────
 async function fetchAutoContext(
@@ -159,33 +172,38 @@ async function fetchAutoContext(
   }
 }
 
-// ─── Gemini API langsung: generate artikel ───────────────────────────────────
-// TIDAK lagi lewat OpenRouter — request dikirim langsung ke Gemini API
-// (Google AI Studio) pakai SDK resmi @google/genai. Model fix Gemini 3.5
-// Flash, tidak ada lagi pilihan model dari admin.
+// ─── Groq API langsung: generate artikel ───────────────────────────────────
+// TIDAK lagi lewat Gemini/Google AI Studio — request dikirim langsung ke
+// Groq API pakai SDK resmi (groq-sdk), yang kompatibel dengan format
+// OpenAI Chat Completions. Model fix GPT-OSS-120B, tidak ada lagi pilihan
+// model dari admin.
 //
-// Catatan: untuk model Gemini 3.x, Google merekomendasikan TIDAK mengubah
-// temperature/top_p dari default (reasoning model-nya sudah dioptimalkan
-// untuk default itu) — jadi di sini cuma diatur responseMimeType (JSON) dan
-// maxOutputTokens, system prompt dikirim lewat systemInstruction.
-async function geminiGenerateJson(
+// Catatan reasoning_effort: GPT-OSS-120B adalah model reasoning (Harmony
+// format) — reasoning trace-nya ikut menghitung ke kuota max_tokens kalau
+// tidak dibatasi. Karena task di sini hanya menulis draft dari data yang
+// sudah tersedia (bukan riset/penalaran kompleks), reasoning_effort di-set
+// "low" supaya kuota token tersisa maksimal untuk konten artikel itu sendiri
+// dan menghindari output JSON terpotong di tengah karena reasoning yang
+// terlalu panjang menghabiskan max_tokens duluan.
+async function groqGenerateJson(
   apiKey: string,
   systemPrompt: string,
   userPrompt: string,
 ): Promise<string> {
-  const client = new GoogleGenAI({ apiKey })
+  const client = new Groq({ apiKey })
 
-  const response = await client.models.generateContent({
-    model: GEMINI_MODEL,
-    contents: userPrompt,
-    config: {
-      systemInstruction:  systemPrompt,
-      responseMimeType:   "application/json",
-      maxOutputTokens:    4000,
-    },
+  const completion = await client.chat.completions.create({
+    model: GROQ_MODEL,
+    messages: [
+      { role: "system", content: systemPrompt },
+      { role: "user", content: userPrompt },
+    ],
+    max_tokens: GROQ_MAX_TOKENS,
+    reasoning_effort: GROQ_REASONING_EFFORT,
+    response_format: { type: "json_object" },
   })
 
-  return (response.text ?? "").trim()
+  return (completion.choices[0]?.message?.content ?? "").trim()
 }
 
 // ─── POST handler ─────────────────────────────────────────────────────────────
@@ -197,10 +215,10 @@ export async function POST(req: NextRequest) {
     return NextResponse.json({ error: "Unauthorized" }, { status: 401 })
   }
 
-  const geminiKey = process.env.GEMINI_API_KEY
-  if (!geminiKey) {
+  const groqKey = process.env.GROQ_API_KEY
+  if (!groqKey) {
     return NextResponse.json(
-      { error: "GEMINI_API_KEY belum dikonfigurasi di environment variables. Ambil API key dari Google AI Studio (https://aistudio.google.com)." },
+      { error: "GROQ_API_KEY belum dikonfigurasi di environment variables. Ambil API key dari GroqCloud Console (https://console.groq.com/keys)." },
       { status: 500 }
     )
   }
@@ -226,7 +244,7 @@ export async function POST(req: NextRequest) {
     return NextResponse.json({ error: "newsType tidak valid." }, { status: 400 })
   }
 
-  // Model fix Gemini 3.5 Flash — tidak ada lagi pemilihan model dari client.
+  // Model fix GPT-OSS-120B (Groq) — tidak ada lagi pemilihan model dari client.
 
   // Untuk trivia, context manual tetap wajib (tidak ada sumber data otomatis).
   if (newsType === "trivia" && !context?.trim()) {
@@ -283,25 +301,25 @@ Kembalikan HANYA JSON dengan format berikut (tidak ada teks di luar JSON):
   "content": "<konten artikel dalam HTML — gunakan <h2> untuk judul bagian, <p> untuk paragraf, <blockquote> untuk kutipan langsung dari narasumber. JANGAN gunakan tag HTML lain apapun.>"
 }`
 
-        // ── STEP 3: Gemini 3.5 Flash menulis artikel (Gemini API langsung) ───
+        // ── STEP 3: GPT-OSS-120B menulis artikel (Groq API langsung) ─────────
         send("progress", {
           step: 3,
-          label: `Menulis Artikel dengan ${GEMINI_MODEL_LABEL}`,
+          label: `Menulis Artikel dengan ${GROQ_MODEL_LABEL}`,
           source: sourceUsed,
-          model: GEMINI_MODEL,
+          model: GROQ_MODEL,
         })
 
-        const raw = await geminiGenerateJson(geminiKey, BASE_SYSTEM, userPrompt)
+        const raw = await groqGenerateJson(groqKey, BASE_SYSTEM, userPrompt)
 
         if (!raw) {
-          throw new Error(`${GEMINI_MODEL_LABEL} tidak menghasilkan output. Kemungkinan timeout, request diblokir safety filter, atau kuota/billing Gemini API habis. Coba lagi.`)
+          throw new Error(`${GROQ_MODEL_LABEL} tidak menghasilkan output. Kemungkinan timeout, request diblokir safety filter, atau kuota/billing Groq API habis. Coba lagi.`)
         }
 
         const result = extractJsonObject<{ title: string; content: string }>(raw)
 
         if (!result?.title?.trim() || !result?.content?.trim()) {
-          console.error("[generate-article] Gagal parse hasil Gemini. Raw:", raw.slice(0, 800))
-          throw new Error(`Gagal memproses hasil dari ${GEMINI_MODEL_LABEL}. Coba lagi dalam beberapa detik.`)
+          console.error("[generate-article] Gagal parse hasil Groq. Raw:", raw.slice(0, 800))
+          throw new Error(`Gagal memproses hasil dari ${GROQ_MODEL_LABEL}. Coba lagi dalam beberapa detik.`)
         }
 
         // ── STEP 4: Done ──────────────────────────────────────────────────────
@@ -311,8 +329,8 @@ Kembalikan HANYA JSON dengan format berikut (tidak ada teks di luar JSON):
           title:      result.title.trim(),
           content:    result.content.trim(),
           sourceUsed,
-          modelUsed:  GEMINI_MODEL,
-          modelLabel: GEMINI_MODEL_LABEL,
+          modelUsed:  GROQ_MODEL,
+          modelLabel: GROQ_MODEL_LABEL,
         })
 
       } catch (err: unknown) {
