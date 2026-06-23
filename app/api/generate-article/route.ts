@@ -4,15 +4,38 @@
 // Satu langkah — tidak ada tahap editor terpisah.
 //
 // Pipeline:
-//   Step 1 : Susun system prompt per tipe berita + user prompt dari topic & context
-//   Step 2 : Gemini 3.5 Flash menulis artikel final (title + content HTML)
-//   Step 3 : Kirim hasil ke client via SSE
+//   Step 1 : Ambil data pendukung otomatis sesuai tipe berita (lihat di bawah)
+//   Step 2 : Susun system prompt per tipe berita + user prompt dari topic & context gabungan
+//   Step 3 : Gemini 3.5 Flash menulis artikel final (title + content HTML)
+//   Step 4 : Kirim hasil ke client via SSE
+//
+// ━━━ SUMBER DATA OTOMATIS PER TIPE BERITA ━━━
+// Supaya artikel minim halusinasi, sebagian tipe berita sekarang mengambil
+// data FAKTUAL secara otomatis sebelum dikirim ke Gemini, alih-alih murni
+// mengandalkan ketikan manual admin di kolom "context":
+//
+//   - hasil   (Hasil Pertandingan)   → Bzzoiro Sports Data API (skor, insiden, statistik)
+//   - preview (Preview Pertandingan) → Bzzoiro Sports Data API (jadwal, prediksi ML)
+//   - cedera  (Injury Update)        → Bzzoiro (profil & statistik pemain per match) +
+//                                       Tavily Search (berita cedera resmi, window 3 hari)
+//   - konpers (Konferensi Pers)      → Tavily Search, window 2 hari terakhir
+//   - transfer (Transfer Rumor)      → Tavily Search, window 2 hari terakhir
+//   - trivia  (Trivia)               → TIDAK diubah, tetap murni konteks manual admin
+//
+// Konteks manual admin TETAP dikirim dan digabung sebagai "[CATATAN TAMBAHAN
+// ADMIN]" — bukan diganti. Kalau fetch data otomatis gagal/tidak ketemu,
+// generate TETAP berjalan memakai konteks manual saja (lihat fallback di
+// fetchAutoContext), supaya admin tidak terblokir total saat API eksternal
+// down atau topiknya belum ada datanya.
 //
 // Input : newsType + topic + context
 // Output: SSE stream → { event: "progress"|"done"|"error", data: ... }
 //
 // Catatan API key:
-// - GEMINI_API_KEY → dipakai untuk generate artikel. Model: gemini-3.5-flash.
+// - GEMINI_API_KEY   → dipakai untuk generate artikel. Model: gemini-3.5-flash.
+// - BZZOIRO_API_KEY  → dipakai untuk konteks Hasil/Preview/Injury (sudah ada,
+//                       sebelumnya hanya dipakai live-scores & standings).
+// - TAVILY_API_KEY   → dipakai untuk konteks Konpers & Transfer Rumor.
 
 import { NextRequest, NextResponse } from "next/server"
 import { GoogleGenAI } from "@google/genai"
@@ -24,6 +47,12 @@ import {
   sseEvent,
   type NewsType,
 } from "@/lib/ai/article-prompts"
+import {
+  fetchHasilContext,
+  fetchPreviewContext,
+  fetchCederaContext,
+} from "@/lib/news-context/bzzoiro"
+import { fetchTavilyContext } from "@/lib/news-context/tavily"
 
 export type { NewsType }
 
@@ -36,6 +65,78 @@ interface RequestBody {
   topic:    string
   context:  string
   model?:   string  // tidak dipakai — dipertahankan untuk kompatibilitas UI
+}
+
+// ─── Label sumber data otomatis per tipe — dipakai untuk progress UI ───────
+const AUTO_SOURCE_LABEL: Record<NewsType, string> = {
+  hasil:    "Bzzoiro Sports Data API",
+  preview:  "Bzzoiro Sports Data API",
+  cedera:   "Bzzoiro (profil & statistik pemain) + Tavily Search (berita cedera 3 hari)",
+  konpers:  "Tavily Search (2 hari terakhir)",
+  transfer: "Tavily Search (2 hari terakhir)",
+  trivia:   "Tidak ada — konteks manual admin",
+}
+
+// ─── Ambil konteks otomatis sesuai tipe berita ─────────────────────────────
+// Mengembalikan teks konteks gabungan: [DATA API TERVERIFIKASI] + [CATATAN
+// TAMBAHAN ADMIN]. Kalau fetch otomatis gagal, fallback ke konteks manual
+// admin saja (dengan warning yang diteruskan ke event "progress").
+async function fetchAutoContext(
+  newsType: NewsType,
+  topic: string,
+  manualContext: string,
+): Promise<{ combinedContext: string; warning?: string; sourceUsed: string }> {
+  const manualBlock = manualContext.trim()
+    ? `[CATATAN TAMBAHAN ADMIN]\n${manualContext.trim()}`
+    : ""
+
+  try {
+    let apiBlock = ""
+    let warning: string | undefined
+
+    if (newsType === "hasil") {
+      const r = await fetchHasilContext(topic)
+      if (r.contextText) apiBlock = `[DATA API TERVERIFIKASI — Bzzoiro Sports Data API]\n${r.contextText}`
+      warning = r.warning
+    } else if (newsType === "preview") {
+      const r = await fetchPreviewContext(topic)
+      if (r.contextText) apiBlock = `[DATA API TERVERIFIKASI — Bzzoiro Sports Data API]\n${r.contextText}`
+      warning = r.warning
+    } else if (newsType === "cedera") {
+      const r = await fetchCederaContext(topic)
+      if (r.contextText) apiBlock = r.contextText
+      warning = r.warning
+    } else if (newsType === "konpers" || newsType === "transfer") {
+      const r = await fetchTavilyContext(newsType, topic)
+      apiBlock = `[DATA API TERVERIFIKASI — Tavily Search, 2 hari terakhir]\n${r.contextText}`
+    }
+    // trivia → tidak ada apiBlock, tetap pakai manualBlock saja
+
+    const combinedContext = [apiBlock, manualBlock].filter(Boolean).join("\n\n")
+
+    if (!combinedContext.trim()) {
+      throw new Error("Tidak ada data API maupun konteks manual yang tersedia.")
+    }
+
+    return { combinedContext, warning, sourceUsed: AUTO_SOURCE_LABEL[newsType] }
+  } catch (err: unknown) {
+    // Fetch otomatis gagal total → fallback ke konteks manual admin saja.
+    const message = err instanceof Error ? err.message : "Gagal mengambil data otomatis."
+    console.error(`[generate-article] Auto-context gagal untuk newsType="${newsType}":`, message)
+
+    if (!manualBlock.trim()) {
+      // Tidak ada fallback sama sekali — lempar error supaya admin tahu harus isi manual.
+      throw new Error(
+        `Gagal mengambil data otomatis dari ${AUTO_SOURCE_LABEL[newsType]} (${message}), dan kolom konteks manual masih kosong. Isi konteks manual lalu coba lagi.`
+      )
+    }
+
+    return {
+      combinedContext: manualBlock,
+      warning: `Data otomatis dari ${AUTO_SOURCE_LABEL[newsType]} gagal diambil (${message}). Artikel digenerate hanya dari catatan manual admin.`,
+      sourceUsed: "Konteks manual admin (fallback)",
+    }
+  }
 }
 
 // ─── Gemini 3.5 Flash: generate artikel ──────────────────────────────────────
@@ -86,9 +187,9 @@ export async function POST(req: NextRequest) {
 
   const { newsType, topic, context } = body
 
-  if (!newsType || !topic?.trim() || !context?.trim()) {
+  if (!newsType || !topic?.trim()) {
     return NextResponse.json(
-      { error: "newsType, topic, dan context wajib diisi." },
+      { error: "newsType dan topic wajib diisi." },
       { status: 400 }
     )
   }
@@ -96,6 +197,14 @@ export async function POST(req: NextRequest) {
   const validTypes: NewsType[] = ["transfer", "konpers", "cedera", "preview", "hasil", "trivia"]
   if (!validTypes.includes(newsType)) {
     return NextResponse.json({ error: "newsType tidak valid." }, { status: 400 })
+  }
+
+  // Untuk trivia, context manual tetap wajib (tidak ada sumber data otomatis).
+  if (newsType === "trivia" && !context?.trim()) {
+    return NextResponse.json(
+      { error: "context wajib diisi untuk tipe berita Trivia (tidak ada sumber data otomatis untuk tipe ini)." },
+      { status: 400 }
+    )
   }
 
   // ── SSE Stream ───────────────────────────────────────────────────────────────
@@ -108,15 +217,32 @@ export async function POST(req: NextRequest) {
       }
 
       try {
-        // ── STEP 1: Susun prompt ──────────────────────────────────────────────
-        send("progress", { step: 1, label: "Menyusun Prompt Editorial" })
+        // ── STEP 1: Ambil data pendukung otomatis ────────────────────────────
+        send("progress", {
+          step: 1,
+          label: `Mengambil Data dari ${AUTO_SOURCE_LABEL[newsType]}`,
+          source: AUTO_SOURCE_LABEL[newsType],
+        })
+
+        const { combinedContext, warning, sourceUsed } = await fetchAutoContext(
+          newsType,
+          topic.trim(),
+          context ?? "",
+        )
+
+        if (warning) {
+          send("progress", { step: 1, label: warning, source: sourceUsed, warning: true })
+        }
+
+        // ── STEP 2: Susun prompt ──────────────────────────────────────────────
+        send("progress", { step: 2, label: "Menyusun Prompt Editorial", source: sourceUsed })
 
         const userPrompt = `${TYPE_INSTRUCTION[newsType]}
 
 TOPIK: ${topic.trim()}
 
 KONTEKS / FAKTA YANG DIKETAHUI:
-${context.trim()}
+${combinedContext}
 
 Tulis artikel berdasarkan topik dan konteks di atas.
 Gunakan HANYA informasi yang ada di konteks — jangan tambahkan fakta, nama, skor, atau angka yang tidak disebutkan.
@@ -128,8 +254,8 @@ Kembalikan HANYA JSON dengan format berikut (tidak ada teks di luar JSON):
   "content": "<konten artikel dalam HTML — gunakan <h2> untuk judul bagian, <p> untuk paragraf, <blockquote> untuk kutipan langsung dari narasumber. JANGAN gunakan tag HTML lain apapun.>"
 }`
 
-        // ── STEP 2: Gemini 3.5 Flash menulis artikel ─────────────────────────
-        send("progress", { step: 2, label: "Menulis Artikel dengan Gemini 3.5 Flash" })
+        // ── STEP 3: Gemini 3.5 Flash menulis artikel ─────────────────────────
+        send("progress", { step: 3, label: "Menulis Artikel dengan Gemini 3.5 Flash", source: sourceUsed })
 
         const raw = await geminiGenerateJson(geminiKey, BASE_SYSTEM, userPrompt)
 
@@ -144,17 +270,18 @@ Kembalikan HANYA JSON dengan format berikut (tidak ada teks di luar JSON):
           throw new Error("Gagal memproses hasil Gemini 3.5 Flash. Coba lagi dalam beberapa detik.")
         }
 
-        // ── STEP 3: Done ──────────────────────────────────────────────────────
-        send("progress", { step: 3, label: "Artikel Selesai" })
+        // ── STEP 4: Done ──────────────────────────────────────────────────────
+        send("progress", { step: 4, label: "Artikel Selesai", source: sourceUsed })
 
         send("done", {
-          title:   result.title.trim(),
-          content: result.content.trim(),
+          title:      result.title.trim(),
+          content:    result.content.trim(),
+          sourceUsed,
         })
 
       } catch (err: unknown) {
         const message = err instanceof Error ? err.message : "Terjadi error. Coba lagi."
-        console.error("[generate-article] Gemini error:", err)
+        console.error("[generate-article] Error:", err)
         send("error", { error: message })
       } finally {
         controller.close()

@@ -13,7 +13,7 @@ import {
   Bold, Italic, List, ListOrdered, Link2,
   Code2, Minus, Heading1, Heading2, Heading3,
   Undo2, Redo2, Star,
-  Pilcrow, MessageSquareQuote, Sparkles, Wand2,
+  Pilcrow, MessageSquareQuote, Sparkles,
 } from "lucide-react"
 import type { NewsType } from "@/app/api/generate-article/route"
 import { Button } from "@/components/ui/button"
@@ -351,22 +351,24 @@ function cleanLegacyBadgeContent(content: string): string {
 }
 
 // ─── Info Pipeline Generate Artikel ──────────────────────────────────────────
-// Sejak update 22 Jun 2026, pipeline generate artikel DIPISAH jadi dua
-// langkah independen, masing-masing dengan tombolnya sendiri:
-//   1. Generate Draft   (tombol Sparkles) → POST /api/generate-article
-//      Groq GPT-OSS-120B — FIXED, tidak bisa dipilih manual. Hanya sampai
-//      draft mentah, TIDAK ada revisi editor otomatis lagi.
-//   2. Revisi Editor AI (tombol Wand2)    → POST /api/edit-article
-//      OpenRouter Nemotron 3 Ultra → fallback otomatis ke Nemotron 3 Super
-//      kalau Ultra gagal/timeout. Dipanggil terpisah, kapan saja setelah
-//      ada draft di editor (hasil generate ATAU tulisan manual admin).
+// Generate Draft (tombol Sparkles) → POST /api/generate-article
+//   Gemini 3.5 Flash — FIXED, tidak bisa dipilih manual.
+//   Sejak integrasi sumber data per tipe berita, server otomatis mengambil
+//   data faktual sebelum menulis (admin tidak perlu isi context manual,
+//   kecuali untuk Trivia yang tetap wajib manual):
+//     - Hasil Pertandingan, Preview Pertandingan, Injury Update → Bzzoiro Sports Data API
+//     - Konferensi Pers, Transfer Rumor                        → Tavily Search (2 hari terakhir)
 //
-// Pilihan model di UI ini dulunya dipakai untuk memilih model draft OpenRouter.
-// Sekarang tahap draft sudah fixed ke Groq, sehingga dropdown ini hanya
-// dipertahankan untuk kompatibilitas UI — nilai yang dipilih tidak dikirim
-// ke server (field `model` diabaikan di route.ts).
+// Catatan: tombol "Revisi Editor AI" (tahap kedua, /api/edit-article) sudah
+// DIHAPUS dari UI ini sesuai permintaan — sudah tidak dipakai. Generate Draft
+// di atas sekarang satu-satunya jalur AI di view ini.
+//
+// Pilihan model di UI ini dulunya dipakai untuk memilih model draft.
+// Sekarang tahap draft sudah fixed ke Gemini 3.5 Flash, sehingga dropdown ini
+// hanya dipertahankan untuk kompatibilitas UI — nilai yang dipilih tidak
+// dikirim ke server (field `model` diabaikan di route.ts).
 const AI_MODEL_OPTIONS = [
-  { value: "", label: "Groq GPT-OSS-120B (default)" },
+  { value: "", label: "Gemini 3.5 Flash (default)" },
 ] as const
 
 // ─── Inject section-label otomatis ke hasil AI generate ──────────────────────
@@ -413,6 +415,26 @@ function injectSectionLabels(html: string, newsType: string): string {
   })
 
   return doc.body.innerHTML
+}
+
+// ─── Sumber data otomatis per tipe berita ───────────────────────────────────
+// Ditampilkan di modal Generate Draft supaya admin tahu dari mana data
+// faktual artikel ini diambil sebelum ditulis oleh Gemini 3.5 Flash.
+//   - Hasil Pertandingan, Preview Pertandingan, Injury Update → Bzzoiro Sports Data API
+//   - Konferensi Pers, Transfer Rumor                         → Tavily Search (2 hari terakhir)
+//   - Trivia                                                  → tidak ada, murni konteks manual
+const NEWS_TYPE_SOURCE: Record<string, string> = {
+  hasil:    "Bzzoiro Sports Data API — skor, insiden, statistik pertandingan",
+  preview:  "Bzzoiro Sports Data API — jadwal & prediksi ML",
+  cedera:   "Bzzoiro Sports Data API — sinyal kehadiran/menit main (bukan data cedera resmi)",
+  konpers:  "Tavily Search — berita 2 hari terakhir",
+  transfer: "Tavily Search — berita 2 hari terakhir",
+  trivia:   "Tidak ada sumber otomatis — murni konteks manual",
+}
+
+// Tipe berita yang context-nya WAJIB diisi manual (tidak ada fetch otomatis).
+const NEWS_TYPE_REQUIRES_MANUAL_CONTEXT: Record<string, boolean> = {
+  hasil: false, preview: false, cedera: false, konpers: false, transfer: false, trivia: true,
 }
 
 // ─── Main Component ───────────────────────────────────────────────────────────
@@ -514,18 +536,8 @@ export function CreateArticleView({ onBack, articleId }: CreateArticleViewProps)
   const [aiModel,       setAiModel]       = useState("")
   const [aiGenerating,  setAiGenerating]  = useState(false)
   const [aiError,       setAiError]       = useState<string | null>(null)
-  const [aiProgress,    setAiProgress]    = useState<{ step: number; label: string } | null>(null)
-
-  // ── Editor AI state (terpisah dari Generate Draft) ──────────────────────────
-  // Tahap ini memanggil /api/edit-article (OpenRouter Nemotron 3 Ultra →
-  // fallback Nemotron 3 Super) lewat tombol sendiri, BUKAN otomatis setelah
-  // draft selesai. Bisa dipakai untuk draft hasil generate ATAU draft yang
-  // ditulis/diedit manual di editor.
-  const [aiEditModalOpen,  setAiEditModalOpen]  = useState(false)
-  const [aiEditGenerating, setAiEditGenerating] = useState(false)
-  const [aiEditError,      setAiEditError]      = useState<string | null>(null)
-  const [aiEditProgress,   setAiEditProgress]   = useState<{ step: number; label: string } | null>(null)
-  const [aiEditModelUsed,  setAiEditModelUsed]  = useState<"ultra" | "super" | null>(null)
+  const [aiProgress,    setAiProgress]    = useState<{ step: number; label: string; source?: string; warning?: boolean } | null>(null)
+  const [aiSourceUsed,  setAiSourceUsed]  = useState<string | null>(null)
 
   // ── Pre-loaded widgets (untuk artikel lama dari Posts → Edit) ──────────────
   // Diisi setelah fetchArticle parse shortcode dari konten artikel.
@@ -803,13 +815,18 @@ export function CreateArticleView({ onBack, articleId }: CreateArticleViewProps)
 
   // ── AI Generate handler ────────────────────────────────────────────────────────────
   async function handleAiGenerate() {
-    if (!aiTopic.trim() || !aiContext.trim()) {
-      setAiError("Topik dan konteks wajib diisi.")
+    if (!aiTopic.trim()) {
+      setAiError("Topik wajib diisi.")
+      return
+    }
+    if (NEWS_TYPE_REQUIRES_MANUAL_CONTEXT[aiNewsType] && !aiContext.trim()) {
+      setAiError("Tipe berita ini tidak punya sumber data otomatis — konteks wajib diisi manual.")
       return
     }
     setAiGenerating(true)
     setAiError(null)
-    setAiProgress({ step: 1, label: "Menulis Draft" })
+    setAiSourceUsed(null)
+    setAiProgress({ step: 1, label: `Mengambil Data dari ${NEWS_TYPE_SOURCE[aiNewsType]}`, source: NEWS_TYPE_SOURCE[aiNewsType] })
 
     try {
       const res = await fetch("/api/generate-article", {
@@ -858,7 +875,8 @@ export function CreateArticleView({ onBack, articleId }: CreateArticleViewProps)
           const payload = JSON.parse(dataStr)
 
           if (event === "progress") {
-            setAiProgress({ step: payload.step, label: payload.label })
+            setAiProgress({ step: payload.step, label: payload.label, source: payload.source, warning: payload.warning })
+            if (payload.source) setAiSourceUsed(payload.source)
           } else if (event === "done") {
             receivedDone = true
             setTitle(payload.title)
@@ -866,7 +884,8 @@ export function CreateArticleView({ onBack, articleId }: CreateArticleViewProps)
               const contentWithLabels = injectSectionLabels(payload.content, aiNewsType)
               editor.commands.setContent(contentWithLabels)
             }
-            setAiProgress({ step: 3, label: "Draft Selesai" })
+            if (payload.sourceUsed) setAiSourceUsed(payload.sourceUsed)
+            setAiProgress({ step: 4, label: "Draft Selesai" })
             // Small delay to show "Draft Selesai" before closing
             await new Promise(r => setTimeout(r, 900))
             setAiModalOpen(false)
@@ -882,7 +901,7 @@ export function CreateArticleView({ onBack, articleId }: CreateArticleViewProps)
       // Stream selesai tanpa event "done" — koneksi putus prematur
       // (timeout Vercel, model tidak merespons, dll) tanpa error message dari server.
       if (!receivedDone) {
-        throw new Error("Koneksi ke server terputus sebelum selesai. Kemungkinan Groq timeout atau tidak merespons. Coba lagi.")
+        throw new Error("Koneksi ke server terputus sebelum selesai. Kemungkinan Gemini timeout atau tidak merespons. Coba lagi.")
       }
     } catch (err: any) {
       setAiError(err.message ?? "Gagal generate artikel. Coba lagi.")
@@ -891,98 +910,6 @@ export function CreateArticleView({ onBack, articleId }: CreateArticleViewProps)
       setAiProgress(null)
     }
   }
-
-  // ── Revisi Editor AI (terpisah, OpenRouter Nemotron) ─────────────────────────
-  // Mengirim draft yang SAAT INI ada di editor (title + HTML) ke /api/edit-article.
-  // Server mencoba Nemotron 3 Ultra dulu, fallback otomatis ke Nemotron 3 Super
-  // kalau Ultra gagal/timeout — progress dari kedua percobaan di-stream lewat SSE.
-  const handleAiEditDraft = useCallback(async () => {
-    if (!editor) return
-
-    const currentHtml = editor.getHTML()
-    const hasContent  = currentHtml.replace(/<p>\s*<\/p>/g, "").trim().length > 0
-
-    if (!title.trim() || !hasContent) {
-      setAiEditError("Belum ada draft untuk direvisi. Generate atau tulis draft terlebih dahulu.")
-      return
-    }
-
-    setAiEditGenerating(true)
-    setAiEditError(null)
-    setAiEditModelUsed(null)
-    setAiEditProgress({ step: 1, label: "Mengirim draft ke Nemotron 3 Ultra" })
-
-    try {
-      const res = await fetch("/api/edit-article", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({
-          newsType: aiNewsType,
-          title,
-          content: currentHtml,
-        }),
-      })
-
-      if (!res.ok) {
-        const data = await res.json().catch(() => ({})) as { error?: string }
-        throw new Error(data.error ?? `Error ${res.status}`)
-      }
-
-      const reader  = res.body?.getReader()
-      const decoder = new TextDecoder()
-      if (!reader) throw new Error("Gagal membaca stream dari server.")
-
-      let buffer = ""
-      let receivedDone = false
-      while (true) {
-        const { done, value } = await reader.read()
-        if (done) break
-        buffer += decoder.decode(value, { stream: true })
-
-        const messages = buffer.split("\n\n")
-        buffer = messages.pop() ?? ""
-
-        for (const msg of messages) {
-          const lines = msg.split("\n")
-          let event = "message"
-          let dataStr = ""
-          for (const line of lines) {
-            if (line.startsWith("event: ")) event = line.slice(7).trim()
-            if (line.startsWith("data: "))  dataStr = line.slice(6).trim()
-          }
-          if (!dataStr) continue
-
-          const payload = JSON.parse(dataStr)
-
-          if (event === "progress") {
-            setAiEditProgress({ step: payload.step, label: payload.label })
-          } else if (event === "done") {
-            receivedDone = true
-            setTitle(payload.title)
-            const contentWithLabels = injectSectionLabels(payload.content, aiNewsType)
-            editor.commands.setContent(contentWithLabels)
-            setAiEditModelUsed(payload.modelUsed === "super" ? "super" : "ultra")
-            setAiEditProgress({
-              step: 99,
-              label: payload.modelUsed === "super" ? "Revisi Selesai (Nemotron 3 Super)" : "Revisi Selesai (Nemotron 3 Ultra)",
-            })
-            await new Promise(r => setTimeout(r, 900))
-            setAiEditModalOpen(false)
-          } else if (event === "error") {
-            throw new Error(payload.error ?? "Gagal revisi draft. Coba lagi.")
-          }
-        }
-      }
-
-      if (!receivedDone) {
-        throw new Error("Koneksi ke server terputus sebelum selesai. Kemungkinan Nemotron 3 Ultra/3 Super timeout. Coba lagi.")
-      }
-    } catch (err: any) {
-      setAiEditError(err.message ?? "Gagal revisi draft. Coba lagi.")
-    } finally {
-      setAiEditGenerating(false)
-    }
-  }, [editor, title, aiNewsType])
 
   // ── Widget insert callback ────────────────────────────────────────────────
   // Dipanggil oleh WidgetInserter setelah data tersimpan ke Supabase
@@ -1355,11 +1282,8 @@ export function CreateArticleView({ onBack, articleId }: CreateArticleViewProps)
                     <Redo2 className="h-4 w-4" />
                   </ToolbarButton>
                   <ToolbarSeparator />
-                  <ToolbarButton onClick={() => { if (!aiGenerating) { setAiModalOpen(true); setAiError(null) } }} title="Generate Breaking News dengan AI" active={aiModalOpen} disabled={aiGenerating}>
+                  <ToolbarButton onClick={() => { if (!aiGenerating) { setAiModalOpen(true); setAiError(null); setAiSourceUsed(null) } }} title="Generate Breaking News dengan AI" active={aiModalOpen} disabled={aiGenerating}>
                     <Sparkles className="h-4 w-4" />
-                  </ToolbarButton>
-                  <ToolbarButton onClick={() => { if (!aiEditGenerating) { setAiEditModalOpen(true); setAiEditError(null) } }} title="Revisi Editor AI — OpenRouter Nemotron 3 Ultra (fallback Nemotron 3 Super)" active={aiEditModalOpen} disabled={aiEditGenerating}>
-                    <Wand2 className="h-4 w-4" />
                   </ToolbarButton>
                 </div>
 
@@ -1785,7 +1709,7 @@ export function CreateArticleView({ onBack, articleId }: CreateArticleViewProps)
               </h3>
             </div>
             <button
-              onClick={() => { setAiModalOpen(false); setAiError(null) }}
+              onClick={() => { setAiModalOpen(false); setAiError(null); setAiSourceUsed(null) }}
               className="text-muted-foreground hover:text-foreground"
             >
               <X className="h-4 w-4" />
@@ -1826,22 +1750,22 @@ export function CreateArticleView({ onBack, articleId }: CreateArticleViewProps)
               </div>
             </div>
 
-            {/* Model AI (Free Tier OpenRouter) */}
+            {/* Sumber Data Otomatis (per tipe berita) */}
             <div>
               <label className="mb-1.5 block text-xs font-semibold text-muted-foreground uppercase tracking-wide">
-                Model AI (Free Tier)
+                Sumber Data Otomatis
               </label>
-              <select
-                value={aiModel}
-                onChange={(e) => setAiModel(e.target.value)}
-                className="w-full rounded-lg border border-border bg-secondary/50 px-3 py-2 text-sm text-foreground focus:outline-none focus:ring-1 focus:ring-primary"
-              >
-                {AI_MODEL_OPTIONS.map((m) => (
-                  <option key={m.value} value={m.value}>{m.label}</option>
-                ))}
-              </select>
+              <div className="rounded-lg border border-border bg-secondary/50 px-3 py-2 text-sm text-foreground">
+                {NEWS_TYPE_SOURCE[aiNewsType]}
+              </div>
               <p className="mt-1 text-[11px] text-muted-foreground">
-                Draft ditulis otomatis oleh Groq GPT-OSS-120B. Setelah draft muncul di editor, gunakan tombol <Wand2 className="inline h-3 w-3 align-[-1px]" /> Revisi Editor AI di toolbar untuk merevisi dengan OpenRouter Nemotron 3 Ultra (fallback otomatis ke Nemotron 3 Super).
+                {aiNewsType === "hasil" || aiNewsType === "preview" || aiNewsType === "cedera" ? (
+                  <>Server otomatis mengambil data faktual dari Bzzoiro Sports Data API berdasarkan Topik di bawah sebelum draft ditulis oleh Gemini 3.5 Flash{aiNewsType === "cedera" && " — Bzzoiro tidak punya endpoint cedera resmi, jadi pastikan isi fakta cedera sebenarnya di kolom Konteks"}.</>
+                ) : aiNewsType === "konpers" || aiNewsType === "transfer" ? (
+                  <>Server otomatis mencari berita terbaru (Tavily, window 2 hari terakhir) berdasarkan Topik di bawah sebelum draft ditulis oleh Gemini 3.5 Flash.</>
+                ) : (
+                  <>Tidak ada sumber data otomatis untuk Trivia — draft ditulis oleh Gemini 3.5 Flash murni dari Konteks & Fakta yang kamu isi manual.</>
+                )}
               </p>
             </div>
 
@@ -1859,40 +1783,57 @@ export function CreateArticleView({ onBack, articleId }: CreateArticleViewProps)
                   aiNewsType === "konpers"  ? "Contoh: Konpers Pep Guardiola setelah kekalahan dari Arsenal" :
                   aiNewsType === "cedera"   ? "Contoh: Victor Osimhen cedera paha" :
                   aiNewsType === "preview"  ? "Contoh: Manchester City vs Real Madrid, UCL Semifinal" :
-                  aiNewsType === "hasil"    ? "Contoh: Barcelona 3-1 Atletico Madrid, La Liga pekan 34" :
+                  aiNewsType === "hasil"    ? "Contoh: Barcelona vs Atletico Madrid, La Liga pekan 34" :
                                              "Contoh: Fakta unik hat-trick tercepat di sejarah Premier League"
                 }
                 className="w-full rounded-lg border border-border bg-secondary/50 px-3 py-2 text-sm text-foreground placeholder-muted-foreground focus:outline-none focus:ring-1 focus:ring-primary"
                 autoFocus
               />
+              <p className="mt-1 text-[11px] text-muted-foreground">
+                {aiNewsType === "hasil"
+                  ? "Sebutkan kedua nama tim — dipakai untuk mencari pertandingan yang cocok di Bzzoiro."
+                  : aiNewsType === "preview"
+                  ? "Sebutkan kedua nama tim & kompetisi — dipakai untuk mencari jadwal & prediksi di Bzzoiro."
+                  : aiNewsType === "cedera"
+                  ? "Sebutkan nama pemain & timnya — dipakai untuk mencari sinyal kehadiran di Bzzoiro."
+                  : aiNewsType === "konpers" || aiNewsType === "transfer"
+                  ? "Dipakai sebagai query pencarian berita di Tavily (2 hari terakhir)."
+                  : undefined}
+              </p>
             </div>
 
             {/* Konteks */}
             <div>
               <label className="mb-1.5 block text-xs font-semibold text-muted-foreground uppercase tracking-wide">
-                Konteks & Fakta <span className="text-destructive">*</span>
+                Konteks & Fakta {NEWS_TYPE_REQUIRES_MANUAL_CONTEXT[aiNewsType] ? (
+                  <span className="text-destructive">*</span>
+                ) : (
+                  <span className="font-normal text-muted-foreground">(opsional — melengkapi data otomatis)</span>
+                )}
               </label>
               <textarea
                 value={aiContext}
                 onChange={(e) => setAiContext(e.target.value)}
                 placeholder={
                   aiNewsType === "transfer"
-                    ? "Contoh: Nilai transfer €45M, kontrak 4 tahun, sudah medical check-up hari ini, dikonfirmasi Romano. Rashford sudah tidak masuk skuat United 3 bulan terakhir."
+                    ? "Opsional. Tambahkan detail yang belum tertangkap Tavily, mis. sumber internal atau nuansa tambahan."
                     : aiNewsType === "konpers"
-                    ? "Contoh: Pep Guardiola bicara soal tekanan gelar liga: 'Kami tidak takut kalah, kami hanya fokus pada proses.' Disampaikan setelah kekalahan 0-2 dari Arsenal kemarin."
+                    ? "Opsional. Tambahkan kutipan atau detail tambahan yang belum tertangkap Tavily."
                     : aiNewsType === "cedera"
-                    ? "Contoh: Cedera ligamen lutut kanan, absen 6-8 minggu, terjadi menit ke-34 lawan Chelsea. Ini cedera kedua di area yang sama musim ini."
+                    ? "WAJIB diisi: jenis cedera, prognosis, dan sumber resmi (klub/dokter tim) — Bzzoiro hanya menyediakan sinyal kehadiran, bukan data cedera resmi."
                     : aiNewsType === "preview"
-                    ? "Contoh: City unbeaten 8 laga terakhir, Haaland kembali dari cedera. Real tanpa Bellingham yang suspensi. Leg pertama berakhir 1-1 di Bernabeu."
+                    ? "Opsional. Tambahkan konteks naratif yang belum tertangkap Bzzoiro, mis. atmosfer atau cerita di balik laga."
                     : aiNewsType === "hasil"
-                    ? "Contoh: Yamal 2 gol (23', 67'), Lewandowski 1 gol (45'). Atletico gol lewat Griezmann (55'). Barca dominan penguasaan bola 63%, 18 tembakan."
+                    ? "Opsional. Tambahkan konteks naratif yang belum tertangkap Bzzoiro, mis. reaksi pelatih atau cerita di balik laga."
                     : "Contoh: Sadio Mane mencetak hat-trick dalam 2 menit 56 detik lawan Aston Villa (2015). Rekor ini masih bertahan hingga hari ini di Premier League."
                 }
                 rows={4}
                 className="w-full rounded-lg border border-border bg-secondary/50 px-3 py-2 text-sm text-foreground placeholder-muted-foreground focus:outline-none focus:ring-1 focus:ring-primary resize-none"
               />
               <p className="mt-1 text-[11px] text-muted-foreground">
-                Semakin detail konteks yang kamu berikan, semakin baik artikel yang dihasilkan.
+                {NEWS_TYPE_REQUIRES_MANUAL_CONTEXT[aiNewsType]
+                  ? "Tipe berita ini tidak punya sumber data otomatis — isi konteks selengkap mungkin."
+                  : "Konteks ini akan digabung dengan data otomatis sebagai catatan tambahan, bukan menggantikannya."}
               </p>
             </div>
 
@@ -1915,12 +1856,16 @@ export function CreateArticleView({ onBack, articleId }: CreateArticleViewProps)
                 </div>
                 <div className="flex flex-col gap-1.5">
                   {[
-                    { step: 1, label: "Menyusun Prompt Editorial" },
-                    { step: 2, label: "Menulis Draft dengan Groq (GPT-OSS-120B)" },
-                    { step: 3, label: "Draft Selesai" },
+                    { step: 1, label: `Mengambil Data dari ${NEWS_TYPE_SOURCE[aiNewsType]}` },
+                    { step: 2, label: "Menyusun Prompt Editorial" },
+                    { step: 3, label: "Menulis Draft dengan Gemini 3.5 Flash" },
+                    { step: 4, label: "Draft Selesai" },
                   ].map(({ step, label }) => {
                     const isDone    = aiProgress.step > step
                     const isActive  = aiProgress.step === step
+                    // Saat step aktif punya label realtime dari server (mis. nama sumber
+                    // data spesifik atau pesan warning), tampilkan itu — bukan label default.
+                    const displayLabel = isActive && aiProgress.label ? aiProgress.label : label
                     return (
                       <div key={step} className="flex items-center gap-2">
                         <div className={[
@@ -1933,11 +1878,12 @@ export function CreateArticleView({ onBack, articleId }: CreateArticleViewProps)
                         </div>
                         <span className={[
                           "text-xs",
+                          isActive && aiProgress.warning ? "text-amber-500 font-semibold" :
                           isDone   ? "text-primary/70 line-through" :
                           isActive ? "text-foreground font-semibold" :
                                      "text-muted-foreground",
                         ].join(" ")}>
-                          {label}
+                          {displayLabel}
                         </span>
                       </div>
                     )
@@ -1945,14 +1891,23 @@ export function CreateArticleView({ onBack, articleId }: CreateArticleViewProps)
                 </div>
               </div>
             )}
+
+            {/* Konfirmasi sumber data yang akhirnya dipakai (setelah selesai/saat error fallback) */}
+            {!aiGenerating && aiSourceUsed && (
+              <p className="rounded-lg bg-primary/10 px-3 py-2 text-xs text-primary">
+                ✓ Data diambil dari: {aiSourceUsed}
+              </p>
+            )}
           </div>
 
           {/* Footer */}
           <div className="flex items-center justify-between border-t border-border px-6 py-4">
-            <p className="text-[11px] text-muted-foreground">Draft Stage — Powered by Groq</p>
+            <p className="text-[11px] text-muted-foreground">
+              Draft Stage — Powered by Gemini 3.5 Flash · {NEWS_TYPE_SOURCE[aiNewsType].split(" — ")[0]}
+            </p>
             <div className="flex gap-3">
               <button
-                onClick={() => { setAiModalOpen(false); setAiError(null) }}
+                onClick={() => { setAiModalOpen(false); setAiError(null); setAiSourceUsed(null) }}
                 disabled={aiGenerating}
                 className="rounded-lg border border-border px-4 py-2 text-sm text-foreground hover:bg-secondary disabled:opacity-40 disabled:pointer-events-none"
               >
@@ -1960,7 +1915,7 @@ export function CreateArticleView({ onBack, articleId }: CreateArticleViewProps)
               </button>
               <button
                 onClick={handleAiGenerate}
-                disabled={aiGenerating || !aiTopic.trim() || !aiContext.trim()}
+                disabled={aiGenerating || !aiTopic.trim() || (NEWS_TYPE_REQUIRES_MANUAL_CONTEXT[aiNewsType] && !aiContext.trim())}
                 className="flex items-center gap-2 rounded-lg bg-primary px-4 py-2 text-sm font-bold text-black hover:bg-primary/90 disabled:opacity-40 disabled:pointer-events-none"
               >
                 {aiGenerating ? (
@@ -1984,134 +1939,6 @@ export function CreateArticleView({ onBack, articleId }: CreateArticleViewProps)
       </div>
     )}
 
-    {/* ── Editor AI Modal (terpisah dari Generate Draft) ── */}
-    {aiEditModalOpen && (
-      <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/70 px-4">
-        <div className="w-full max-w-lg rounded-xl border border-border bg-card shadow-2xl">
-          {/* Header */}
-          <div className="flex items-center justify-between border-b border-border px-6 py-4">
-            <div className="flex items-center gap-2">
-              <Wand2 className="h-5 w-5 text-primary" />
-              <h3 className="text-base font-bold text-foreground" style={{ fontFamily: "var(--font-oswald)" }}>
-                Revisi Editor AI
-              </h3>
-            </div>
-            <button
-              onClick={() => { setAiEditModalOpen(false); setAiEditError(null) }}
-              className="text-muted-foreground hover:text-foreground"
-            >
-              <X className="h-4 w-4" />
-            </button>
-          </div>
-
-          {/* Body */}
-          <div className="space-y-4 px-6 py-5">
-            <p className="text-xs text-muted-foreground">
-              Draft yang SAAT INI ada di editor (judul + isi) akan dikirim untuk direvisi sebagai editor senior — hook, ritme kalimat, dan frasa AI-fingerprint dibersihkan, tanpa mengubah fakta atau struktur heading.
-            </p>
-
-            {/* Tipe Berita — dipakai sebagai konteks editor */}
-            <div>
-              <label className="mb-2 block text-xs font-semibold text-muted-foreground uppercase tracking-wide">
-                Tipe Berita
-              </label>
-              <div className="grid grid-cols-3 gap-2">
-                {([
-                  { value: "transfer", label: "🔄 Transfer" },
-                  { value: "konpers",  label: "🎙️ Konpers" },
-                  { value: "cedera",   label: "🩹 Cedera" },
-                  { value: "preview",  label: "🔍 Preview" },
-                  { value: "hasil",    label: "📊 Hasil" },
-                  { value: "trivia",   label: "🧠 Trivia" },
-                ] as const).map((t) => (
-                  <button
-                    key={t.value}
-                    type="button"
-                    onClick={() => setAiNewsType(t.value)}
-                    className={[
-                      "rounded-lg border px-3 py-2 text-left text-xs font-bold text-foreground transition-all",
-                      aiNewsType === t.value
-                        ? "border-primary bg-primary/10 ring-1 ring-primary"
-                        : "border-border bg-secondary/30 hover:bg-secondary/60",
-                    ].join(" ")}
-                  >
-                    {t.label}
-                  </button>
-                ))}
-              </div>
-            </div>
-
-            {/* Model & fallback info */}
-            <div className="rounded-lg border border-border bg-secondary/30 px-3 py-2.5">
-              <p className="text-xs font-semibold text-foreground">OpenRouter Nemotron 3 Ultra</p>
-              <p className="mt-0.5 text-[11px] text-muted-foreground">
-                Kalau Nemotron 3 Ultra gagal atau timeout, server otomatis fallback ke Nemotron 3 Super — tanpa perlu klik ulang.
-              </p>
-            </div>
-
-            {/* Error */}
-            {aiEditError && (
-              <p className="rounded-lg bg-destructive/10 px-3 py-2 text-xs text-destructive">
-                ⚠ {aiEditError}
-              </p>
-            )}
-
-            {/* Progress — dinamis, mengikuti label dari server (Ultra atau fallback Super) */}
-            {aiEditGenerating && aiEditProgress && (
-              <div className="rounded-xl border border-primary/30 bg-primary/5 px-4 py-3">
-                <div className="flex items-center gap-2">
-                  <svg className="h-3.5 w-3.5 animate-spin text-primary" viewBox="0 0 24 24" fill="none">
-                    <circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4"/>
-                    <path className="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8v8z"/>
-                  </svg>
-                  <span className="text-xs font-semibold text-primary">{aiEditProgress.label}</span>
-                </div>
-              </div>
-            )}
-
-            {!aiEditGenerating && aiEditModelUsed && (
-              <p className="rounded-lg bg-primary/10 px-3 py-2 text-xs text-primary">
-                ✓ Revisi selesai via {aiEditModelUsed === "super" ? "Nemotron 3 Super (fallback)" : "Nemotron 3 Ultra"}.
-              </p>
-            )}
-          </div>
-
-          {/* Footer */}
-          <div className="flex items-center justify-between border-t border-border px-6 py-4">
-            <p className="text-[11px] text-muted-foreground">Editor Stage — Powered by OpenRouter</p>
-            <div className="flex gap-3">
-              <button
-                onClick={() => { setAiEditModalOpen(false); setAiEditError(null) }}
-                disabled={aiEditGenerating}
-                className="rounded-lg border border-border px-4 py-2 text-sm text-foreground hover:bg-secondary disabled:opacity-40 disabled:pointer-events-none"
-              >
-                Batal
-              </button>
-              <button
-                onClick={handleAiEditDraft}
-                disabled={aiEditGenerating}
-                className="flex items-center gap-2 rounded-lg bg-primary px-4 py-2 text-sm font-bold text-black hover:bg-primary/90 disabled:opacity-40 disabled:pointer-events-none"
-              >
-                {aiEditGenerating ? (
-                  <>
-                    <svg className="h-3.5 w-3.5 animate-spin" viewBox="0 0 24 24" fill="none">
-                      <circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4"/>
-                      <path className="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8v8z"/>
-                    </svg>
-                    Merevisi…
-                  </>
-                ) : (
-                  <>
-                    <Wand2 className="h-3.5 w-3.5" />
-                    Revisi Sekarang
-                  </>
-                )}
-              </button>
-            </div>
-          </div>
-        </div>
-      </div>
-    )}
     </>
   )
 }

@@ -3,8 +3,14 @@
 // Shared editorial prompts untuk pipeline generate artikel HalfSpace.id.
 // Dipecah ke sini supaya TIDAK terduplikasi antara dua route yang sekarang
 // terpisah:
-//   - app/api/generate-article/route.ts → Tahap Draft (Groq)
-//   - app/api/edit-article/route.ts     → Tahap Editor (OpenRouter Nemotron)
+//   - app/api/generate-article/route.ts → Tahap Draft (Gemini 3.5 Flash)
+//   - app/api/edit-article/route.ts     → Tahap Editor (Gemini 3.5 Flash)
+//
+// Sejak integrasi sumber data per tipe berita, konteks yang dikirim ke prompt
+// ini berasal dari:
+//   - Bzzoiro Sports Data API → Hasil Pertandingan, Preview Pertandingan, Injury Update (sinyal)
+//   - Tavily Search (window 2 hari terakhir) → Konferensi Pers, Transfer Rumor
+// Lihat lib/news-context/bzzoiro.ts dan lib/news-context/tavily.ts.
 //
 // Kalau aturan gaya penulisan / struktur per tipe berita berubah, edit di
 // SATU tempat ini saja — kedua route otomatis ikut berubah.
@@ -69,7 +75,16 @@ Jangan gunakan frasa-frasa berikut dalam bentuk apapun — ini adalah fingerprin
 - Paragraf narasi ditulis mengalir di bawah setiap <h2>, JANGAN tulis label bagian sebagai teks biasa di dalam <p>
 - JANGAN gunakan <h1>, <h3>, atau heading lain — HANYA <h2> untuk judul bagian
 - Tutup artikel dengan paragraf yang memperluas perspektif, bukan meringkas ulang apa yang sudah ditulis
-- Output HANYA JSON murni, tanpa markdown fence, tanpa komentar`
+- Output HANYA JSON murni, tanpa markdown fence, tanpa komentar
+
+━━━ ATURAN SUMBER DATA (ANTI-HALUSINASI) ━━━
+- Konteks yang kamu terima bisa berisi DUA jenis data, dipisahkan label tegas di awal masing-masing blok:
+  • "[DATA API TERVERIFIKASI]" — angka, skor, statistik, insiden, prediksi yang diambil LANGSUNG dari API data olahraga (Bzzoiro) atau hasil pencarian berita real-time (Tavily). Ini FAKTA, bukan tebakan kamu.
+  • "[CATATAN TAMBAHAN ADMIN]" — konteks manual yang diketik admin, bisa melengkapi atau memberi nuansa naratif.
+- Skor, menit gol/kartu, nama pencetak gol, statistik pertandingan, dan angka probabilitas/prediksi HARUS persis sama dengan yang tertulis di blok "[DATA API TERVERIFIKASI]" — JANGAN dibulatkan, diubah, atau "dirapikan" jika berbeda dari sumber.
+- Jika sebuah blok data API menyertakan peringatan (mis. "BUKAN konfirmasi cedera" atau "tidak ditemukan data yang cocok"), HORMATI peringatan itu — jangan menyimpulkan sesuatu sebagai fakta pasti kalau sumbernya sendiri menyebut itu sinyal/indikasi tidak langsung.
+- Kalau data API dan catatan admin tampak bertentangan, prioritaskan data API untuk angka/skor/statistik, dan catatan admin untuk konteks naratif/kutipan yang tidak tercakup di API.
+- JANGAN tambahkan nama pemain, klub, skor, atau angka apa pun yang tidak ada di salah satu dari dua blok tersebut.`
 
 // ─── System prompt per tipe berita ───────────────────────────────────────────
 
