@@ -14,8 +14,10 @@
 // data FAKTUAL secara otomatis sebelum dikirim ke Gemini, alih-alih murni
 // mengandalkan ketikan manual admin di kolom "context":
 //
-//   - hasil   (Hasil Pertandingan)   → Bzzoiro Sports Data API (skor, insiden, statistik)
-//   - preview (Preview Pertandingan) → Bzzoiro Sports Data API (jadwal, prediksi ML)
+//   - hasil   (Hasil Pertandingan)   → Bzzoiro (skor, insiden, statistik) +
+//                                       Tavily Search (laporan post-match hari ini — efektif ~30 menit)
+//   - preview (Preview Pertandingan) → Bzzoiro (jadwal, prediksi ML) +
+//                                       Tavily Search (analisis pra-laga — efektif ~12 jam)
 //   - cedera  (Injury Update)        → Bzzoiro (profil & statistik pemain per match) +
 //                                       Tavily Search (berita cedera resmi, window 3 hari)
 //   - konpers (Konferensi Pers)      → Tavily Search, window 2 hari terakhir
@@ -69,8 +71,8 @@ interface RequestBody {
 
 // ─── Label sumber data otomatis per tipe — dipakai untuk progress UI ───────
 const AUTO_SOURCE_LABEL: Record<NewsType, string> = {
-  hasil:    "Bzzoiro Sports Data API",
-  preview:  "Bzzoiro Sports Data API",
+  hasil:    "Bzzoiro Sports Data API (skor & insiden) + Tavily Search (laporan post-match hari ini)",
+  preview:  "Bzzoiro Sports Data API (jadwal & prediksi ML) + Tavily Search (analisis pra-laga 12 jam)",
   cedera:   "Bzzoiro (profil & statistik pemain) + Tavily Search (berita cedera 3 hari)",
   konpers:  "Tavily Search (2 hari terakhir)",
   transfer: "Tavily Search (2 hari terakhir)",

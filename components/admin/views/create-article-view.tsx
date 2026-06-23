@@ -356,8 +356,10 @@ function cleanLegacyBadgeContent(content: string): string {
 //   Sejak integrasi sumber data per tipe berita, server otomatis mengambil
 //   data faktual sebelum menulis (admin tidak perlu isi context manual,
 //   kecuali untuk Trivia yang tetap wajib manual):
-//     - Hasil Pertandingan, Preview Pertandingan, Injury Update → Bzzoiro Sports Data API
-//     - Konferensi Pers, Transfer Rumor                        → Tavily Search (2 hari terakhir)
+//     - Hasil Pertandingan  → Bzzoiro (skor/insiden) + Tavily (laporan post-match ~30 menit)
+//     - Preview Pertandingan → Bzzoiro (jadwal/prediksi ML) + Tavily (analisis pra-laga ~12 jam)
+//     - Injury Update       → Bzzoiro (profil/menit main) + Tavily (berita cedera 3 hari)
+//     - Konferensi Pers, Transfer Rumor → Tavily Search (2 hari terakhir)
 //
 // Catatan: tombol "Revisi Editor AI" (tahap kedua, /api/edit-article) sudah
 // DIHAPUS dari UI ini sesuai permintaan — sudah tidak dipakai. Generate Draft
@@ -420,13 +422,16 @@ function injectSectionLabels(html: string, newsType: string): string {
 // ─── Sumber data otomatis per tipe berita ───────────────────────────────────
 // Ditampilkan di modal Generate Draft supaya admin tahu dari mana data
 // faktual artikel ini diambil sebelum ditulis oleh Gemini 3.5 Flash.
-//   - Hasil Pertandingan, Preview Pertandingan, Injury Update → Bzzoiro Sports Data API
-//   - Konferensi Pers, Transfer Rumor                         → Tavily Search (2 hari terakhir)
-//   - Trivia                                                  → tidak ada, murni konteks manual
+//   - Hasil       → Bzzoiro (skor/insiden/statistik) + Tavily (laporan post-match ~30 menit)
+//   - Preview     → Bzzoiro (jadwal/prediksi ML) + Tavily (analisis pra-laga ~12 jam)
+//   - Injury      → Bzzoiro (profil/menit main) + Tavily (berita cedera 3 hari)
+//   - Konpers     → Tavily Search (2 hari terakhir)
+//   - Transfer    → Tavily Search (2 hari terakhir)
+//   - Trivia      → tidak ada, murni konteks manual
 const NEWS_TYPE_SOURCE: Record<string, string> = {
-  hasil:    "Bzzoiro Sports Data API — skor, insiden, statistik pertandingan",
-  preview:  "Bzzoiro Sports Data API — jadwal & prediksi ML",
-  cedera:   "Bzzoiro Sports Data API — sinyal kehadiran/menit main (bukan data cedera resmi)",
+  hasil:    "Bzzoiro (skor & insiden) + Tavily (laporan post-match hari ini)",
+  preview:  "Bzzoiro (jadwal & prediksi ML) + Tavily (analisis pra-laga 12 jam)",
+  cedera:   "Bzzoiro (sinyal kehadiran/menit main) + Tavily (berita cedera 3 hari)",
   konpers:  "Tavily Search — berita 2 hari terakhir",
   transfer: "Tavily Search — berita 2 hari terakhir",
   trivia:   "Tidak ada sumber otomatis — murni konteks manual",
@@ -1791,11 +1796,11 @@ export function CreateArticleView({ onBack, articleId }: CreateArticleViewProps)
               />
               <p className="mt-1 text-[11px] text-muted-foreground">
                 {aiNewsType === "hasil"
-                  ? "Sebutkan kedua nama tim — dipakai untuk mencari pertandingan yang cocok di Bzzoiro."
+                  ? "Sebutkan kedua nama tim — dipakai untuk mencari data di Bzzoiro & laporan post-match terbaru di Tavily."
                   : aiNewsType === "preview"
-                  ? "Sebutkan kedua nama tim & kompetisi — dipakai untuk mencari jadwal & prediksi di Bzzoiro."
+                  ? "Sebutkan kedua nama tim & kompetisi — dipakai untuk mencari jadwal/prediksi di Bzzoiro & analisis pra-laga terbaru di Tavily."
                   : aiNewsType === "cedera"
-                  ? "Sebutkan nama pemain & timnya — dipakai untuk mencari sinyal kehadiran di Bzzoiro."
+                  ? "Sebutkan nama pemain & timnya — dipakai untuk mencari sinyal kehadiran di Bzzoiro & berita cedera di Tavily."
                   : aiNewsType === "konpers" || aiNewsType === "transfer"
                   ? "Dipakai sebagai query pencarian berita di Tavily (2 hari terakhir)."
                   : undefined}
@@ -1822,9 +1827,9 @@ export function CreateArticleView({ onBack, articleId }: CreateArticleViewProps)
                     : aiNewsType === "cedera"
                     ? "WAJIB diisi: jenis cedera, prognosis, dan sumber resmi (klub/dokter tim) — Bzzoiro hanya menyediakan sinyal kehadiran, bukan data cedera resmi."
                     : aiNewsType === "preview"
-                    ? "Opsional. Tambahkan konteks naratif yang belum tertangkap Bzzoiro, mis. atmosfer atau cerita di balik laga."
+                    ? "Opsional. Tambahkan detail yang belum tertangkap Bzzoiro/Tavily, mis. insider info atau nuansa tambahan."
                     : aiNewsType === "hasil"
-                    ? "Opsional. Tambahkan konteks naratif yang belum tertangkap Bzzoiro, mis. reaksi pelatih atau cerita di balik laga."
+                    ? "Opsional. Tambahkan detail yang belum tertangkap Bzzoiro/Tavily, mis. kontroversi atau cerita di balik laga."
                     : "Contoh: Sadio Mane mencetak hat-trick dalam 2 menit 56 detik lawan Aston Villa (2015). Rekor ini masih bertahan hingga hari ini di Premier League."
                 }
                 rows={4}

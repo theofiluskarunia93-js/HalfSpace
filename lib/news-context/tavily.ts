@@ -36,10 +36,18 @@ interface TavilyRawResponse {
 const TAVILY_ENDPOINT = "https://api.tavily.com/search"
 
 // Window waktu pencarian per tipe berita.
-const TAVILY_DAYS_WINDOW: Record<"konpers" | "transfer" | "cedera", number> = {
+// Catatan untuk preview & hasil:
+//   - preview  → 12 jam = Tavily tidak support sub-day, pakai days:1 (1 hari) supaya
+//                berita pra-laga yang baru terbit tertangkap.
+//   - hasil    → 30 menit = sama, Tavily minimum days:1. Tapi query dikombinasikan
+//                dengan kata kunci "tadi malam / hari ini / baru" supaya hasil teratas
+//                adalah laporan post-match terbaru.
+const TAVILY_DAYS_WINDOW: Record<"konpers" | "transfer" | "cedera" | "preview" | "hasil", number> = {
   konpers:  2,
   transfer: 2,
   cedera:   3,
+  preview:  1,   // efektif 12 jam — Tavily minimum = 1 hari
+  hasil:    1,   // efektif 30 menit — Tavily minimum = 1 hari, query diperkuat kata "terbaru hari ini"
 }
 
 async function tavilySearch(apiKey: string, query: string, daysWindow: number): Promise<TavilyRawResponse> {
@@ -70,21 +78,34 @@ async function tavilySearch(apiKey: string, query: string, daysWindow: number): 
 }
 
 // ─── Bangun query pencarian sesuai tipe berita ──────────────────────────────
-function buildQuery(newsType: "konpers" | "transfer" | "cedera", topic: string): string {
+function buildQuery(newsType: "konpers" | "transfer" | "cedera" | "preview" | "hasil", topic: string): string {
   if (newsType === "konpers") {
     return `${topic} konferensi pers press conference kutipan terbaru`
   }
   if (newsType === "cedera") {
     return `${topic} injury update cedera absen fitness latest`
   }
+  if (newsType === "preview") {
+    // Cari preview/analisis pra-laga: taktik, kondisi skuat, head-to-head terbaru
+    return `${topic} preview analisis pra-laga kondisi skuat head to head terbaru`
+  }
+  if (newsType === "hasil") {
+    // Kuatkan ke laporan post-match terbaru hari ini
+    return `${topic} hasil pertandingan hari ini skor gol laporan terbaru`
+  }
   return `${topic} transfer rumor terbaru update`
 }
 
-// ─── Fetch konteks dari Tavily untuk Konpers / Transfer Rumor / Injury Update ─
-// Mengembalikan teks konteks gabungan (siap dipakai sebagai pengganti input
-// "context" manual admin) + daftar sumber untuk ditampilkan di UI.
+// ─── Fetch konteks dari Tavily untuk Konpers / Transfer Rumor / Injury Update /
+//     Preview Pertandingan / Hasil Pertandingan ─────────────────────────────────
+// Mengembalikan teks konteks gabungan (siap dipakai sebagai pengganti atau
+// pelengkap data Bzzoiro) + daftar sumber untuk ditampilkan di UI.
+//
+// Window efektif:
+//   preview  → 1 hari (Tavily minimum; query menargetkan berita pra-laga terbaru)
+//   hasil    → 1 hari (Tavily minimum; query menargetkan laporan post-match hari ini)
 export async function fetchTavilyContext(
-  newsType: "konpers" | "transfer" | "cedera",
+  newsType: "konpers" | "transfer" | "cedera" | "preview" | "hasil",
   topic: string,
 ): Promise<TavilyContextResult> {
   const apiKey = process.env.TAVILY_API_KEY
