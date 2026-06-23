@@ -1,17 +1,17 @@
 // app/api/generate-article/route.ts
 //
-// Generate artikel sepak bola bergaya The Athletic menggunakan Gemini 3.5 Flash.
+// Generate artikel sepak bola bergaya The Athletic menggunakan Groq GPT-OSS 120B.
 // Satu langkah — tidak ada tahap editor terpisah.
 //
 // Pipeline:
 //   Step 1 : Ambil data pendukung otomatis sesuai tipe berita (lihat di bawah)
 //   Step 2 : Susun system prompt per tipe berita + user prompt dari topic & context gabungan
-//   Step 3 : Gemini 3.5 Flash menulis artikel final (title + content HTML)
+//   Step 3 : Groq GPT-OSS 120B menulis artikel final (title + content HTML)
 //   Step 4 : Kirim hasil ke client via SSE
 //
 // ━━━ SUMBER DATA OTOMATIS PER TIPE BERITA ━━━
 // Supaya artikel minim halusinasi, sebagian tipe berita sekarang mengambil
-// data FAKTUAL secara otomatis sebelum dikirim ke Gemini, alih-alih murni
+// data FAKTUAL secara otomatis sebelum dikirim ke Groq, alih-alih murni
 // mengandalkan ketikan manual admin di kolom "context":
 //
 //   - hasil   (Hasil Pertandingan)   → Bzzoiro (skor, insiden, statistik) +
@@ -34,13 +34,13 @@
 // Output: SSE stream → { event: "progress"|"done"|"error", data: ... }
 //
 // Catatan API key:
-// - GEMINI_API_KEY   → dipakai untuk generate artikel. Model: gemini-3.5-flash.
+// - GROQ_API_KEY     → dipakai untuk generate artikel. Model: openai/gpt-oss-120b.
 // - BZZOIRO_API_KEY  → dipakai untuk konteks Hasil/Preview/Injury (sudah ada,
 //                       sebelumnya hanya dipakai live-scores & standings).
 // - TAVILY_API_KEY   → dipakai untuk konteks Konpers & Transfer Rumor.
 
 import { NextRequest, NextResponse } from "next/server"
-import { GoogleGenAI } from "@google/genai"
+import OpenAI from "openai"
 import { requireAdmin } from "@/lib/supabase/server-auth"
 import {
   BASE_SYSTEM,
@@ -60,7 +60,7 @@ export type { NewsType }
 
 export const maxDuration = 60
 
-const MODEL = "gemini-3.5-flash"
+const MODEL = "openai/gpt-oss-120b"
 
 interface RequestBody {
   newsType: NewsType
@@ -141,26 +141,32 @@ async function fetchAutoContext(
   }
 }
 
-// ─── Gemini 3.5 Flash: generate artikel ──────────────────────────────────────
-async function geminiGenerateJson(
+// ─── Groq GPT-OSS 120B: generate artikel ─────────────────────────────────────
+// Groq mendukung OpenAI-compatible API — pakai openai SDK dengan baseURL Groq.
+async function groqGenerateJson(
   apiKey: string,
   systemPrompt: string,
   userPrompt: string,
 ): Promise<string> {
-  const genai = new GoogleGenAI({ apiKey })
-
-  const response = await genai.models.generateContent({
-    model: MODEL,
-    contents: userPrompt,
-    config: {
-      systemInstruction: systemPrompt,
-      temperature:       0.85,
-      maxOutputTokens:   8000,
-      responseMimeType:  "application/json",
-    },
+  const groq = new OpenAI({
+    apiKey,
+    baseURL: "https://api.groq.com/openai/v1",
   })
 
-  return (response.text ?? "").trim()
+  const response = await groq.chat.completions.create({
+    model:              MODEL,
+    messages: [
+      { role: "system", content: systemPrompt },
+      { role: "user",   content: userPrompt },
+    ],
+    temperature:        0.7,
+    max_tokens:         8000,
+    top_p:              0.80,
+    presence_penalty:   1.5,
+    response_format:    { type: "json_object" },
+  })
+
+  return (response.choices[0]?.message?.content ?? "").trim()
 }
 
 // ─── POST handler ─────────────────────────────────────────────────────────────
@@ -172,10 +178,10 @@ export async function POST(req: NextRequest) {
     return NextResponse.json({ error: "Unauthorized" }, { status: 401 })
   }
 
-  const geminiKey = process.env.GEMINI_API_KEY
-  if (!geminiKey) {
+  const groqKey = process.env.GROQ_API_KEY
+  if (!groqKey) {
     return NextResponse.json(
-      { error: "GEMINI_API_KEY belum dikonfigurasi di environment variables." },
+      { error: "GROQ_API_KEY belum dikonfigurasi di environment variables." },
       { status: 500 }
     )
   }
@@ -256,20 +262,20 @@ Kembalikan HANYA JSON dengan format berikut (tidak ada teks di luar JSON):
   "content": "<konten artikel dalam HTML — gunakan <h2> untuk judul bagian, <p> untuk paragraf, <blockquote> untuk kutipan langsung dari narasumber. JANGAN gunakan tag HTML lain apapun.>"
 }`
 
-        // ── STEP 3: Gemini 3.5 Flash menulis artikel ─────────────────────────
-        send("progress", { step: 3, label: "Menulis Artikel dengan Gemini 3.5 Flash", source: sourceUsed })
+        // ── STEP 3: Groq GPT-OSS 120B menulis artikel ───────────────────────
+        send("progress", { step: 3, label: "Menulis Artikel dengan Groq GPT-OSS 120B", source: sourceUsed })
 
-        const raw = await geminiGenerateJson(geminiKey, BASE_SYSTEM, userPrompt)
+        const raw = await groqGenerateJson(groqKey, BASE_SYSTEM, userPrompt)
 
         if (!raw) {
-          throw new Error("Gemini 3.5 Flash tidak menghasilkan output. Coba lagi.")
+          throw new Error("Groq GPT-OSS 120B tidak menghasilkan output. Coba lagi.")
         }
 
         const result = extractJsonObject<{ title: string; content: string }>(raw)
 
         if (!result?.title?.trim() || !result?.content?.trim()) {
-          console.error("[generate-article] Gagal parse hasil Gemini. Raw:", raw.slice(0, 800))
-          throw new Error("Gagal memproses hasil Gemini 3.5 Flash. Coba lagi dalam beberapa detik.")
+          console.error("[generate-article] Gagal parse hasil Groq. Raw:", raw.slice(0, 800))
+          throw new Error("Gagal memproses hasil Groq GPT-OSS 120B. Coba lagi dalam beberapa detik.")
         }
 
         // ── STEP 4: Done ──────────────────────────────────────────────────────
