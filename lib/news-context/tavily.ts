@@ -1,14 +1,13 @@
 // lib/news-context/tavily.ts
 //
 // Sumber konteks untuk tipe berita: KONFERENSI PERS, TRANSFER RUMOR, & INJURY UPDATE.
-// Menggunakan Tavily Search API (web search real-time) — bukan Bzzoiro,
-// karena tipe-tipe berita ini butuh kutipan langsung & berita terbaru yang
-// tidak tersedia di data pertandingan/statistik.
+// Menggunakan Tavily Search API (web search real-time) — bukan Bzzoiro.
 //
-// Window waktu pencarian per tipe:
-//   - konpers  → 2 hari terakhir
-//   - transfer → 2 hari terakhir
-//   - cedera   → 3 hari terakhir (update cedera dari klub sering datang setelah MRI 1-2 hari)
+// OPTIMASI TOKEN (v2):
+// - max_results dikurangi dari 8 → 4 per tipe
+// - Format konteks diubah dari artikel penuh → ringkasan 3 kalimat per sumber
+// - Estimasi token Tavily: 80-120 token/sumber × 4 sumber = ~320-480 token
+//   (sebelumnya bisa 1500-3000 token untuk 8 sumber artikel penuh)
 //
 // Catatan API key:
 // - TAVILY_API_KEY → dipakai untuk search Konpers & Transfer Rumor.
@@ -36,19 +35,16 @@ interface TavilyRawResponse {
 const TAVILY_ENDPOINT = "https://api.tavily.com/search"
 
 // Window waktu pencarian per tipe berita.
-// Catatan untuk preview & hasil:
-//   - preview  → 12 jam = Tavily tidak support sub-day, pakai days:1 (1 hari) supaya
-//                berita pra-laga yang baru terbit tertangkap.
-//   - hasil    → 30 menit = sama, Tavily minimum days:1. Tapi query dikombinasikan
-//                dengan kata kunci "tadi malam / hari ini / baru" supaya hasil teratas
-//                adalah laporan post-match terbaru.
 const TAVILY_DAYS_WINDOW: Record<"konpers" | "transfer" | "cedera" | "preview" | "hasil", number> = {
   konpers:  2,
   transfer: 2,
-  cedera:   3,
-  preview:  1,   // efektif 12 jam — Tavily minimum = 1 hari
-  hasil:    1,   // efektif 30 menit — Tavily minimum = 1 hari, query diperkuat kata "terbaru hari ini"
+  cedera:   2,
+  preview:  1,
+  hasil:    1,
 }
+
+// OPTIMASI: max_results dikurangi dari 8 → 4 untuk semua tipe
+const TAVILY_MAX_RESULTS = 4
 
 async function tavilySearch(apiKey: string, query: string, daysWindow: number): Promise<TavilyRawResponse> {
   const res = await fetch(TAVILY_ENDPOINT, {
@@ -62,7 +58,7 @@ async function tavilySearch(apiKey: string, query: string, daysWindow: number): 
       search_depth: "advanced",
       topic: "news",
       days: daysWindow,
-      max_results: 8,
+      max_results: TAVILY_MAX_RESULTS,
       include_answer: false,
       include_raw_content: false,
     }),
@@ -86,24 +82,34 @@ function buildQuery(newsType: "konpers" | "transfer" | "cedera" | "preview" | "h
     return `${topic} injury update cedera absen fitness latest`
   }
   if (newsType === "preview") {
-    // Cari preview/analisis pra-laga: taktik, kondisi skuat, head-to-head terbaru
     return `${topic} preview analisis pra-laga kondisi skuat head to head terbaru`
   }
   if (newsType === "hasil") {
-    // Kuatkan ke laporan post-match terbaru hari ini
     return `${topic} hasil pertandingan hari ini skor gol laporan terbaru`
   }
   return `${topic} transfer rumor terbaru update`
 }
 
-// ─── Fetch konteks dari Tavily untuk Konpers / Transfer Rumor / Injury Update /
-//     Preview Pertandingan / Hasil Pertandingan ─────────────────────────────────
-// Mengembalikan teks konteks gabungan (siap dipakai sebagai pengganti atau
-// pelengkap data Bzzoiro) + daftar sumber untuk ditampilkan di UI.
-//
-// Window efektif:
-//   preview  → 1 hari (Tavily minimum; query menargetkan berita pra-laga terbaru)
-//   hasil    → 1 hari (Tavily minimum; query menargetkan laporan post-match hari ini)
+// ─── Format sumber: RINGKAS 3 kalimat per sumber (bukan artikel penuh) ──────
+// Ini adalah perubahan kunci untuk menghemat token.
+// Sebelum: kirim r.content.trim() penuh (bisa 500-700 kata per sumber)
+// Sesudah: ambil 3 kalimat pertama saja → ~80-120 token per sumber
+function formatSource(r: TavilyRawResult, index: number): string {
+  const sentences = r.content
+    .split(/(?<=[.!?])\s+/)
+    .map((s) => s.trim())
+    .filter(Boolean)
+    .slice(0, 3)
+    .join(" ")
+
+  return `[Sumber ${index + 1}]
+Judul: ${r.title}
+
+Poin Penting:
+${sentences}`
+}
+
+// ─── Fetch konteks dari Tavily ───────────────────────────────────────────────
 export async function fetchTavilyContext(
   newsType: "konpers" | "transfer" | "cedera" | "preview" | "hasil",
   topic: string,
@@ -123,13 +129,9 @@ export async function fetchTavilyContext(
     )
   }
 
-  // Susun teks konteks: tiap sumber jadi satu blok berlabel, supaya Gemini
-  // tahu fakta mana berasal dari mana dan bisa memilih kutipan paling kuat.
+  // OPTIMASI: format ringkas per sumber, bukan artikel penuh
   const contextText = results
-    .map((r, i) => {
-      const dateLabel = r.published_date ? ` (${r.published_date})` : ""
-      return `[Sumber ${i + 1}${dateLabel}] ${r.title}\n${r.content.trim()}`
-    })
+    .map((r, i) => formatSource(r, i))
     .join("\n\n")
 
   const sources = results.map((r) => ({

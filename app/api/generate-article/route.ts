@@ -97,7 +97,7 @@ const GROQ_REASONING_EFFORT = "low" as const
 // overhead (kebutuhan riil biasanya ~1200-2500 token untuk artikel
 // 500-900 kata), tapi tetap diberi keleluasaan untuk artikel yang lebih
 // panjang dari data yang kaya (mis. hasil pertandingan dengan banyak insiden).
-const GROQ_MAX_TOKENS = 8000
+const GROQ_MAX_TOKENS = 2000
 
 interface RequestBody {
   newsType: NewsType
