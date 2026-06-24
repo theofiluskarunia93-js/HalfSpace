@@ -176,7 +176,7 @@ function renderMatchResult(o: OverlayData, accent: string): SN {
   const away = (o.teamAway || "AWAY").slice(0, 3).toUpperCase()
 
   return div(
-    { flexDirection: "column", width: "100%", height: "100%", justifyContent: "space-between", padding: "18px 20px" },
+    { flexDirection: "column", width: "100%", height: "100%", justifyContent: "space-between", padding: "12px 20px 8px" },
     [
       // top
       topBar(o.competition || "PERTANDINGAN", accent),
@@ -218,7 +218,7 @@ function renderMatchResult(o: OverlayData, accent: string): SN {
 function renderTransfer(o: OverlayData, accent: string): SN {
   const statusColor = "#FBBF24"
   return div(
-    { flexDirection: "column", width: "100%", height: "100%", justifyContent: "space-between", padding: "18px 20px" },
+    { flexDirection: "column", width: "100%", height: "100%", justifyContent: "space-between", padding: "12px 20px 8px" },
     [
       topBar("TRANSFER NEWS", accent),
       div({ flexDirection: "column", gap: 8 }, [
@@ -254,7 +254,7 @@ function renderMatchPreview(o: OverlayData, accent: string): SN {
   const meta = [o.matchDate, o.venue].filter(Boolean).join(" · ")
 
   return div(
-    { flexDirection: "column", width: "100%", height: "100%", justifyContent: "space-between", padding: "18px 20px" },
+    { flexDirection: "column", width: "100%", height: "100%", justifyContent: "space-between", padding: "12px 20px 8px" },
     [
       topBar(o.competition || "PERTANDINGAN", accent),
       // teams
@@ -288,7 +288,7 @@ function renderMatchPreview(o: OverlayData, accent: string): SN {
 
 function renderInjury(o: OverlayData, accent: string): SN {
   return div(
-    { flexDirection: "column", width: "100%", height: "100%", justifyContent: "space-between", padding: "18px 20px" },
+    { flexDirection: "column", width: "100%", height: "100%", justifyContent: "space-between", padding: "12px 20px 8px" },
     [
       topBar("INJURY REPORT", accent),
       div({ flexDirection: "column", gap: 6 }, [
@@ -322,7 +322,7 @@ function renderInjury(o: OverlayData, accent: string): SN {
 function renderPressConference(o: OverlayData, accent: string): SN {
   const accentDim = "rgba(57,255,20,0.1)"
   return div(
-    { flexDirection: "column", width: "100%", height: "100%", justifyContent: "space-between", padding: "18px 20px" },
+    { flexDirection: "column", width: "100%", height: "100%", justifyContent: "space-between", padding: "12px 20px 8px" },
     [
       topBar("PRESS CONFERENCE", accent),
       div({ flexDirection: "column", gap: 6 }, [
@@ -353,7 +353,7 @@ function renderPressConference(o: OverlayData, accent: string): SN {
 
 function renderTrivia(o: OverlayData, accent: string): SN {
   return div(
-    { flexDirection: "column", width: "100%", height: "100%", justifyContent: "space-between", padding: "18px 20px" },
+    { flexDirection: "column", width: "100%", height: "100%", justifyContent: "space-between", padding: "12px 20px 8px" },
     [
       topBar("TRIVIA", accent),
       div({ flexDirection: "column", gap: 4 }, [
@@ -489,7 +489,7 @@ async function buildCompositeSVG(bgDataURI: string, overlay: OverlayData): Promi
       }, " "),
       // content
       isFullbleed
-        ? div({ position: "absolute", inset: 0 }, content)
+        ? div({ position: "absolute", top: 44, bottom: 36, left: 0, right: 0, alignItems: "stretch" }, content)
         : div({
             position: "absolute", bottom: 75, left: 0, right: 0,
             flexDirection: "column", alignItems: "center",
