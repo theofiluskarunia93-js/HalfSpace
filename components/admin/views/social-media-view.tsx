@@ -86,6 +86,7 @@ const CONTENT_TYPE_LABELS: Record<ContentType, string> = {
   transfer:         "Transfer Rumor",
   press_conference: "Konferensi Pers",
   injury:           "Update Cedera",
+  trivia:           "Trivia & Feature",
   general:          "Umum",
 }
 
@@ -103,6 +104,7 @@ function detectContentType(title: string): ContentType {
   if (/transfer|rumor|kabar|pindah|rekrut|kontrak|bursa/.test(t))          return "transfer"
   if (/konferensi pers|press conference|manajer bicara|pelatih bicara/.test(t)) return "press_conference"
   if (/cedera|injury|absen|pulih|kondisi/.test(t))                         return "injury"
+  if (/trivia|fakta|sejarah|rekor|statistik|tahukah/.test(t))              return "trivia"
   return "general"
 }
 
@@ -183,6 +185,17 @@ function parseOverlayFromTitle(title: string, ct: ContentType): OverlayData {
 
   if (ct === "general") {
     base.headline = title.slice(0, 60)
+  }
+
+  if (ct === "trivia") {
+    // Extract number from title e.g. "38 Tahun" or "900 Gol"
+    const numMatch = title.match(/(\d+)\s*([A-Za-z]+)?/)
+    if (numMatch) {
+      base.triviaNumber = numMatch[1]
+      base.triviaUnit   = numMatch[2] || ""
+    }
+    base.triviaFact = title.slice(0, 80)
+    base.headline   = title.slice(0, 60)
   }
 
   return base
@@ -274,14 +287,25 @@ const OVERLAY_FIELDS: Partial<Record<ContentType, FieldDef[]>> = {
     { key: "toClub",      label: "Ke Klub",      placeholder: "Real Madrid",     required: true },
     { key: "transferFee", label: "Nilai Transfer", placeholder: "€180 Juta" },
   ],
+  injury: [
+    { key: "playerName",     label: "Nama Pemain",    placeholder: "Virgil van Dijk",  required: true },
+    { key: "clubName",       label: "Nama Klub",      placeholder: "Liverpool" },
+    { key: "playerStatus",   label: "Status",         placeholder: "OUT" },
+    { key: "injuryType",     label: "Jenis Cedera",   placeholder: "Ligamen Lutut" },
+    { key: "injuryDuration", label: "Durasi Absen",   placeholder: "6-8 Minggu" },
+  ],
   press_conference: [
     { key: "managerName", label: "Nama Manajer/Pelatih", placeholder: "Pep Guardiola", required: true },
-    { key: "clubName",    label: "Nama Klub",            placeholder: "Manchester City" },
+    { key: "managerRole", label: "Jabatan",               placeholder: "Manajer Manchester City" },
+    { key: "clubName",    label: "Nama Klub",             placeholder: "Manchester City" },
+    { key: "quote",       label: "Kutipan",               placeholder: "Kami tidak takut siapapun..." },
   ],
-  injury: [
-    { key: "playerName",  label: "Nama Pemain",   placeholder: "Virgil van Dijk",  required: true },
-    { key: "clubName",    label: "Nama Klub",     placeholder: "Liverpool" },
-    { key: "playerStatus", label: "Status Cedera", placeholder: "Absen 3 Minggu" },
+  trivia: [
+    { key: "triviaNumber", label: "Angka/Statistik", placeholder: "38",                              required: true },
+    { key: "triviaUnit",   label: "Satuan",          placeholder: "Tahun" },
+    { key: "triviaFact",   label: "Fakta",           placeholder: "Usia CR7 saat cetak 900 gol…",   required: true },
+    { key: "headline",     label: "Headline",        placeholder: "Judul artikel trivia…" },
+    { key: "subheadline",  label: "Subheadline",     placeholder: "Detail tambahan…" },
   ],
   general: [
     { key: "headline",    label: "Headline",    placeholder: "Judul singkat…",    required: true },
