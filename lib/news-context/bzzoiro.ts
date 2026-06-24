@@ -1,32 +1,27 @@
 // lib/news-context/bzzoiro.ts
 //
-// Sumber konteks untuk tipe berita: HASIL PERTANDINGAN, PREVIEW PERTANDINGAN,
-// dan INJURY UPDATE — menggunakan Bzzoiro Sports Data API (sports.bzzoiro.com),
-// API yang sebelumnya HANYA dipakai untuk jadwal & standing (lihat
-// app/api/live-scores/route.ts dan app/api/standings/route.ts).
+// Sumber DATA & STATISTIK TERVERIFIKASI dalam pipeline:
+//   Bzzoiro (data & statistik) → Serper (media: ESPN/Sky Sports/dll) → Tavily (backup) → LLM
 //
-// Tujuannya: minimalkan halusinasi AI dengan mengirim FAKTA NYATA dari API
-// (skor, menit gol, kartu, statistik, lineup, prediksi, H2H) sebagai konteks,
-// bukan mengandalkan admin mengetik manual atau Gemini "mengarang" detail.
+// File ini HANYA mengambil data dari Bzzoiro Sports Data API (sports.bzzoiro.com).
+// Penggabungan dengan Serper + Tavily dilakukan di app/api/generate-article/route.ts
+// (sebelumnya Tavily digabung di sini langsung — sekarang dipisah agar tiap layer
+// pipeline independen dan mudah di-debug per sumber).
 //
-// ━━━ INJURY UPDATE — HYBRID Bzzoiro + Tavily ━━━
-// Bzzoiro TIDAK punya endpoint khusus data cedera/injury pemain. Resource yang
-// tersedia di API ini hanya: leagues, teams, events (match detail/lineup/
-// incidents/stats/odds/predictions), live, players, player-stats, managers,
-// venues — TIDAK ADA endpoint "injuries".
+//   HASIL    → skor, xG, shots, shots on target, possession, momentum, goal incidents,
+//              kartu merah, penalti. Target context: 800-1000 token.
 //
-// Karena itu, fetchCederaContext menggabungkan DUA sumber:
-//   1. Bzzoiro /api/players/        → profil pemain (posisi, kebangsaan, nilai pasar)
-//   2. Bzzoiro /api/player-stats/   → statistik 5 laga terakhir (menit main, gol,
-//                                     assist, xG, rating, tackles)
-//   3. Fallback: event player-stats → cek kehadiran dari match events jika player
-//                                     ID tidak ditemukan (perilaku lama)
-//   4. Tavily Search (3 hari)       → berita cedera resmi: jenis cedera, estimasi
-//                                     absen, pernyataan pelatih/dokter tim
+//   PREVIEW  (bobot 60%) → H2H 5 pertandingan, form 5 pertandingan, win probability,
+//              odds, KLASEMEN kedua tim (BARU — sebelumnya belum diambil).
+//              Target context: 900-1200 token.
 //
-// Catatan API key:
-// - BZZOIRO_API_KEY → sudah dikonfigurasi sebelumnya untuk live-scores & standings,
-//   dipakai ulang di sini untuk generate artikel.
+//   CEDERA   → profil pemain (posisi, kontribusi musim ini, menit bermain, gol, assist).
+//              Target context: 600-800 token.
+//
+//   TRANSFER → profil pemain: nama, umur, posisi, klub, menit bermain musim ini,
+//              gol, assist, rating rata-rata, 5 laga terakhir. Target context: 500-700 token.
+//
+//   KONPERS  → form tim, posisi klasemen, 5 pertandingan terakhir. Target context: 500-700 token.
 
 const BZZOIRO_BASE = "https://sports.bzzoiro.com"
 
@@ -36,7 +31,7 @@ export interface BzzoiroContextResult {
   warning?: string
 }
 
-// ─── Fetch helper (pola sama dengan live-scores/standings route) ──────────
+// ─── Fetch helper ─────────────────────────────────────────────────────────────
 async function bzzFetch(path: string) {
   const apiKey = process.env.BZZOIRO_API_KEY
   if (!apiKey) throw new Error("BZZOIRO_API_KEY tidak ditemukan di .env.local")
@@ -51,11 +46,11 @@ async function bzzFetch(path: string) {
 
   if (!res.ok) {
     const body = await res.text().catch(() => "")
-    console.error(`❌ bzzFetch [article-context] error ${res.status} — path: ${path} — body: ${body.slice(0, 300)}`)
+    console.error(`❌ bzzFetch error ${res.status} — path: ${path} — body: ${body.slice(0, 300)}`)
     throw new Error(`Bzzoiro API error ${res.status} pada ${path}`)
   }
   const json = await res.json()
-  console.log(`✅ bzzFetch [article-context] ${path} — preview: ${JSON.stringify(json).slice(0, 200)}`)
+  console.log(`✅ bzzFetch ${path} — preview: ${JSON.stringify(json).slice(0, 200)}`)
   return json
 }
 
@@ -68,12 +63,10 @@ function fixEncoding(str: string): string {
   }
 }
 
-// ─── Cari event/match berdasarkan nama tim (untuk resolve eventId dari topic) ─
-// Topic dari admin berbentuk teks bebas ("Barcelona vs Atletico Madrid"),
-// jadi kita cari event terbaru/terdekat yang melibatkan tim-tim tersebut.
+// ─── Cari event/match berdasarkan nama tim ────────────────────────────────────
 async function findEvent(teamQuery: string, opts: { upcoming?: boolean } = {}) {
   const today = new Date()
-  const past = new Date(today.getTime() - 4 * 24 * 60 * 60 * 1000)
+  const past   = new Date(today.getTime() - 4 * 24 * 60 * 60 * 1000)
   const future = new Date(today.getTime() + 7 * 24 * 60 * 60 * 1000)
 
   const dateFrom = opts.upcoming
@@ -90,31 +83,20 @@ async function findEvent(teamQuery: string, opts: { upcoming?: boolean } = {}) {
   return events as any[]
 }
 
-// ─── HASIL PERTANDINGAN — Hybrid Bzzoiro + Tavily ───────────────────────────
-// Ambil skor akhir, statistik per tim, dan insiden (gol/kartu/subs) dari
-// Bzzoiro untuk pertandingan yang sudah selesai (status: finished),
-// LALU diperkaya dengan laporan post-match terbaru dari Tavily (window: 1 hari,
-// difokuskan ke berita hari ini — efektif menangkap laporan 30 menit terakhir).
-//
-// Hybrid ini diperlukan karena Bzzoiro hanya menyediakan data statistik mentah
-// (skor, insiden), bukan narasi: reaksi pelatih, analisis taktis, kontroversi,
-// dan atmosfer ruang ganti yang membuat artikel "The Athletic" terasa hidup.
+// ─── HASIL PERTANDINGAN ───────────────────────────────────────────────────────
+// Ambil: skor, xG, shots, shots on target, possession, momentum, goal incidents,
+// kartu merah, penalti. JANGAN: 30+ statistik detail, seluruh event pertandingan.
 export async function fetchHasilContext(topic: string): Promise<BzzoiroContextResult> {
-  const { fetchTavilyContext } = await import("./tavily")
-
   const warnings: string[] = []
   const meta: Record<string, unknown> = {}
-  const combinedParts: string[] = []
+  let bzzoiroBlock = ""
 
-  // ── 1. Data pertandingan dari Bzzoiro ────────────────────────────────────
   try {
     const events = await findEvent(topic, { upcoming: false })
     const finished = events.find((e) => (e.status ?? "").toLowerCase() === "finished") ?? events[0]
 
     if (!finished) {
-      warnings.push(
-        `Tidak ditemukan pertandingan yang cocok dengan "${topic}" di Bzzoiro dalam 4 hari terakhir.`
-      )
+      warnings.push(`Tidak ditemukan pertandingan yang cocok dengan "${topic}" di Bzzoiro dalam 4 hari terakhir.`)
     } else {
       const eventId = finished.id
       const [stats, incidents] = await Promise.all([
@@ -126,109 +108,80 @@ export async function fetchHasilContext(topic: string): Promise<BzzoiroContextRe
       const away = fixEncoding(finished.away_team ?? "")
       const scoreLine = `${home} ${finished.home_score ?? 0} - ${finished.away_score ?? 0} ${away}`
 
+      // Insiden utama: hanya gol, kartu merah, penalti (bukan semua event)
       const incidentList = (incidents?.incidents ?? incidents?.results ?? (Array.isArray(incidents) ? incidents : []))
+        .filter((inc: any) => {
+          const t = (inc.type ?? inc.incident_type ?? "").toLowerCase()
+          return t.includes("goal") || t.includes("red") || t.includes("penalty")
+        })
         .map((inc: any) => {
           const minute = inc.minute ?? inc.time ?? "?"
-          const type = inc.type ?? inc.incident_type ?? ""
+          const type   = inc.type ?? inc.incident_type ?? ""
           const player = fixEncoding(inc.player_name ?? inc.player ?? "")
-          const team = fixEncoding(inc.team_name ?? inc.team ?? "")
+          const team   = fixEncoding(inc.team_name ?? inc.team ?? "")
           return `Menit ${minute}' — ${type} — ${player}${team ? ` (${team})` : ""}`
         })
         .join("\n")
 
+      // Statistik yang diizinkan: xG, shots, shots on target, possession, momentum, pemain terbaik
+      const ALLOWED_STAT_KEYS = [
+        "xg", "xg_home", "xg_away",
+        "shots", "shots_home", "shots_away",
+        "shots_on_target", "shots_on_target_home", "shots_on_target_away",
+        "possession", "possession_home", "possession_away",
+        "momentum",
+        "best_player", "man_of_the_match", "player_of_the_match",
+      ]
+
       const statLines = stats
         ? Object.entries(stats)
-            .filter(([k]) => !["id", "event_id"].includes(k))
+            .filter(([k]) => ALLOWED_STAT_KEYS.some((allowed) => k.toLowerCase().includes(allowed)))
             .map(([k, v]) => `${k}: ${JSON.stringify(v)}`)
             .join("\n")
         : ""
 
-      const bzzoiroBlock = [
-        `[DATA PERTANDINGAN TERVERIFIKASI — Bzzoiro Sports Data API]`,
+      bzzoiroBlock = [
+        `[DATA & STATISTIK TERVERIFIKASI — Bzzoiro Sports Data API]`,
         `SKOR AKHIR: ${scoreLine}`,
         `Liga/Kompetisi: ${finished.league_name ?? finished.league ?? "-"}`,
         `Tanggal: ${finished.event_date ?? "-"}`,
-        incidentList ? `\nINSIDEN PERTANDINGAN (gol/kartu/subs):\n${incidentList}` : "",
-        statLines ? `\nSTATISTIK PERTANDINGAN:\n${statLines}` : "",
+        incidentList ? `\nINSIDEN UTAMA (gol/kartu merah/penalti):\n${incidentList}` : "",
+        statLines   ? `\nSTATISTIK KUNCI:\n${statLines}` : "",
       ].filter(Boolean).join("\n")
 
-      combinedParts.push(bzzoiroBlock)
       meta.eventId = eventId
-      meta.home = home
-      meta.away = away
-      meta.score = scoreLine
+      meta.home    = home
+      meta.away    = away
+      meta.score   = scoreLine
     }
   } catch (err) {
-    warnings.push(
-      `Bzzoiro gagal mengambil data hasil pertandingan: ${err instanceof Error ? err.message : "error tidak diketahui"}.`
-    )
+    warnings.push(`Bzzoiro gagal mengambil data hasil: ${err instanceof Error ? err.message : "error tidak diketahui"}.`)
   }
 
-  // ── 2. Laporan post-match terbaru dari Tavily (efektif ~30 menit terakhir) ─
-  try {
-    const tavilyResult = await fetchTavilyContext("hasil", topic)
-    const tavilyBlock = [
-      `[LAPORAN POST-MATCH TERBARU — Tavily Search, hari ini]`,
-      `Catatan: konten berikut berasal dari berita real-time. Prioritaskan sumber `,
-      `resmi (laporan jurnalis, situs klub, agensi berita) sebagai fakta utama.`,
-      `Gunakan kutipan pelatih/pemain yang tersedia untuk memperkaya narasi artikel.`,
-      tavilyResult.contextText.trim(),
-    ].join("\n")
-    combinedParts.push(tavilyBlock)
-    meta.tavilySources = tavilyResult.sources.length
-    meta.tavilyQuery = tavilyResult.queryUsed
-  } catch (err) {
-    warnings.push(
-      `Tavily tidak menemukan laporan post-match terbaru untuk "${topic}" ` +
-      `(${err instanceof Error ? err.message : "error tidak diketahui"}). ` +
-      `Artikel digenerate dari data statistik Bzzoiro saja.`
-    )
-    meta.tavilySources = 0
-  }
-
-  const contextText = combinedParts.join("\n\n")
-
-  if (!contextText.trim()) {
+  if (!bzzoiroBlock.trim()) {
     return {
       contextText: "",
       meta,
-      warning:
-        `Tidak ditemukan data dari Bzzoiro maupun laporan post-match dari Tavily untuk "${topic}". ` +
-        "Isi fakta pertandingan secara manual di kolom konteks sebelum generate.",
+      warning: warnings.length > 0 ? warnings.join(" | ") : `Tidak ditemukan data Bzzoiro untuk "${topic}".`,
     }
   }
-
-  return {
-    contextText,
-    meta,
-    warning: warnings.length > 0 ? warnings.join(" | ") : undefined,
-  }
+  return { contextText: bzzoiroBlock, meta, warning: warnings.length > 0 ? warnings.join(" | ") : undefined }
 }
 
-// ─── PREVIEW PERTANDINGAN — Hybrid Bzzoiro + Tavily ─────────────────────────
-// Ambil jadwal + prediksi ML dari Bzzoiro untuk pertandingan mendatang,
-// LALU diperkaya dengan analisis pra-laga, kondisi skuat, dan head-to-head
-// terbaru dari Tavily (window: 1 hari — efektif menangkap berita 12 jam terakhir).
-//
-// Hybrid ini diperlukan karena Bzzoiro hanya menyediakan prediksi numerik (prob),
-// bukan narasi: kondisi form tim, cedera pemain kunci, rekor pertemuan historis,
-// dan sentimen fan yang membuat artikel preview terasa seperti "The Athletic".
+// ─── PREVIEW PERTANDINGAN ─────────────────────────────────────────────────────
+// Ambil: H2H 5 pertandingan, form 5 pertandingan, win probability, odds, KLASEMEN.
+// JANGAN: throw in, corner detail, foul, goal kick, possession breakdown detail.
 export async function fetchPreviewContext(topic: string): Promise<BzzoiroContextResult> {
-  const { fetchTavilyContext } = await import("./tavily")
-
   const warnings: string[] = []
   const meta: Record<string, unknown> = {}
-  const combinedParts: string[] = []
+  let bzzoiroBlock = ""
 
-  // ── 1. Data jadwal & prediksi dari Bzzoiro ──────────────────────────────
   try {
     const events = await findEvent(topic, { upcoming: true })
     const upcoming = events.find((e) => (e.status ?? "").toLowerCase() !== "finished") ?? events[0]
 
     if (!upcoming) {
-      warnings.push(
-        `Tidak ditemukan pertandingan mendatang yang cocok dengan "${topic}" di Bzzoiro dalam 7 hari ke depan.`
-      )
+      warnings.push(`Tidak ditemukan pertandingan mendatang yang cocok dengan "${topic}" di Bzzoiro.`)
     } else {
       const eventId = upcoming.id
       const predictions = await bzzFetch(`/api/v2/predictions/?event=${eventId}`).catch(() => null)
@@ -236,99 +189,143 @@ export async function fetchPreviewContext(topic: string): Promise<BzzoiroContext
       const home = fixEncoding(upcoming.home_team ?? "")
       const away = fixEncoding(upcoming.away_team ?? "")
 
+      // Win probability, odds saja
+      const ALLOWED_PRED_KEYS = [
+        "home_win_prob", "draw_prob", "away_win_prob",
+        "predicted_score", "xg_home", "xg_away",
+        "btts_prob", "odds_home", "odds_draw", "odds_away",
+        "market",
+      ]
+
       const predList = predictions
         ? (predictions.results ?? (Array.isArray(predictions) ? predictions : [predictions]))
             .map((p: any) =>
-              [
-                p.market ? `Market: ${p.market}` : "",
-                p.home_win_prob != null ? `Prob. ${home} menang: ${p.home_win_prob}%` : "",
-                p.draw_prob != null ? `Prob. Seri: ${p.draw_prob}%` : "",
-                p.away_win_prob != null ? `Prob. ${away} menang: ${p.away_win_prob}%` : "",
-                p.predicted_score ? `Skor prediksi: ${p.predicted_score}` : "",
-                p.btts_prob != null ? `Prob. BTTS: ${p.btts_prob}%` : "",
-              ].filter(Boolean).join(" | ")
+              Object.entries(p)
+                .filter(([k]) => ALLOWED_PRED_KEYS.some((allowed) => k.toLowerCase().includes(allowed)))
+                .map(([k, v]) => {
+                  if (k.includes("prob")) return `${k.replace(/_/g, " ")}: ${v}%`
+                  if (k === "predicted_score") return `Skor prediksi: ${v}`
+                  return `${k.replace(/_/g, " ")}: ${v}`
+                })
+                .join(" | ")
             )
+            .filter(Boolean)
             .join("\n")
         : ""
 
-      const bzzoiroBlock = [
-        `[DATA PERTANDINGAN TERVERIFIKASI — Bzzoiro Sports Data API]`,
+      // H2H — 5 pertemuan terakhir kedua tim
+      const h2h = await bzzFetch(
+        `/api/v2/events/?search=${encodeURIComponent(topic)}&limit=5&ordering=-event_date`
+      ).catch(() => null)
+
+      const h2hList = h2h
+        ? (h2h.results ?? (Array.isArray(h2h) ? h2h : []))
+            .filter((e: any) => (e.status ?? "").toLowerCase() === "finished")
+            .slice(0, 5)
+            .map((e: any) => {
+              const h = fixEncoding(e.home_team ?? "")
+              const a = fixEncoding(e.away_team ?? "")
+              return `${h} ${e.home_score ?? 0} - ${e.away_score ?? 0} ${a} (${e.event_date ?? "-"})`
+            })
+            .join("\n")
+        : ""
+
+      // Form 5 laga masing-masing tim — fetch paralel
+      const [homeFormRaw, awayFormRaw] = await Promise.all([
+        bzzFetch(`/api/v2/events/?search=${encodeURIComponent(home)}&limit=6&ordering=-event_date`).catch(() => null),
+        bzzFetch(`/api/v2/events/?search=${encodeURIComponent(away)}&limit=6&ordering=-event_date`).catch(() => null),
+      ])
+
+      function extractForm(data: any, teamName: string): string {
+        const events = (data?.results ?? (Array.isArray(data) ? data : []))
+          .filter((e: any) => (e.status ?? "").toLowerCase() === "finished")
+          .slice(0, 5)
+        if (events.length === 0) return "(tidak tersedia)"
+        return events.map((e: any) => {
+          const h = fixEncoding(e.home_team ?? "")
+          const a = fixEncoding(e.away_team ?? "")
+          const hs = e.home_score ?? 0
+          const as_ = e.away_score ?? 0
+          const isHome = h.toLowerCase().includes(teamName.toLowerCase().split(" ")[0])
+          const result = isHome
+            ? (hs > as_ ? "M" : hs < as_ ? "K" : "S")
+            : (as_ > hs ? "M" : as_ < hs ? "K" : "S")
+          return `[${result}] ${h} ${hs}-${as_} ${a} (${e.event_date ?? "-"})`
+        }).join("\n")
+      }
+
+      const homeFormStr = homeFormRaw ? extractForm(homeFormRaw, home) : "(tidak tersedia)"
+      const awayFormStr = awayFormRaw ? extractForm(awayFormRaw, away) : "(tidak tersedia)"
+
+      // ── Klasemen kedua tim (BARU — sebelumnya tidak diambil di preview) ──
+      let standingsBlock = ""
+      try {
+        const leagueId = upcoming.league_id ?? upcoming.league
+        if (leagueId) {
+          const standings = await bzzFetch(`/api/v2/standings/?league=${leagueId}&limit=25`).catch(() => null)
+          const table: any[] = standings?.results ?? standings?.standings ?? (Array.isArray(standings) ? standings : [])
+
+          const findRow = (teamName: string) =>
+            table.find((row: any) =>
+              fixEncoding(row.team_name ?? row.team ?? "").toLowerCase().includes(teamName.toLowerCase().split(" ")[0])
+            )
+
+          const rowLine = (row: any, label: string) => row
+            ? `${label}: posisi ${row.position ?? row.rank ?? "-"} | Main ${row.played ?? row.matches_played ?? "-"} ` +
+              `| M${row.won ?? row.wins ?? "-"} S${row.drawn ?? row.draws ?? "-"} K${row.lost ?? row.losses ?? "-"} ` +
+              `| Poin ${row.points ?? "-"}`
+            : `${label}: data klasemen tidak tersedia`
+
+          standingsBlock = [rowLine(findRow(home), home), rowLine(findRow(away), away)].join("\n")
+        }
+      } catch {
+        // klasemen gagal — lanjut tanpa data ini, jangan gagalkan seluruh preview
+      }
+
+      bzzoiroBlock = [
+        `[DATA & STATISTIK TERVERIFIKASI — Bzzoiro Sports Data API]`,
         `PERTANDINGAN: ${home} vs ${away}`,
         `Liga/Kompetisi: ${upcoming.league_name ?? upcoming.league ?? "-"}`,
         `Tanggal & Waktu: ${upcoming.event_date ?? "-"}`,
         upcoming.venue ? `Venue: ${fixEncoding(upcoming.venue)}` : "",
         predList
-          ? `\nPREDIKSI ML (CatBoost, Bzzoiro):\n${predList}`
-          : "\n(Prediksi ML belum tersedia untuk laga ini di Bzzoiro.)",
+          ? `\nWIN PROBABILITY & ODDS:\n${predList}`
+          : "\n(Win probability & odds belum tersedia.)",
+        h2hList ? `\nH2H 5 PERTANDINGAN TERAKHIR:\n${h2hList}` : "",
+        `\nFORM 5 LAGA — ${home}:\n${homeFormStr}`,
+        `\nFORM 5 LAGA — ${away}:\n${awayFormStr}`,
+        standingsBlock ? `\nKLASEMEN:\n${standingsBlock}` : "",
       ].filter(Boolean).join("\n")
 
-      combinedParts.push(bzzoiroBlock)
       meta.eventId = eventId
-      meta.home = home
-      meta.away = away
+      meta.home    = home
+      meta.away    = away
     }
   } catch (err) {
-    warnings.push(
-      `Bzzoiro gagal mengambil data preview pertandingan: ${err instanceof Error ? err.message : "error tidak diketahui"}.`
-    )
+    warnings.push(`Bzzoiro gagal mengambil data preview: ${err instanceof Error ? err.message : "error tidak diketahui"}.`)
   }
 
-  // ── 2. Analisis pra-laga terbaru dari Tavily (efektif ~12 jam terakhir) ──
-  try {
-    const tavilyResult = await fetchTavilyContext("preview", topic)
-    const tavilyBlock = [
-      `[ANALISIS PRA-LAGA TERBARU — Tavily Search, 12 jam terakhir]`,
-      `Catatan: konten berikut berasal dari berita & analisis real-time. `,
-      `Gunakan sebagai sumber narasi untuk kondisi tim, form terkini, cedera kunci, `,
-      `dan head-to-head — BUKAN sebagai prediksi skor final (gunakan data Bzzoiro untuk itu).`,
-      tavilyResult.contextText.trim(),
-    ].join("\n")
-    combinedParts.push(tavilyBlock)
-    meta.tavilySources = tavilyResult.sources.length
-    meta.tavilyQuery = tavilyResult.queryUsed
-  } catch (err) {
-    warnings.push(
-      `Tavily tidak menemukan analisis pra-laga terbaru untuk "${topic}" ` +
-      `(${err instanceof Error ? err.message : "error tidak diketahui"}). ` +
-      `Artikel digenerate dari data prediksi Bzzoiro saja.`
-    )
-    meta.tavilySources = 0
-  }
-
-  const contextText = combinedParts.join("\n\n")
-
-  if (!contextText.trim()) {
+  if (!bzzoiroBlock.trim()) {
     return {
       contextText: "",
       meta,
-      warning:
-        `Tidak ditemukan data dari Bzzoiro maupun analisis pra-laga dari Tavily untuk "${topic}". ` +
-        "Isi konteks secara manual di kolom konteks sebelum generate.",
+      warning: warnings.length > 0 ? warnings.join(" | ") : `Tidak ditemukan data Bzzoiro untuk "${topic}".`,
     }
   }
-
-  return {
-    contextText,
-    meta,
-    warning: warnings.length > 0 ? warnings.join(" | ") : undefined,
-  }
+  return { contextText: bzzoiroBlock, meta, warning: warnings.length > 0 ? warnings.join(" | ") : undefined }
 }
 
-// ─── Cari profil pemain dari Bzzoiro /api/players/ ───────────────────────────
+// ─── Helpers untuk CEDERA & TRANSFER: profil + statistik ringkas pemain ──────
 async function fetchPlayerProfile(playerQuery: string): Promise<any | null> {
   try {
-    const json = await bzzFetch(
-      `/api/players/?search=${encodeURIComponent(playerQuery)}&limit=5`
-    )
+    const json = await bzzFetch(`/api/players/?search=${encodeURIComponent(playerQuery)}&limit=5`)
     const players = json.results ?? (Array.isArray(json) ? json : [])
-    if (players.length === 0) return null
-    return players[0]
+    return players.length > 0 ? players[0] : null
   } catch {
     return null
   }
 }
 
-// ─── Ambil statistik per match dari Bzzoiro /api/player-stats/ ───────────────
 async function fetchPlayerRecentStats(playerId: number): Promise<any[]> {
   try {
     const json = await bzzFetch(
@@ -340,82 +337,22 @@ async function fetchPlayerRecentStats(playerId: number): Promise<any[]> {
   }
 }
 
-// ─── Fallback: cek kehadiran pemain dari event player-stats ──────────────────
-async function fetchPlayerStatsFromEvents(
-  events: any[],
-  playerNameQuery: string,
-): Promise<{ matchLabel: string; minutesPlayed: string | number; stats: string }[]> {
-  const recentFinished = events
-    .filter((e) => (e.status ?? "").toLowerCase() === "finished")
-    .slice(0, 5)
-
-  const statsPerMatch = await Promise.all(
-    recentFinished.map((e) =>
-      bzzFetch(`/api/v2/events/${e.id}/player-stats/`).catch(() => null)
-    )
-  )
-
-  const results: { matchLabel: string; minutesPlayed: string | number; stats: string }[] = []
-  const firstName = playerNameQuery.toLowerCase().split(" ")[0]
-
-  recentFinished.forEach((e, idx) => {
-    const ps = statsPerMatch[idx]
-    const home = fixEncoding(e.home_team ?? "")
-    const away = fixEncoding(e.away_team ?? "")
-    const matchLabel = `${home} vs ${away} (${e.event_date ?? "-"})`
-
-    const list: any[] = ps?.results ?? ps?.player_stats ?? (Array.isArray(ps) ? ps : [])
-    const playerMatch = list.find((p: any) =>
-      fixEncoding(p.player_name ?? "").toLowerCase().includes(firstName)
-    )
-
-    if (playerMatch) {
-      const minutesPlayed = playerMatch.minutes_played ?? "?"
-      const statParts = [
-        playerMatch.goals != null ? `gol: ${playerMatch.goals}` : null,
-        playerMatch.assists != null ? `assist: ${playerMatch.assists}` : null,
-        playerMatch.xg != null ? `xG: ${playerMatch.xg}` : null,
-        playerMatch.xa != null ? `xA: ${playerMatch.xa}` : null,
-        playerMatch.rating != null ? `rating: ${playerMatch.rating}` : null,
-        playerMatch.tackles != null ? `tackles: ${playerMatch.tackles}` : null,
-      ].filter(Boolean).join(", ")
-      results.push({ matchLabel, minutesPlayed, stats: statParts || "data terbatas" })
-    } else {
-      results.push({
-        matchLabel,
-        minutesPlayed: "TIDAK MAIN",
-        stats: "pemain tidak tercatat bermain di laga ini",
-      })
-    }
-  })
-
-  return results
-}
-
-// ─── INJURY UPDATE — Hybrid Bzzoiro + Tavily ─────────────────────────────────
-export async function fetchCederaContext(
-  topic: string,
-): Promise<BzzoiroContextResult> {
-  const { fetchTavilyContext } = await import("./tavily")
-
+// ─── INJURY UPDATE ────────────────────────────────────────────────────────────
+// Ambil: profil pemain (posisi, kontribusi musim ini, menit bermain, gol, assist).
+// JANGAN: xG per pertandingan, seluruh statistik pertandingan.
+export async function fetchCederaContext(topic: string): Promise<BzzoiroContextResult> {
   const lines: string[] = []
   const meta: Record<string, unknown> = {}
   const warnings: string[] = []
 
-  // ── 1. Profil pemain dari Bzzoiro /api/players/ ───────────────────────────
-  let playerProfile: any | null = null
-
   try {
-    playerProfile = await fetchPlayerProfile(topic)
+    const playerProfile = await fetchPlayerProfile(topic)
     if (playerProfile) {
-      const playerName = fixEncoding(playerProfile.player_name ?? playerProfile.name ?? topic)
-      const position   = fixEncoding(playerProfile.position ?? "-")
+      const playerName  = fixEncoding(playerProfile.player_name ?? playerProfile.name ?? topic)
+      const position    = fixEncoding(playerProfile.position ?? "-")
       const nationality = fixEncoding(playerProfile.nationality ?? "-")
-      const marketValue = playerProfile.market_value
-        ? `€${playerProfile.market_value.toLocaleString()}`
-        : "-"
-      const team = fixEncoding(playerProfile.team_name ?? playerProfile.team ?? "-")
-      const age  = playerProfile.age ?? playerProfile.date_of_birth ?? "-"
+      const team        = fixEncoding(playerProfile.team_name ?? playerProfile.team ?? "-")
+      const age         = playerProfile.age ?? playerProfile.date_of_birth ?? "-"
 
       lines.push("[DATA PEMAIN — Bzzoiro Sports Data API]")
       lines.push(`Nama: ${playerName}`)
@@ -423,146 +360,235 @@ export async function fetchCederaContext(
       lines.push(`Posisi: ${position}`)
       lines.push(`Kebangsaan: ${nationality}`)
       if (age !== "-") lines.push(`Usia/Lahir: ${age}`)
-      if (marketValue !== "-") lines.push(`Nilai Pasar: ${marketValue}`)
       lines.push("")
 
       meta.playerFound = true
       meta.playerName  = playerName
       meta.team        = team
 
-      // ── 2. Statistik 5 laga terakhir via player ID ──────────────────────
       const playerId = playerProfile.id
       if (playerId) {
         const recentStats = await fetchPlayerRecentStats(playerId)
         if (recentStats.length > 0) {
-          lines.push("STATISTIK 5 LAGA TERAKHIR (dari Bzzoiro /api/player-stats/):")
+          lines.push("KONTRIBUSI 5 LAGA TERAKHIR (menit, gol, assist):")
           recentStats.forEach((s: any) => {
             const matchLabel = [
               fixEncoding(s.home_team ?? s.event?.home_team ?? ""),
               "vs",
               fixEncoding(s.away_team ?? s.event?.away_team ?? ""),
-              (s.event_date ?? s.event?.event_date)
-                ? `(${s.event_date ?? s.event?.event_date})`
-                : "",
+              (s.event_date ?? s.event?.event_date) ? `(${s.event_date ?? s.event?.event_date})` : "",
             ].filter(Boolean).join(" ")
 
             const minutes = s.minutes_played ?? "?"
             const statParts = [
               s.goals   != null ? `gol: ${s.goals}`     : null,
               s.assists != null ? `assist: ${s.assists}` : null,
-              s.xg      != null ? `xG: ${s.xg}`         : null,
-              s.xa      != null ? `xA: ${s.xa}`         : null,
               s.rating  != null ? `rating: ${s.rating}` : null,
-              s.tackles != null ? `tackles: ${s.tackles}` : null,
-              s.shots   != null ? `shots: ${s.shots}`   : null,
             ].filter(Boolean).join(", ")
 
             lines.push(
               `  • ${matchLabel || "(laga tidak diketahui)"} — ` +
-              `${minutes === 0 ? "TIDAK BERMAIN" : `${minutes} menit main`}` +
+              `${minutes === 0 ? "TIDAK BERMAIN" : `${minutes} menit`}` +
               `${statParts ? ` (${statParts})` : ""}`
             )
           })
           meta.statsMatchesCount = recentStats.length
         } else {
-          lines.push(
-            "  (Statistik per-laga pemain tidak tersedia di Bzzoiro — " +
-            "kemungkinan pemain belum tampil musim ini atau data belum masuk.)"
-          )
+          lines.push("  (Statistik pemain belum tersedia di Bzzoiro.)")
         }
       }
     } else {
-      warnings.push(
-        `Profil pemain "${topic}" tidak ditemukan di Bzzoiro /api/players/. ` +
-        "Mencoba mengambil data kehadiran dari match events tim."
-      )
+      warnings.push(`Profil pemain "${topic}" tidak ditemukan di Bzzoiro.`)
       meta.playerFound = false
     }
   } catch (err) {
-    warnings.push(
-      `Gagal mengambil profil pemain dari Bzzoiro: ${err instanceof Error ? err.message : "error tidak diketahui"}.`
-    )
+    warnings.push(`Gagal mengambil profil pemain: ${err instanceof Error ? err.message : "error tidak diketahui"}.`)
     meta.playerFound = false
   }
 
-  // ── 3. Fallback kehadiran dari event player-stats ─────────────────────────
-  if (!playerProfile) {
-    try {
-      const events = await findEvent(topic, { upcoming: false })
-      if (events.length > 0) {
-        const presenceData = await fetchPlayerStatsFromEvents(events, topic)
-        if (presenceData.length > 0) {
-          if (lines.length > 0) lines.push("")
-          lines.push("[DATA KEHADIRAN DARI MATCH EVENTS — Bzzoiro (fallback)]")
-          lines.push(
-            "Catatan: profil pemain tidak ditemukan via /api/players/. " +
-            "Data berikut adalah riwayat kehadiran dari player-stats per event — bukan konfirmasi cedera."
-          )
-          presenceData.forEach((d) => {
-            lines.push(
-              `  • ${d.matchLabel} — ` +
-              `${d.minutesPlayed === "TIDAK MAIN" ? "TIDAK BERMAIN" : `${d.minutesPlayed} menit main`}` +
-              `${d.stats !== "pemain tidak tercatat bermain di laga ini" ? ` (${d.stats})` : ""}`
-            )
-          })
-          meta.fallbackPresenceChecked = presenceData.length
-        }
-      }
-    } catch {
-      // Fallback gagal — Tavily masih akan memberikan konteks dari berita
-    }
-  }
-
-  // ── 4. Tavily: berita cedera resmi (window 3 hari) ───────────────────────
-  let tavilyBlock = ""
-  try {
-    const tavilyResult = await fetchTavilyContext("cedera", topic)
-    tavilyBlock = tavilyResult.contextText
-    meta.tavilySources = tavilyResult.sources.length
-    meta.tavilyQuery   = tavilyResult.queryUsed
-  } catch (err) {
-    const msg =
-      `Tavily tidak menemukan berita cedera dalam 3 hari terakhir untuk "${topic}" ` +
-      `(${err instanceof Error ? err.message : "error tidak diketahui"}). ` +
-      "Artikel digenerate dari data Bzzoiro + catatan manual admin."
-    warnings.push(msg)
-    meta.tavilySources = 0
-  }
-
-  // ── Gabungkan output ──────────────────────────────────────────────────────
-  const combinedLines: string[] = []
-
-  const bzzoiroBlock = lines.join("\n")
-  if (bzzoiroBlock.trim()) combinedLines.push(bzzoiroBlock.trim())
-
-  if (tavilyBlock.trim()) {
-    if (combinedLines.length > 0) combinedLines.push("")
-    combinedLines.push("[BERITA CEDERA TERKINI — Tavily Search, 3 hari terakhir]")
-    combinedLines.push(
-      "Catatan: konten berikut berasal dari hasil pencarian berita real-time. " +
-      "Prioritaskan pernyataan resmi dari klub, dokter tim, atau pelatih sebagai fakta utama."
-    )
-    combinedLines.push(tavilyBlock.trim())
-  }
-
-  const contextText = combinedLines.join("\n")
-
+  const contextText = lines.join("\n")
   if (!contextText.trim()) {
     return {
       contextText: "",
       meta,
-      warning:
-        `Tidak ditemukan data dari Bzzoiro maupun Tavily untuk "${topic}". ` +
-        "Isi fakta cedera secara manual di kolom konteks sebelum generate.",
+      warning: warnings.length > 0 ? warnings.join(" | ") : `Tidak ditemukan data Bzzoiro untuk "${topic}".`,
     }
   }
-
-  return {
-    contextText,
-    meta,
-    warning: warnings.length > 0 ? warnings.join(" | ") : undefined,
-  }
+  return { contextText, meta, warning: warnings.length > 0 ? warnings.join(" | ") : undefined }
 }
 
-// ─── Alias untuk kompatibilitas (route.ts lama memanggil nama ini) ────────────
+// ─── TRANSFER RUMOR — Data profil pemain dari Bzzoiro ────────────────────────
+// Ambil: nama, umur, posisi, klub, menit bermain musim ini, gol, assist, rating
+// rata-rata, 5 laga terakhir. JANGAN: statistik detail pertandingan, lineup, xG per laga.
+export async function fetchTransferContext(topic: string): Promise<BzzoiroContextResult> {
+  const lines: string[] = []
+  const meta: Record<string, unknown> = {}
+  const warnings: string[] = []
+
+  try {
+    const playerProfile = await fetchPlayerProfile(topic)
+
+    if (!playerProfile) {
+      warnings.push(`Profil pemain "${topic}" tidak ditemukan di Bzzoiro.`)
+      return { contextText: "", meta, warning: warnings.join(" | ") }
+    }
+
+    const playerName  = fixEncoding(playerProfile.player_name ?? playerProfile.name ?? topic)
+    const position    = fixEncoding(playerProfile.position ?? "-")
+    const nationality = fixEncoding(playerProfile.nationality ?? "-")
+    const team        = fixEncoding(playerProfile.team_name ?? playerProfile.team ?? "-")
+    const age         = playerProfile.age ?? "-"
+    const marketValue = playerProfile.market_value
+      ? `€${playerProfile.market_value.toLocaleString()}`
+      : "-"
+
+    lines.push("[DATA PEMAIN — Bzzoiro Sports Data API]")
+    lines.push(`Nama: ${playerName}`)
+    lines.push(`Tim Saat Ini: ${team}`)
+    lines.push(`Posisi: ${position}`)
+    lines.push(`Kebangsaan: ${nationality}`)
+    if (age !== "-")         lines.push(`Umur: ${age}`)
+    if (marketValue !== "-") lines.push(`Nilai Pasar: ${marketValue}`)
+    lines.push("")
+
+    meta.playerFound = true
+    meta.playerName  = playerName
+    meta.team        = team
+
+    const playerId = playerProfile.id
+    if (playerId) {
+      const recentStats = await fetchPlayerRecentStats(playerId)
+      if (recentStats.length > 0) {
+        const totalMinutes = recentStats.reduce((acc, s) => acc + (s.minutes_played ?? 0), 0)
+        const totalGoals   = recentStats.reduce((acc, s) => acc + (s.goals ?? 0), 0)
+        const totalAssists = recentStats.reduce((acc, s) => acc + (s.assists ?? 0), 0)
+        const avgRating    = recentStats.filter((s) => s.rating != null).length > 0
+          ? (recentStats.reduce((acc, s) => acc + (s.rating ?? 0), 0) /
+             recentStats.filter((s) => s.rating != null).length).toFixed(1)
+          : "-"
+
+        lines.push(`STATISTIK MUSIM INI (dari 5 laga terakhir yang tersedia):`)
+        lines.push(`Total menit: ${totalMinutes} | Gol: ${totalGoals} | Assist: ${totalAssists} | Rating rata-rata: ${avgRating}`)
+        lines.push("")
+        lines.push("5 PERTANDINGAN TERAKHIR:")
+        recentStats.forEach((s: any) => {
+          const matchLabel = [
+            fixEncoding(s.home_team ?? s.event?.home_team ?? ""),
+            "vs",
+            fixEncoding(s.away_team ?? s.event?.away_team ?? ""),
+            (s.event_date ?? s.event?.event_date) ? `(${s.event_date ?? s.event?.event_date})` : "",
+          ].filter(Boolean).join(" ")
+
+          const minutes = s.minutes_played ?? "?"
+          const statParts = [
+            s.goals   != null ? `gol: ${s.goals}`     : null,
+            s.assists != null ? `assist: ${s.assists}` : null,
+            s.rating  != null ? `rating: ${s.rating}` : null,
+          ].filter(Boolean).join(", ")
+
+          lines.push(
+            `  • ${matchLabel || "(laga tidak diketahui)"} — ` +
+            `${minutes} menit${statParts ? ` (${statParts})` : ""}`
+          )
+        })
+      } else {
+        lines.push("  (Statistik pertandingan pemain belum tersedia di Bzzoiro.)")
+      }
+    }
+  } catch (err) {
+    warnings.push(`Gagal mengambil data pemain dari Bzzoiro: ${err instanceof Error ? err.message : "error tidak diketahui"}.`)
+  }
+
+  const contextText = lines.join("\n")
+  return { contextText, meta, warning: warnings.length > 0 ? warnings.join(" | ") : undefined }
+}
+
+// ─── KONFERENSI PERS — Data tim dari Bzzoiro ─────────────────────────────────
+// Ambil: form tim, posisi klasemen, 5 pertandingan terakhir. JANGAN: seluruh statistik pertandingan.
+export async function fetchKonpersContext(topic: string): Promise<BzzoiroContextResult> {
+  const lines: string[] = []
+  const meta: Record<string, unknown> = {}
+  const warnings: string[] = []
+
+  try {
+    // Ambil 5 laga terakhir tim dari events
+    const events = await findEvent(topic, { upcoming: false })
+    const finished = events
+      .filter((e) => (e.status ?? "").toLowerCase() === "finished")
+      .slice(0, 5)
+
+    if (finished.length === 0) {
+      warnings.push(`Tidak ditemukan pertandingan terbaru untuk "${topic}" di Bzzoiro.`)
+      return { contextText: "", meta, warning: warnings.join(" | ") }
+    }
+
+    // Cari nama tim yang paling sering muncul sebagai home/away sesuai query
+    const topicLower = topic.toLowerCase()
+    const teamName = fixEncoding(
+      finished
+        .map((e: any) => [e.home_team, e.away_team])
+        .flat()
+        .find((t: string) => fixEncoding(t ?? "").toLowerCase().includes(topicLower.split(" ")[0]))
+      ?? finished[0].home_team
+      ?? finished[0].away_team
+      ?? topic
+    )
+
+    lines.push("[DATA TIM — Bzzoiro Sports Data API]")
+    lines.push(`Tim: ${teamName}`)
+    lines.push("")
+
+    // Posisi klasemen dari standings API
+    try {
+      const leagueId = finished[0]?.league_id ?? finished[0]?.league
+      if (leagueId) {
+        const standings = await bzzFetch(`/api/v2/standings/?league=${leagueId}&limit=25`).catch(() => null)
+        const table: any[] = standings?.results ?? standings?.standings ?? (Array.isArray(standings) ? standings : [])
+        const teamRow = table.find((row: any) =>
+          fixEncoding(row.team_name ?? row.team ?? "").toLowerCase().includes(topicLower.split(" ")[0])
+        )
+        if (teamRow) {
+          const pos = teamRow.position ?? teamRow.rank ?? "-"
+          const pts = teamRow.points ?? "-"
+          const played = teamRow.played ?? teamRow.matches_played ?? "-"
+          const w = teamRow.won ?? teamRow.wins ?? "-"
+          const d = teamRow.drawn ?? teamRow.draws ?? "-"
+          const l = teamRow.lost ?? teamRow.losses ?? "-"
+          lines.push(`POSISI KLASEMEN: ${pos} | Main: ${played} | M: ${w} S: ${d} K: ${l} | Poin: ${pts}`)
+          lines.push("")
+        }
+      }
+    } catch {
+      // standings gagal — lanjut tanpa klasemen
+    }
+
+    // Form 5 laga — hasil W/D/L + skor
+    lines.push("FORM 5 LAGA TERAKHIR:")
+    finished.forEach((e: any) => {
+      const home      = fixEncoding(e.home_team ?? "")
+      const away      = fixEncoding(e.away_team ?? "")
+      const homeScore = e.home_score ?? 0
+      const awayScore = e.away_score ?? 0
+      const date      = e.event_date ?? "-"
+      const isHome    = home.toLowerCase().includes(topicLower.split(" ")[0])
+      let result = "?"
+      if (isHome) {
+        result = homeScore > awayScore ? "M" : homeScore < awayScore ? "K" : "S"
+      } else {
+        result = awayScore > homeScore ? "M" : awayScore < homeScore ? "K" : "S"
+      }
+      lines.push(`  • [${result}] ${home} ${homeScore} - ${awayScore} ${away} (${date})`)
+    })
+
+    meta.teamName      = teamName
+    meta.recentMatches = finished.length
+  } catch (err) {
+    warnings.push(`Bzzoiro gagal mengambil data tim: ${err instanceof Error ? err.message : "error tidak diketahui"}.`)
+  }
+
+  const contextText = lines.join("\n")
+  return { contextText, meta, warning: warnings.length > 0 ? warnings.join(" | ") : undefined }
+}
+
+// ─── Alias untuk kompatibilitas ───────────────────────────────────────────────
 export const fetchCederaSignalContext = fetchCederaContext

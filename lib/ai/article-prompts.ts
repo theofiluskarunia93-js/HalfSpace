@@ -69,9 +69,18 @@ OUTPUT FORMAT (JSON ketat, tidak ada teks di luar JSON):
   "content": "<artikel HTML: gunakan <h2> untuk subjudul bagian, <p> untuk paragraf, <blockquote> untuk kutipan langsung. TIDAK ADA tag HTML lain.>"
 }
 
+PANJANG DAN KEDALAMAN ARTIKEL (WAJIB DIIKUTI):
+- WAJIB 500-700 kata — tidak boleh kurang.
+- WAJIB minimal 8 paragraf — setiap paragraf membawa satu ide/momen baru.
+- WAJIB minimal 3 subheading <h2>.
+- Setiap subheading WAJIB diikuti minimal 2 paragraf penjelasan.
+- DILARANG membuat artikel ringkas. Kembangkan SELURUH fakta yang tersedia menjadi narasi analitis mendalam.
+- Jika satu fakta dari konteks bisa dikembangkan menjadi 2-3 kalimat analisis, LAKUKAN ITU.
+- Artikel pendek adalah kegagalan editorial — pembaca datang untuk analisis, bukan ringkasan.
+
 DISIPLIN DATA:
 - Gunakan HANYA fakta dari konteks yang diberikan. Jangan mengarang skor, nama, menit, atau kutipan.
-- Jika data terbatas, lebih baik artikel lebih pendek tapi akurat daripada panjang tapi penuh spekulasi.
+- Data terbatas bukan alasan untuk artikel pendek — kembangkan analisis dan implikasi dari setiap fakta yang ada.
 - Bedakan antara data terverifikasi (Bzzoiro) dan berita/analisis (Tavily) — prioritaskan yang terverifikasi untuk fakta keras.`
 
 // ─── Instruksi per tipe berita ────────────────────────────────────────────────
@@ -108,7 +117,15 @@ ATURAN JUDUL SPESIFIK untuk Hasil:
 - Fokus pada MOMEN atau MAKNA hasil, bukan skor atau nama tim di judul.
 - Contoh yang baik: "Malam Comeback yang Tak Ada yang Mengira Mungkin Terjadi"
 - Contoh yang baik: "Kartu Merah di Menit Tujuh dan Segalanya Berubah"
-- Hindari: "Barcelona Menang 3-1 atas Atletico"`,
+- Hindari: "Barcelona Menang 3-1 atas Atletico"
+
+PANJANG ARTIKEL (WAJIB):
+- Artikel WAJIB 500-700 kata.
+- Minimal 8 paragraf.
+- Minimal 3 subheading <h2>.
+- Setiap subheading minimal 2 paragraf.
+- Jangan membuat artikel ringkas.
+- Kembangkan seluruh fakta yang tersedia menjadi narasi analitis bergaya The Athletic.`,
 
   // ── PREVIEW PERTANDINGAN ────────────────────────────────────────────────────
   // Data: Bzzoiro (jadwal, prediksi ML probabilitas) + Tavily (analisis pra-laga,
@@ -140,7 +157,15 @@ ATURAN JUDUL SPESIFIK untuk Preview:
 - Fokus pada PERTANYAAN TAKTIS atau KETEGANGAN yang akan terjawab, bukan nama tim.
 - Contoh yang baik: "Siapa yang Lebih Lapar — Dan Kenapa Jawabannya Tidak Sesederhana Itu"
 - Contoh yang baik: "Ketika Dua Filosofi Bertemu di Tempat yang Tidak Bisa Keduanya Menang"
-- Hindari: "Preview: Manchester City vs Real Madrid UCL"`,
+- Hindari: "Preview: Manchester City vs Real Madrid UCL"
+
+PANJANG ARTIKEL (WAJIB):
+- Artikel WAJIB 500-700 kata.
+- Minimal 8 paragraf.
+- Minimal 3 subheading <h2>.
+- Setiap subheading minimal 2 paragraf.
+- Jangan membuat artikel ringkas.
+- Kembangkan seluruh fakta yang tersedia menjadi narasi analitis bergaya The Athletic.`,
 
   // ── CEDERA / INJURY UPDATE ──────────────────────────────────────────────────
   // Data: Bzzoiro (profil pemain, statistik/menit main 5 laga) + Tavily (berita
@@ -167,7 +192,15 @@ ATURAN JUDUL SPESIFIK untuk Injury Update:
 - Fokus pada DAMPAK kehilangan pemain ini, bukan sekadar nama + cedera.
 - Contoh yang baik: "Ketika Jantung Lini Tengah Itu Harus Berhenti Berdetak Sementara"
 - Contoh yang baik: "Absen Tiga Pekan, dan Laga yang Paling Tidak Boleh Dilewatkan"
-- Hindari: "Update Cedera: [Nama Pemain] Mengalami Cedera Paha"`,
+- Hindari: "Update Cedera: [Nama Pemain] Mengalami Cedera Paha"
+
+PANJANG ARTIKEL (WAJIB):
+- Artikel WAJIB 500-700 kata.
+- Minimal 8 paragraf.
+- Minimal 3 subheading <h2>.
+- Setiap subheading minimal 2 paragraf.
+- Jangan membuat artikel ringkas.
+- Kembangkan seluruh fakta yang tersedia menjadi narasi analitis bergaya The Athletic.`,
 
   // ── KONFERENSI PERS ─────────────────────────────────────────────────────────
   // Data: Tavily (berita konpers terbaru, kutipan langsung pelatih/pemain, konteks).
@@ -192,7 +225,15 @@ ATURAN JUDUL SPESIFIK untuk Konpers:
 - Ambil esensi pernyataan terkuat, bukan nama pelatih + tanggal konpers.
 - Contoh yang baik: "Kata-Kata yang Tidak Pernah Diucapkan Pelatih Itu Sebelumnya"
 - Contoh yang baik: "Antara Diplomasi dan Frustrasi: Apa yang Sebenarnya Ingin Dikatakan"
-- Hindari: "Konpers Pep Guardiola Setelah Kekalahan dari Arsenal"`,
+- Hindari: "Konpers Pep Guardiola Setelah Kekalahan dari Arsenal"
+
+PANJANG ARTIKEL (WAJIB):
+- Artikel WAJIB 500-700 kata.
+- Minimal 8 paragraf.
+- Minimal 3 subheading <h2>.
+- Setiap subheading minimal 2 paragraf.
+- Jangan membuat artikel ringkas.
+- Kembangkan seluruh fakta yang tersedia menjadi narasi analitis bergaya The Athletic.`,
 
   // ── TRANSFER ────────────────────────────────────────────────────────────────
   // Data: Tavily (berita transfer terbaru, sumber jurnalis, detail klausul/biaya).
@@ -218,7 +259,15 @@ ATURAN JUDUL SPESIFIK untuk Transfer:
 - Fokus pada NARASI di balik transfer, bukan format "Pemain X ke Klub Y".
 - Contoh yang baik: "Perpisahan yang Tidak Perlu, dan Angka yang Membuat Semuanya Masuk Akal"
 - Contoh yang baik: "Dari Pembuangan ke Prioritas: Bagaimana Situasi Ini Berbalik 180 Derajat"
-- Hindari: "Marcus Rashford Resmi ke Barcelona dengan Biaya €40 Juta"`,
+- Hindari: "Marcus Rashford Resmi ke Barcelona dengan Biaya €40 Juta"
+
+PANJANG ARTIKEL (WAJIB):
+- Artikel WAJIB 500-700 kata.
+- Minimal 8 paragraf.
+- Minimal 3 subheading <h2>.
+- Setiap subheading minimal 2 paragraf.
+- Jangan membuat artikel ringkas.
+- Kembangkan seluruh fakta yang tersedia menjadi narasi analitis bergaya The Athletic.`,
 
   // ── TRIVIA ──────────────────────────────────────────────────────────────────
   // Data: murni konteks manual admin — tidak ada sumber data otomatis.
@@ -241,7 +290,15 @@ ATURAN JUDUL SPESIFIK untuk Trivia:
 - Buat pembaca merasa HARUS tahu ini, tanpa clickbait.
 - Contoh yang baik: "Rekor yang Bertahan Lebih Lama dari Karir Dua Generasi Pemain"
 - Contoh yang baik: "Satu Momen di 1974 yang Ternyata Mengubah Cara Kita Bermain Bola"
-- Hindari: "Fakta Unik Hat-Trick Tercepat di Sejarah Premier League"`,
+- Hindari: "Fakta Unik Hat-Trick Tercepat di Sejarah Premier League"
+
+PANJANG ARTIKEL (WAJIB):
+- Artikel WAJIB 500-700 kata.
+- Minimal 8 paragraf.
+- Minimal 3 subheading <h2>.
+- Setiap subheading minimal 2 paragraf.
+- Jangan membuat artikel ringkas.
+- Kembangkan seluruh fakta yang tersedia menjadi narasi analitis bergaya The Athletic.`,
 }
 
 // ─── Helpers ─────────────────────────────────────────────────────────────────
