@@ -352,17 +352,21 @@ function cleanLegacyBadgeContent(content: string): string {
 
 // ─── Info Pipeline Generate Artikel ──────────────────────────────────────────
 // Generate Draft (tombol Sparkles) → POST /api/generate-article
-//   Model fix Gemini 3.5 Flash via Gemini API langsung (Google AI Studio) —
-//   TIDAK lagi lewat OpenRouter. Tidak ada lagi dropdown
-//   pemilihan model di modal (sebelumnya ada 3 model free tier yang sering
-//   timeout, sekarang disederhanakan jadi satu model saja).
+//   Model fix Llama 4 Scout via Cloudflare Workers AI (@cf/meta/llama-4-scout-17b-16e-instruct).
+//   Sebelumnya Groq gpt-oss-120b (TPM 8K free tier, sering 413 "Request too large"),
+//   dipindah karena context window Llama 4 Scout ~131K + rate limit 300 RPM jauh lebih
+//   lega. Tidak ada lagi dropdown pemilihan model di modal — kalau suatu hari mau ganti
+//   model lagi, ubah konstanta AI_MODEL_LABEL ini saja (dan konstanta senama di route.ts).
 //   Sejak integrasi sumber data per tipe berita, server otomatis mengambil
 //   data faktual sebelum menulis (admin tidak perlu isi context manual,
 //   kecuali untuk Trivia yang tetap wajib manual):
-//     - Hasil Pertandingan  → Bzzoiro (skor/insiden) + Tavily (laporan post-match ~30 menit)
-//     - Preview Pertandingan → Bzzoiro (jadwal/prediksi ML) + Tavily (analisis pra-laga ~12 jam)
-//     - Injury Update       → Bzzoiro (profil/menit main) + Tavily (berita cedera 3 hari)
-//     - Konferensi Pers, Transfer Rumor → Tavily Search (2 hari terakhir)
+//     - Hasil Pertandingan   → Bzzoiro (skor/insiden/statistik) + Serper (ESPN, Sky
+//                              Sports, Detik Sport, CNN Indonesia) + Tavily (backup)
+//     - Preview Pertandingan → Bzzoiro (H2H, form, win probability, odds) + Serper
+//                              (prediksi media, kondisi skuad) + Tavily (backup)
+//     - Injury Update        → Bzzoiro (profil/menit main) + Serper (ESPN, BBC, Sky
+//                              Sports, situs resmi klub) + Tavily (pelengkap)
+//     - Konferensi Pers, Transfer Rumor → Serper + Tavily (quote, rumor, validasi)
 //
 // Catatan: tombol "Revisi Editor AI" (tahap kedua, /api/edit-article) sudah
 // DIHAPUS dari UI ini sesuai permintaan — sudah tidak dipakai. Generate Draft
@@ -371,7 +375,7 @@ function cleanLegacyBadgeContent(content: string): string {
 // Label model yang ditampilkan di UI (progress step & footer modal).
 // Tidak ada lagi dropdown — kalau suatu hari mau ganti model, ubah konstanta
 // ini saja (dan konstanta senama di route.ts) supaya tetap konsisten.
-const AI_MODEL_LABEL = "Gemini 3.5 Flash"
+const AI_MODEL_LABEL = "Llama 4 Scout"
 
 // ─── Inject section-label otomatis ke hasil AI generate ──────────────────────
 // Memproses HTML hasil AI dan menyisipkan <p class="section-label"> sebelum
@@ -421,11 +425,14 @@ function injectSectionLabels(html: string, newsType: string): string {
 
 // ─── Sumber data otomatis per tipe berita ───────────────────────────────────
 // Ditampilkan di modal Generate Draft supaya admin tahu dari mana data
-// faktual artikel ini diambil sebelum ditulis oleh Gemini 3.5 Flash (Gemini API langsung).
-//   - Hasil       → Bzzoiro (skor/insiden/statistik) + Tavily (laporan post-match ~30 menit)
-//   - Preview     → Bzzoiro (jadwal/prediksi ML) + Tavily (analisis pra-laga ~12 jam)
-//   - Injury      → Bzzoiro (profil/menit main) + Tavily (berita cedera 3 hari)
-//   - Konpers     → Tavily Search (2 hari terakhir)
+// faktual artikel ini diambil sebelum ditulis oleh Llama 4 Scout (Cloudflare Workers AI).
+//   - Hasil       → Bzzoiro (skor/insiden/statistik) + Serper (ESPN, Sky Sports, Detik
+//                   Sport, CNN Indonesia) + Tavily (backup)
+//   - Preview     → Bzzoiro (H2H, form, win probability, odds) + Serper (prediksi
+//                   media, kondisi skuad) + Tavily (backup)
+//   - Injury      → Bzzoiro (profil/menit main) + Serper (ESPN, BBC, Sky Sports,
+//                   situs resmi klub) + Tavily (pelengkap)
+//   - Konpers     → Serper + Tavily (quote pelatih/pemain, 2 hari terakhir)
 //   - Transfer    → Tavily Search (2 hari terakhir)
 //   - Trivia      → tidak ada, murni konteks manual
 const NEWS_TYPE_SOURCE: Record<string, string> = {
@@ -536,7 +543,7 @@ export function CreateArticleView({ onBack, articleId }: CreateArticleViewProps)
   const [aiNewsType,    setAiNewsType]    = useState<"transfer" | "konpers" | "cedera" | "preview" | "hasil" | "trivia">("transfer")
   const [aiTopic,       setAiTopic]       = useState("")
   const [aiContext,     setAiContext]     = useState("")
-  // Model generate sudah fix Gemini 3.5 Flash (lihat konstanta AI_MODEL_LABEL
+  // Model generate sudah fix Llama 4 Scout (lihat konstanta AI_MODEL_LABEL
   // di atas) — tidak ada lagi state pemilihan model di sini.
   const [aiGenerating,  setAiGenerating]  = useState(false)
   const [aiError,       setAiError]       = useState<string | null>(null)
@@ -902,9 +909,9 @@ export function CreateArticleView({ onBack, articleId }: CreateArticleViewProps)
       }
 
       // Stream selesai tanpa event "done" — koneksi putus prematur
-      // (timeout Vercel, Gemini 3.5 Flash tidak merespons, dll) tanpa error message dari server.
+      // (timeout Vercel, Llama 4 Scout tidak merespons, dll) tanpa error message dari server.
       if (!receivedDone) {
-        throw new Error(`Koneksi ke server terputus sebelum selesai. Kemungkinan ${AI_MODEL_LABEL} timeout, tidak merespons, atau kuota/billing Gemini API habis. Coba lagi.`)
+        throw new Error(`Koneksi ke server terputus sebelum selesai. Kemungkinan ${AI_MODEL_LABEL} timeout, tidak merespons, atau kuota Cloudflare Workers AI habis. Coba lagi.`)
       }
     } catch (err: any) {
       setAiError(err.message ?? "Gagal generate artikel. Coba lagi.")
@@ -1840,9 +1847,8 @@ export function CreateArticleView({ onBack, articleId }: CreateArticleViewProps)
               </p>
             </div>
 
-            {/* Model generate fix Gemini 3.5 Flash via Gemini API langsung
-                (Google AI Studio, bukan OpenRouter) — dropdown
-                pemilihan model sudah dihapus karena cuma 1 model yang dipakai. */}
+            {/* Model generate fix Llama 4 Scout via Cloudflare Workers AI —
+                dropdown pemilihan model sudah dihapus karena cuma 1 model yang dipakai. */}
 
             {/* Error */}
             {aiError && (
@@ -1910,7 +1916,7 @@ export function CreateArticleView({ onBack, articleId }: CreateArticleViewProps)
           {/* Footer */}
           <div className="flex items-center justify-between border-t border-border px-6 py-4">
             <p className="text-[11px] text-muted-foreground">
-              Draft Stage — Powered by {AI_MODEL_LABEL} (Gemini API)
+              Draft Stage — Powered by {AI_MODEL_LABEL} (Cloudflare Workers AI)
             </p>
             <div className="flex gap-3">
               <button

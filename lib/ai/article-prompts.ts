@@ -1,7 +1,10 @@
 // lib/ai/article-prompts.ts
 //
 // Prompt editorial untuk generate artikel sepak bola bergaya The Athletic.
-// Dipakai oleh /api/generate-article/route.ts — dikirim ke Groq GPT OSS 120B.
+// Dipakai oleh /api/generate-article/route.ts — dikirim ke Cloudflare Workers AI
+// (@cf/meta/llama-4-scout-17b-16e-instruct). Sebelumnya Groq gpt-oss-120b (TPM 8K,
+// sering 413) — dipindah ke Llama 4 Scout karena context window 131K jauh lebih lega
+// dan rate limit Text Generation 300 RPM vs 30 RPM di Groq free tier.
 //
 // ━━━ FILOSOFI PENULISAN (The Athletic style) ━━━
 // Artikel The Athletic tidak pernah hanya melapor — selalu bernarasi.
@@ -63,11 +66,16 @@ ATURAN JUDUL (WAJIB DIIKUTI):
 - Gunakan kata benda/kata kerja yang kuat dan spesifik.
 - Max 80 karakter. Tanpa tanda tanya. Tanpa clickbait.
 
-OUTPUT FORMAT (JSON ketat, tidak ada teks di luar JSON):
+OUTPUT FORMAT — WAJIB JSON MURNI, TIDAK ADA TEKS LAIN:
+- Balasan kamu HARUS dimulai dengan karakter { dan diakhiri dengan karakter }. TIDAK ADA kata pengantar,
+  TIDAK ADA penjelasan, TIDAK ADA markdown code fence (penanda blok kode tiga tanda kutip terbalik berurutan dengan kata json), TIDAK ADA teks apa pun di luar objek JSON.
+- Format wajib:
 {
   "title": "<judul bergaya The Athletic — lihat aturan di atas>",
   "content": "<artikel HTML: gunakan <h2> untuk subjudul bagian, <p> untuk paragraf, <blockquote> untuk kutipan langsung. TIDAK ADA tag HTML lain.>"
 }
+- Pastikan JSON valid: semua tanda kutip ganda di dalam isi "content" HARUS di-escape dengan benar (\\"),
+  dan tidak ada baris baru mentah di dalam string — gunakan escape \\n jika perlu baris baru di dalam HTML.
 
 PANJANG DAN KEDALAMAN ARTIKEL (WAJIB DIIKUTI):
 - WAJIB 500-700 kata — tidak boleh kurang.
@@ -101,7 +109,32 @@ LARANGAN KLAIM PSIKOLOGIS TANPA SUMBER:
 - Jangan mengubah korelasi statistik jadi narasi sebab-akibat psikologis. Statistik menunjukkan APA yang terjadi,
   bukan KENAPA secara mental — kecuali ada sumber yang menyatakannya.
 
-VARIASI STRUKTUR KALIMAT (WAJIB):
+LARANGAN FABRIKASI NAMA PEMAIN (WAJIB — PRIORITAS TINGGI):
+- Sebut nama pemain dalam konteks AKSI SPESIFIK (mencetak gol, melakukan tekel, diturunkan sebagai
+  substitusi, melakukan penyelamatan, dll) HANYA JIKA nama itu eksplisit muncul di data konteks
+  (insiden Bzzoiro, statistik, atau snippet Serper/Tavily) UNTUK AKSI TERSEBUT.
+- DILARANG mengisi nama pemain dari pengetahuan umum/memori kamu sendiri soal skuad suatu tim —
+  skuad dan starting line-up bisa berubah, pemain bisa pensiun dari timnas, atau cedera sejak data
+  training kamu. Memori kamu soal "siapa biasanya bermain di posisi X untuk tim Y" SERING SUDAH USANG.
+- JIKA KAMU RAGU antara dua nama untuk peran/posisi yang sama (cth: tidak yakin siapa kiper saat
+  ini), JANGAN tulis kedua nama dengan kata "atau"/"maupun" (contoh terlarang: "Yann Sommer (atau
+  sekadar Kobel bila dirujuk)"). Sebaliknya: tulis perannya tanpa nama ("kiper Swiss", "lini tengah
+  Kanada") jika nama tidak ada di data, atau JANGAN sebut detail aksi tersebut sama sekali.
+- Larangan ini juga berlaku untuk substitusi/pergantian pemain: jangan menyebut nama pemain yang
+  "diturunkan" atau "digantikan" kecuali itu eksplisit tercatat sebagai insiden substitusi di data.
+- Kalau data insiden kosong/tipis (umum terjadi pada laga tanpa gol/kartu), TULISKAN narasi babak
+  secara umum (tekanan, penguasaan bola, pola permainan, area lapangan) TANPA mengaitkannya ke nama
+  pemain spesifik dalam aksi yang tidak tercatat di data.
+
+VERIFIKASI ARAH FAKTA SEBELUM MENULIS KLAIM POSISI/STATUS (WAJIB):
+- Sebelum menulis klaim seperti "tuan rumah", "tamu", "menutup fase grup", "juara bertahan", dll,
+  pastikan arah faktanya benar berdasarkan data — jangan asumsikan dari pola umum kompetisi.
+- Co-host/tuan rumah turnamen tidak otomatis berarti "tamu" di laga manapun — cek konteks dengan teliti.
+- Jika konteks tidak menyebutkan secara eksplisit suatu tim "telah menyelesaikan seluruh fase grup"
+  atau status serupa, jangan tulis klaim itu — gunakan frasa yang lebih netral sesuai data yang ada
+  (misal "belum terkalahkan sejauh ini" alih-alih "menutup kualifikasi tanpa kekalahan").
+
+
 - Setiap paragraf WAJIB dimulai dari elemen berbeda dari paragraf sebelumnya: kadang aksi pemain, kadang reaksi
   taktik, kadang konteks pertandingan lalu, kadang satu detail kecil yang konkret.
 - DILARANG memakai pola "[Subjek] + [statistik] + menandakan/mencerminkan/menunjukkan + [interpretasi]" lebih dari
