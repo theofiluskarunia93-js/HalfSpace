@@ -48,6 +48,7 @@ export type ContentType =
   | "transfer"         // Transfer Rumor
   | "press_conference" // Konferensi Pers
   | "injury"           // Update Cedera
+  | "trivia"           // Trivia & Feature
   | "general"          // Fallback
 
 // Data overlay per tipe konten
@@ -76,10 +77,19 @@ export interface OverlayData {
   fromClub?: string
   toClub?: string
   transferFee?: string
+  transferStatus?: string
   // press_conference / injury
   clubName?: string
   managerName?: string
+  managerRole?: string
+  quote?: string
   playerStatus?: string
+  injuryType?: string
+  injuryDuration?: string
+  // trivia
+  triviaNumber?: string
+  triviaUnit?: string
+  triviaFact?: string
   // general fallback
   headline?: string
   subheadline?: string
@@ -98,6 +108,7 @@ export function detectContentType(title: string): ContentType {
   if (/transfer|rumor|kabar|pindah|rekrut|kontrak|bursa/.test(t)) return "transfer"
   if (/konferensi pers|press conference|manajer bicara|pelatih bicara/.test(t)) return "press_conference"
   if (/cedera|injury|absen|pulih|kondisi/.test(t)) return "injury"
+  if (/trivia|fakta|sejarah|rekor|statistik|tahukah/.test(t)) return "trivia"
 
   return "general"
 }
@@ -107,17 +118,27 @@ export function detectContentType(title: string): ContentType {
 function buildCFPrompt(contentType: ContentType, userPrompt: string): string {
   const base = userPrompt.slice(0, MAX_PROMPT_LENGTH)
 
-  // Semua style: gelap dramatis, fokus stadion / siluet / penonton — TANPA pemain AI
   const styleMap: Record<ContentType, string> = {
-    match_preview:    "dark dramatic football stadium at night, floodlights blazing, packed crowd silhouettes, atmospheric fog, deep shadows, cinematic wide angle, no people faces",
-    match_result:     "football stadium celebration night, confetti falling, crowd silhouettes cheering, dramatic dark atmosphere, spotlights, no faces visible",
-    schedule:         "empty football stadium aerial view dusk, floodlights on, green pitch glowing, dark dramatic sky, no people",
-    squad:            "dark football locker room atmosphere, silhouettes of players standing, dramatic backlight, cinematic moody, no faces",
-    prediction:       "world cup trophy dramatic dark spotlight, gold glowing on black background, stadium blurred dark background, cinematic dramatic",
-    transfer:         "dark abstract football training ground night, stadium lights distant blur, dramatic moody atmosphere, no people",
-    press_conference: "dark press conference room, microphones podium, dramatic spotlight, bokeh background, moody atmosphere, no faces",
-    injury:           "dark medical room abstract, blue clinical tones, dramatic shadows, recovery atmosphere, no people",
-    general:          "dark dramatic football stadium panoramic, crowd silhouettes, floodlights, atmospheric fog, cinematic editorial, no faces",
+    match_result:
+      "football stadium at night with dramatic floodlights blazing overhead, confetti raining down, packed crowd silhouettes celebrating, golden spotlights cutting through atmospheric fog, cinematic wide angle, deep dark sky, no people faces visible",
+    transfer:
+      "elegant conference room interior, long dark table with dramatic spotlight, contract papers and pen visible, luxury executive atmosphere, bokeh window background with city lights, dark moody tones, no people",
+    injury:
+      "modern sports medical room, clinical blue-tinted lighting, treatment table with professional equipment, dark walls with dramatic accent lighting, recovery atmosphere, blurred training pitch visible through window, no people",
+    match_preview:
+      "two football teams dramatically facing each other on a rain-soaked pitch at night, floodlights creating god rays through stadium fog, intense atmosphere, cinematic split composition, no faces visible, dark dramatic sky",
+    trivia:
+      "vintage retro football scene, old-style stadium with classic terraces, sepia and amber tones, nostalgic grainy film texture, historic atmosphere, crowd silhouettes in vintage style, dramatic editorial mood",
+    schedule:
+      "empty football stadium aerial view at dusk, floodlights glowing on pristine green pitch, dramatic dark sky with clouds, cinematic wide angle, no people",
+    squad:
+      "dark football locker room with individual player pegs and jerseys hanging, dramatic backlight through door, cinematic moody atmosphere, no faces",
+    prediction:
+      "world cup trophy on a dark pedestal with dramatic golden spotlight, stadium blurred in background, deep shadows, cinematic dramatic editorial",
+    press_conference:
+      "dark press conference room with podium, cluster of microphones in spotlight, bokeh media background, moody professional atmosphere, no faces",
+    general:
+      "dark dramatic football stadium panoramic, crowd silhouettes, floodlights blazing through atmospheric fog, cinematic editorial style, no faces",
   }
 
   const style = styleMap[contentType]
@@ -125,9 +146,6 @@ function buildCFPrompt(contentType: ContentType, userPrompt: string): string {
 }
 
 // ─── Load font ────────────────────────────────────────────────────────────────
-// Font harus ada di public/fonts/Inter-Bold.ttf dan public/fonts/Inter-Medium.ttf
-// Download: https://fonts.google.com/specimen/Inter → klik "Download family"
-// Ekstrak lalu ambil file dari folder "static/"
 
 let _fontBoldCache: Buffer | null = null
 let _fontMediumCache: Buffer | null = null
@@ -146,15 +164,13 @@ function loadFont(name: string): Buffer {
 }
 
 function getFonts(): { bold: Buffer; medium: Buffer } {
-  // Cache font agar tidak re-read setiap request
   if (!_fontBoldCache)   _fontBoldCache   = loadFont("Inter-Bold.ttf")
   if (!_fontMediumCache) _fontMediumCache = loadFont("Inter-Medium.ttf")
   return { bold: _fontBoldCache, medium: _fontMediumCache }
 }
 
-// ─── Color themes per content type ────────────────────────────────────────────
+// ─── Theme & Labels ───────────────────────────────────────────────────────────
 
-// Semua tipe pakai neon green sebagai accent warna utama
 const NEON = "#39FF14"
 
 const THEMES: Record<ContentType, { accent: string; bg: string; text: string }> = {
@@ -166,18 +182,20 @@ const THEMES: Record<ContentType, { accent: string; bg: string; text: string }> 
   transfer:         { accent: NEON, bg: "rgba(0,0,0,0.82)", text: "#FFFFFF" },
   press_conference: { accent: NEON, bg: "rgba(0,0,0,0.82)", text: "#FFFFFF" },
   injury:           { accent: NEON, bg: "rgba(0,0,0,0.82)", text: "#FFFFFF" },
+  trivia:           { accent: NEON, bg: "rgba(0,0,0,0.82)", text: "#FFFFFF" },
   general:          { accent: NEON, bg: "rgba(0,0,0,0.82)", text: "#FFFFFF" },
 }
 
 const TYPE_LABELS: Record<ContentType, string> = {
-  match_preview:    "PREVIEW PERTANDINGAN",
-  match_result:     "HASIL PERTANDINGAN",
+  match_preview:    "PREVIEW",
+  match_result:     "FULL TIME",
   schedule:         "JADWAL LENGKAP",
   squad:            "DAFTAR SKUAD",
   prediction:       "PREDIKSI JUARA",
-  transfer:         "TRANSFER RUMOR",
-  press_conference: "KONFERENSI PERS",
-  injury:           "UPDATE CEDERA",
+  transfer:         "BREAKING TRANSFER",
+  press_conference: "PRESS CONFERENCE",
+  injury:           "INJURY REPORT",
+  trivia:           "TRIVIA",
   general:          "BERITA",
 }
 
@@ -186,400 +204,847 @@ const TYPE_LABELS: Record<ContentType, string> = {
 // eslint-disable-next-line @typescript-eslint/no-explicit-any
 type SNode = Record<string, any>
 
-/** Type-safe .filter(Boolean) untuk SNode arrays */
 function compact(arr: (SNode | string | number | null | undefined | false | 0 | "")[]): SNode[] {
   return arr.filter((x): x is SNode => Boolean(x))
 }
 
-// ─── Konversi base64 CF response → data URI untuk <image> di SVG ──────────────
-// Cloudflare FLUX mengembalikan base64 PNG.
-// Kita embed langsung sebagai data URI — tidak perlu sharp atau canvas.
+// ─── Konversi base64 CF response → data URI ──────────────────────────────────
 
 function cfBase64ToDataURI(base64: string): string {
-  // Deteksi format dari magic bytes (PNG: iVBOR, JPEG: /9j/, WebP: UklGR)
   const header = base64.slice(0, 12)
-  let mimeType = "image/png" // default
+  let mimeType = "image/png"
   if (header.startsWith("/9j/"))   mimeType = "image/jpeg"
   if (header.startsWith("UklGR")) mimeType = "image/webp"
-
   return `data:${mimeType};base64,${base64}`
 }
 
-// ─── Satori overlay builder ───────────────────────────────────────────────────
-// Background di-embed sebagai <image> di root SVG agar tidak perlu sharp composite.
+// ─── Layout renderers per content type ───────────────────────────────────────
+
+function renderMatchResult(overlay: OverlayData, accent: string): SNode {
+  const accentDim = "rgba(57,255,20,0.15)"
+  return {
+    type: "div",
+    props: {
+      style: { display: "flex", flexDirection: "column", width: "100%", height: "100%", justifyContent: "space-between", padding: "18px 20px" },
+      children: [
+        // Top bar
+        {
+          type: "div",
+          props: {
+            style: { display: "flex", justifyContent: "space-between", alignItems: "center" },
+            children: [
+              {
+                type: "div",
+                props: {
+                  style: { fontSize: 9, fontWeight: 700, color: accent, letterSpacing: 2, textTransform: "uppercase" },
+                  children: overlay.competition || "PERTANDINGAN",
+                },
+              },
+              {
+                type: "div",
+                props: {
+                  style: { fontSize: 9, fontWeight: 700, color: "rgba(255,255,255,0.4)", letterSpacing: 1 },
+                  children: "halfspace.id",
+                },
+              },
+            ],
+          },
+        },
+        // Score row
+        {
+          type: "div",
+          props: {
+            style: { display: "flex", alignItems: "center", justifyContent: "space-between", gap: 8 },
+            children: [
+              // Home team
+              {
+                type: "div",
+                props: {
+                  style: { display: "flex", flexDirection: "column", alignItems: "center", gap: 6, flex: 1 },
+                  children: [
+                    {
+                      type: "div",
+                      props: {
+                        style: { width: 44, height: 44, borderRadius: 8, background: "#1e293b", border: "1.5px solid rgba(255,255,255,0.15)", display: "flex", alignItems: "center", justifyContent: "center" },
+                        children: {
+                          type: "div",
+                          props: {
+                            style: { fontSize: 12, fontWeight: 800, color: "#fff", letterSpacing: 0.5 },
+                            children: (overlay.teamHome || "HOM").slice(0, 3).toUpperCase(),
+                          },
+                        },
+                      },
+                    },
+                    {
+                      type: "div",
+                      props: {
+                        style: { fontSize: 11, fontWeight: 700, color: "#fff", textAlign: "center" },
+                        children: overlay.teamHome || "Home",
+                      },
+                    },
+                  ],
+                },
+              },
+              // Score center
+              {
+                type: "div",
+                props: {
+                  style: { display: "flex", flexDirection: "column", alignItems: "center", gap: 2 },
+                  children: [
+                    {
+                      type: "div",
+                      props: {
+                        style: { background: accentDim, border: `1px solid rgba(57,255,20,0.3)`, borderRadius: 10, padding: "4px 12px" },
+                        children: {
+                          type: "div",
+                          props: {
+                            style: { fontSize: 11, fontWeight: 700, color: accent, letterSpacing: 1 },
+                            children: "FT",
+                          },
+                        },
+                      },
+                    },
+                    {
+                      type: "div",
+                      props: {
+                        style: { display: "flex", alignItems: "center", gap: 6 },
+                        children: [
+                          {
+                            type: "div",
+                            props: { style: { fontSize: 32, fontWeight: 900, color: "#fff" }, children: overlay.scoreHome ?? "0" },
+                          },
+                          {
+                            type: "div",
+                            props: { style: { fontSize: 18, fontWeight: 300, color: "rgba(255,255,255,0.3)" }, children: "—" },
+                          },
+                          {
+                            type: "div",
+                            props: { style: { fontSize: 32, fontWeight: 900, color: "rgba(255,255,255,0.5)" }, children: overlay.scoreAway ?? "0" },
+                          },
+                        ],
+                      },
+                    },
+                  ],
+                },
+              },
+              // Away team
+              {
+                type: "div",
+                props: {
+                  style: { display: "flex", flexDirection: "column", alignItems: "center", gap: 6, flex: 1 },
+                  children: [
+                    {
+                      type: "div",
+                      props: {
+                        style: { width: 44, height: 44, borderRadius: 8, background: "#1e293b", border: "1.5px solid rgba(255,255,255,0.15)", display: "flex", alignItems: "center", justifyContent: "center" },
+                        children: {
+                          type: "div",
+                          props: {
+                            style: { fontSize: 12, fontWeight: 800, color: "rgba(255,255,255,0.7)", letterSpacing: 0.5 },
+                            children: (overlay.teamAway || "AWY").slice(0, 3).toUpperCase(),
+                          },
+                        },
+                      },
+                    },
+                    {
+                      type: "div",
+                      props: {
+                        style: { fontSize: 11, fontWeight: 700, color: "rgba(255,255,255,0.6)", textAlign: "center" },
+                        children: overlay.teamAway || "Away",
+                      },
+                    },
+                  ],
+                },
+              },
+            ],
+          },
+        },
+        // Bottom headline
+        {
+          type: "div",
+          props: {
+            style: { borderTop: "1px solid rgba(255,255,255,0.08)", paddingTop: 10 },
+            children: compact([
+              overlay.headline && {
+                type: "div",
+                props: {
+                  style: { fontSize: 12, fontWeight: 800, color: "#fff", margin: 0, lineHeight: 1.3 },
+                  children: overlay.headline,
+                },
+              },
+              overlay.subheadline && {
+                type: "div",
+                props: {
+                  style: { fontSize: 9, color: "rgba(255,255,255,0.45)", marginTop: 4, lineHeight: 1.4 },
+                  children: overlay.subheadline,
+                },
+              },
+            ]),
+          },
+        },
+      ],
+    },
+  }
+}
+
+function renderTransfer(overlay: OverlayData, accent: string): SNode {
+  const statusColor = "#FBBF24"
+  return {
+    type: "div",
+    props: {
+      style: { display: "flex", flexDirection: "column", width: "100%", height: "100%", justifyContent: "space-between", padding: "18px 20px" },
+      children: [
+        // Top bar
+        {
+          type: "div",
+          props: {
+            style: { display: "flex", justifyContent: "space-between", alignItems: "center" },
+            children: [
+              {
+                type: "div",
+                props: { style: { fontSize: 9, fontWeight: 700, color: accent, letterSpacing: 2 }, children: "TRANSFER NEWS" },
+              },
+              {
+                type: "div",
+                props: { style: { fontSize: 9, color: "rgba(255,255,255,0.35)", letterSpacing: 1 }, children: "halfspace.id" },
+              },
+            ],
+          },
+        },
+        // Transfer content
+        {
+          type: "div",
+          props: {
+            style: { display: "flex", flexDirection: "column", gap: 8 },
+            children: compact([
+              // Status badge
+              {
+                type: "div",
+                props: {
+                  style: { background: `rgba(251,191,36,0.15)`, border: `1px solid rgba(251,191,36,0.45)`, borderRadius: 6, padding: "3px 10px", alignSelf: "flex-start" },
+                  children: {
+                    type: "div",
+                    props: { style: { fontSize: 9, fontWeight: 800, color: statusColor, letterSpacing: 2 }, children: overlay.transferStatus || "RUMOR" },
+                  },
+                },
+              },
+              // Player name
+              {
+                type: "div",
+                props: {
+                  style: { fontSize: 18, fontWeight: 900, color: "#fff", lineHeight: 1.2 },
+                  children: overlay.playerName || "Nama Pemain",
+                },
+              },
+              // Club arrow
+              (overlay.fromClub || overlay.toClub) && {
+                type: "div",
+                props: {
+                  style: { display: "flex", alignItems: "center", gap: 8 },
+                  children: compact([
+                    overlay.fromClub && {
+                      type: "div",
+                      props: { style: { fontSize: 10, color: "rgba(255,255,255,0.5)", fontWeight: 600 }, children: overlay.fromClub },
+                    },
+                    {
+                      type: "div",
+                      props: { style: { fontSize: 14, color: accent }, children: "→" },
+                    },
+                    overlay.toClub && {
+                      type: "div",
+                      props: { style: { fontSize: 10, color: "#fff", fontWeight: 700 }, children: overlay.toClub },
+                    },
+                  ]),
+                },
+              },
+              // Fee
+              overlay.transferFee && {
+                type: "div",
+                props: {
+                  style: { display: "flex", alignItems: "center", gap: 6 },
+                  children: [
+                    {
+                      type: "div",
+                      props: { style: { fontSize: 9, color: "rgba(255,255,255,0.4)" }, children: "Estimasi Fee:" },
+                    },
+                    {
+                      type: "div",
+                      props: { style: { fontSize: 14, fontWeight: 900, color: accent }, children: overlay.transferFee },
+                    },
+                  ],
+                },
+              },
+            ]),
+          },
+        },
+        // Bottom
+        overlay.subheadline && {
+          type: "div",
+          props: {
+            style: { borderTop: "1px solid rgba(255,255,255,0.08)", paddingTop: 10 },
+            children: {
+              type: "div",
+              props: { style: { fontSize: 9, color: "rgba(255,255,255,0.45)", lineHeight: 1.4 }, children: overlay.subheadline },
+            },
+          },
+        },
+      ],
+    },
+  }
+}
+
+function renderMatchPreview(overlay: OverlayData, accent: string): SNode {
+  const accentDim = "rgba(57,255,20,0.08)"
+  return {
+    type: "div",
+    props: {
+      style: { display: "flex", flexDirection: "column", width: "100%", height: "100%", justifyContent: "space-between", padding: "18px 20px" },
+      children: [
+        // Top bar
+        {
+          type: "div",
+          props: {
+            style: { display: "flex", justifyContent: "space-between", alignItems: "center" },
+            children: [
+              {
+                type: "div",
+                props: { style: { fontSize: 9, fontWeight: 700, color: accent, letterSpacing: 2 }, children: overlay.competition || "PERTANDINGAN" },
+              },
+              {
+                type: "div",
+                props: { style: { fontSize: 9, color: "rgba(255,255,255,0.35)" }, children: "halfspace.id" },
+              },
+            ],
+          },
+        },
+        // Teams VS
+        {
+          type: "div",
+          props: {
+            style: { display: "flex", alignItems: "center", justifyContent: "space-between" },
+            children: [
+              // Home
+              {
+                type: "div",
+                props: {
+                  style: { display: "flex", flexDirection: "column", alignItems: "center", gap: 5 },
+                  children: [
+                    {
+                      type: "div",
+                      props: {
+                        style: { width: 42, height: 42, borderRadius: 8, background: "#1e293b", border: "1.5px solid rgba(255,255,255,0.15)", display: "flex", alignItems: "center", justifyContent: "center" },
+                        children: {
+                          type: "div",
+                          props: { style: { fontSize: 11, fontWeight: 800, color: "#fff" }, children: (overlay.teamHome || "HOM").slice(0, 3).toUpperCase() },
+                        },
+                      },
+                    },
+                    {
+                      type: "div",
+                      props: { style: { fontSize: 10, fontWeight: 700, color: "#fff" }, children: overlay.teamHome || "Home" },
+                    },
+                  ],
+                },
+              },
+              // VS divider
+              {
+                type: "div",
+                props: {
+                  style: { display: "flex", flexDirection: "column", alignItems: "center", gap: 3 },
+                  children: [
+                    {
+                      type: "div",
+                      props: { style: { fontSize: 11, fontWeight: 300, color: "rgba(255,255,255,0.3)", letterSpacing: 3 }, children: "VS" },
+                    },
+                    {
+                      type: "div",
+                      props: { style: { width: 1, height: 20, background: `linear-gradient(to bottom, ${accent}, transparent)` }, children: "" },
+                    },
+                  ],
+                },
+              },
+              // Away
+              {
+                type: "div",
+                props: {
+                  style: { display: "flex", flexDirection: "column", alignItems: "center", gap: 5 },
+                  children: [
+                    {
+                      type: "div",
+                      props: {
+                        style: { width: 42, height: 42, borderRadius: 8, background: "#1e293b", border: "1.5px solid rgba(255,255,255,0.15)", display: "flex", alignItems: "center", justifyContent: "center" },
+                        children: {
+                          type: "div",
+                          props: { style: { fontSize: 11, fontWeight: 800, color: "#fff" }, children: (overlay.teamAway || "AWY").slice(0, 3).toUpperCase() },
+                        },
+                      },
+                    },
+                    {
+                      type: "div",
+                      props: { style: { fontSize: 10, fontWeight: 700, color: "#fff" }, children: overlay.teamAway || "Away" },
+                    },
+                  ],
+                },
+              },
+            ],
+          },
+        },
+        // Bottom info box
+        {
+          type: "div",
+          props: {
+            style: { background: accentDim, border: `1px solid rgba(57,255,20,0.2)`, borderRadius: 8, padding: "8px 10px" },
+            children: compact([
+              (overlay.matchDate || overlay.venue) && {
+                type: "div",
+                props: {
+                  style: { fontSize: 9, color: accent, fontWeight: 700, marginBottom: 2, letterSpacing: 1 },
+                  children: [overlay.matchDate, overlay.venue].filter(Boolean).join(" · "),
+                },
+              },
+              overlay.headline && {
+                type: "div",
+                props: {
+                  style: { fontSize: 11, fontWeight: 800, color: "#fff", lineHeight: 1.3 },
+                  children: overlay.headline,
+                },
+              },
+            ]),
+          },
+        },
+      ],
+    },
+  }
+}
+
+function renderInjury(overlay: OverlayData, accent: string): SNode {
+  return {
+    type: "div",
+    props: {
+      style: { display: "flex", flexDirection: "column", width: "100%", height: "100%", justifyContent: "space-between", padding: "18px 20px" },
+      children: [
+        // Top bar
+        {
+          type: "div",
+          props: {
+            style: { display: "flex", justifyContent: "space-between", alignItems: "center" },
+            children: [
+              {
+                type: "div",
+                props: { style: { fontSize: 9, fontWeight: 700, color: accent, letterSpacing: 2 }, children: "INJURY REPORT" },
+              },
+              {
+                type: "div",
+                props: { style: { fontSize: 9, color: "rgba(255,255,255,0.35)" }, children: "halfspace.id" },
+              },
+            ],
+          },
+        },
+        // Injury content
+        {
+          type: "div",
+          props: {
+            style: { display: "flex", flexDirection: "column", gap: 6 },
+            children: compact([
+              // OUT badge
+              {
+                type: "div",
+                props: {
+                  style: { background: "rgba(220,38,38,0.2)", border: "1px solid rgba(220,38,38,0.4)", borderRadius: 6, padding: "3px 10px", alignSelf: "flex-start" },
+                  children: {
+                    type: "div",
+                    props: { style: { fontSize: 9, fontWeight: 800, color: "#F87171", letterSpacing: 2 }, children: overlay.playerStatus || "OUT" },
+                  },
+                },
+              },
+              // Player name
+              {
+                type: "div",
+                props: { style: { fontSize: 20, fontWeight: 900, color: "#fff" }, children: overlay.playerName || "Nama Pemain" },
+              },
+              // Club
+              overlay.clubName && {
+                type: "div",
+                props: { style: { fontSize: 10, color: "rgba(255,255,255,0.5)" }, children: overlay.clubName },
+              },
+              // Injury & duration details
+              (overlay.injuryType || overlay.injuryDuration) && {
+                type: "div",
+                props: {
+                  style: { display: "flex", gap: 12, marginTop: 4 },
+                  children: compact([
+                    overlay.injuryType && {
+                      type: "div",
+                      props: {
+                        style: { display: "flex", flexDirection: "column", gap: 2 },
+                        children: [
+                          {
+                            type: "div",
+                            props: { style: { fontSize: 8, color: "rgba(255,255,255,0.35)", letterSpacing: 1 }, children: "CEDERA" },
+                          },
+                          {
+                            type: "div",
+                            props: { style: { fontSize: 11, fontWeight: 700, color: accent }, children: overlay.injuryType },
+                          },
+                        ],
+                      },
+                    },
+                    overlay.injuryType && overlay.injuryDuration && {
+                      type: "div",
+                      props: { style: { width: 1, background: "rgba(255,255,255,0.1)", alignSelf: "stretch" }, children: "" },
+                    },
+                    overlay.injuryDuration && {
+                      type: "div",
+                      props: {
+                        style: { display: "flex", flexDirection: "column", gap: 2 },
+                        children: [
+                          {
+                            type: "div",
+                            props: { style: { fontSize: 8, color: "rgba(255,255,255,0.35)", letterSpacing: 1 }, children: "ABSEN" },
+                          },
+                          {
+                            type: "div",
+                            props: { style: { fontSize: 11, fontWeight: 700, color: "#FCD34D" }, children: overlay.injuryDuration },
+                          },
+                        ],
+                      },
+                    },
+                  ]),
+                },
+              },
+            ]),
+          },
+        },
+        // Bottom
+        overlay.subheadline && {
+          type: "div",
+          props: {
+            style: { borderTop: "1px solid rgba(255,255,255,0.08)", paddingTop: 10 },
+            children: {
+              type: "div",
+              props: { style: { fontSize: 9, color: "rgba(255,255,255,0.45)", lineHeight: 1.4 }, children: overlay.subheadline },
+            },
+          },
+        },
+      ],
+    },
+  }
+}
+
+function renderPressConference(overlay: OverlayData, accent: string): SNode {
+  const accentDim = "rgba(57,255,20,0.1)"
+  return {
+    type: "div",
+    props: {
+      style: { display: "flex", flexDirection: "column", width: "100%", height: "100%", justifyContent: "space-between", padding: "18px 20px" },
+      children: [
+        // Top bar
+        {
+          type: "div",
+          props: {
+            style: { display: "flex", justifyContent: "space-between", alignItems: "center" },
+            children: [
+              {
+                type: "div",
+                props: { style: { fontSize: 9, fontWeight: 700, color: accent, letterSpacing: 2 }, children: "PRESS CONFERENCE" },
+              },
+              {
+                type: "div",
+                props: { style: { fontSize: 9, color: "rgba(255,255,255,0.35)" }, children: "halfspace.id" },
+              },
+            ],
+          },
+        },
+        // Quote block
+        {
+          type: "div",
+          props: {
+            style: { display: "flex", flexDirection: "column", gap: 6 },
+            children: compact([
+              // Opening quote mark
+              {
+                type: "div",
+                props: { style: { fontSize: 28, color: accent, fontWeight: 900, lineHeight: 0.8 }, children: "\u201C" },
+              },
+              // Quote text
+              overlay.quote && {
+                type: "div",
+                props: {
+                  style: { fontSize: 13, fontWeight: 700, color: "#fff", lineHeight: 1.4, fontStyle: "italic" },
+                  children: overlay.quote,
+                },
+              },
+              // Closing quote
+              {
+                type: "div",
+                props: { style: { fontSize: 28, color: accent, fontWeight: 900, lineHeight: 0.8, alignSelf: "flex-end" }, children: "\u201D" },
+              },
+              // Speaker info
+              (overlay.managerName || overlay.managerRole) && {
+                type: "div",
+                props: {
+                  style: { display: "flex", alignItems: "center", gap: 8, marginTop: 4 },
+                  children: [
+                    {
+                      type: "div",
+                      props: {
+                        style: { width: 24, height: 24, borderRadius: "50%", background: accentDim, border: `1px solid rgba(57,255,20,0.35)`, display: "flex", alignItems: "center", justifyContent: "center" },
+                        children: {
+                          type: "div",
+                          props: { style: { fontSize: 10 }, children: "\uD83D\uDC64" },
+                        },
+                      },
+                    },
+                    {
+                      type: "div",
+                      props: {
+                        style: { display: "flex", flexDirection: "column" },
+                        children: compact([
+                          overlay.managerName && {
+                            type: "div",
+                            props: { style: { fontSize: 10, fontWeight: 800, color: "#fff" }, children: overlay.managerName },
+                          },
+                          overlay.managerRole && {
+                            type: "div",
+                            props: { style: { fontSize: 8, color: "rgba(255,255,255,0.4)" }, children: overlay.managerRole },
+                          },
+                        ]),
+                      },
+                    },
+                  ],
+                },
+              },
+            ]),
+          },
+        },
+        // Bottom
+        overlay.subheadline && {
+          type: "div",
+          props: {
+            style: { borderTop: "1px solid rgba(255,255,255,0.08)", paddingTop: 10 },
+            children: {
+              type: "div",
+              props: { style: { fontSize: 9, color: "rgba(255,255,255,0.45)", lineHeight: 1.4 }, children: overlay.subheadline },
+            },
+          },
+        },
+      ],
+    },
+  }
+}
+
+function renderTrivia(overlay: OverlayData, accent: string): SNode {
+  return {
+    type: "div",
+    props: {
+      style: { display: "flex", flexDirection: "column", width: "100%", height: "100%", justifyContent: "space-between", padding: "18px 20px" },
+      children: [
+        // Top bar
+        {
+          type: "div",
+          props: {
+            style: { display: "flex", justifyContent: "space-between", alignItems: "center" },
+            children: [
+              {
+                type: "div",
+                props: { style: { fontSize: 9, fontWeight: 700, color: accent, letterSpacing: 2 }, children: "TRIVIA" },
+              },
+              {
+                type: "div",
+                props: { style: { fontSize: 9, color: "rgba(255,255,255,0.35)" }, children: "halfspace.id" },
+              },
+            ],
+          },
+        },
+        // Big number + fact
+        {
+          type: "div",
+          props: {
+            style: { display: "flex", flexDirection: "column", gap: 4 },
+            children: compact([
+              // Number + unit
+              (overlay.triviaNumber || overlay.triviaUnit) && {
+                type: "div",
+                props: {
+                  style: { display: "flex", alignItems: "baseline", gap: 4 },
+                  children: compact([
+                    overlay.triviaNumber && {
+                      type: "div",
+                      props: { style: { fontSize: 52, fontWeight: 900, color: accent, lineHeight: 1 }, children: overlay.triviaNumber },
+                    },
+                    overlay.triviaUnit && {
+                      type: "div",
+                      props: { style: { fontSize: 16, fontWeight: 700, color: "rgba(255,255,255,0.5)" }, children: overlay.triviaUnit },
+                    },
+                  ]),
+                },
+              },
+              // Fact text with left accent bar
+              overlay.triviaFact && {
+                type: "div",
+                props: {
+                  style: { fontSize: 10, color: "rgba(255,255,255,0.6)", lineHeight: 1.4, borderLeft: `2px solid ${accent}`, paddingLeft: 8 },
+                  children: overlay.triviaFact,
+                },
+              },
+            ]),
+          },
+        },
+        // Bottom headline
+        {
+          type: "div",
+          props: {
+            style: { borderTop: "1px solid rgba(255,255,255,0.08)", paddingTop: 10 },
+            children: compact([
+              overlay.headline && {
+                type: "div",
+                props: { style: { fontSize: 12, fontWeight: 800, color: "#fff", marginBottom: 3, lineHeight: 1.3 }, children: overlay.headline },
+              },
+              overlay.subheadline && {
+                type: "div",
+                props: { style: { fontSize: 9, color: "rgba(255,255,255,0.45)", lineHeight: 1.4 }, children: overlay.subheadline },
+              },
+            ]),
+          },
+        },
+      ],
+    },
+  }
+}
+
+function renderSchedule(overlay: OverlayData, accent: string): SNode {
+  return {
+    type: "div",
+    props: {
+      style: { display: "flex", flexDirection: "column", alignItems: "center", gap: 8 },
+      children: compact([
+        overlay.competition && {
+          type: "div",
+          props: { style: { fontSize: 13, color: "#FFFFFF", fontWeight: 700, letterSpacing: 2 }, children: overlay.competition },
+        },
+        {
+          type: "div",
+          props: {
+            style: { fontSize: 28, fontWeight: 700, color: "#FFFFFF", textAlign: "center", lineHeight: 1.2 },
+            children: overlay.matchCount ? `${overlay.matchCount} Pertandingan` : "Jadwal Lengkap",
+          },
+        },
+        overlay.dateRange && {
+          type: "div",
+          props: {
+            style: { fontSize: 14, color: "rgba(57,255,20,0.55)", textAlign: "center" },
+            children: overlay.dateRange,
+          },
+        },
+      ]),
+    },
+  }
+}
+
+function renderSquad(overlay: OverlayData, accent: string): SNode {
+  return {
+    type: "div",
+    props: {
+      style: { display: "flex", flexDirection: "column", alignItems: "center", gap: 8 },
+      children: compact([
+        {
+          type: "div",
+          props: { style: { fontSize: 30, fontWeight: 700, color: "#FFFFFF", textAlign: "center" }, children: overlay.teamName || "Skuad" },
+        },
+        overlay.season && {
+          type: "div",
+          props: { style: { fontSize: 14, color: accent, fontWeight: 700, letterSpacing: 1 }, children: `Musim ${overlay.season}` },
+        },
+        overlay.playerCount && {
+          type: "div",
+          props: { style: { fontSize: 13, color: "rgba(57,255,20,0.50)" }, children: `${overlay.playerCount} Pemain` },
+        },
+      ]),
+    },
+  }
+}
+
+function renderPrediction(overlay: OverlayData, accent: string): SNode {
+  return {
+    type: "div",
+    props: {
+      style: { display: "flex", flexDirection: "column", alignItems: "center", gap: 8 },
+      children: compact([
+        overlay.tournament && {
+          type: "div",
+          props: { style: { fontSize: 13, color: accent, fontWeight: 700, letterSpacing: 2, textTransform: "uppercase" }, children: overlay.tournament },
+        },
+        {
+          type: "div",
+          props: { style: { fontSize: 15, color: "rgba(57,255,20,0.50)", marginTop: 2 }, children: "Favorit Juara" },
+        },
+        overlay.favorite && {
+          type: "div",
+          props: { style: { fontSize: 34, fontWeight: 700, color: accent, textAlign: "center", lineHeight: 1.1 }, children: overlay.favorite },
+        },
+      ]),
+    },
+  }
+}
+
+function renderGeneral(overlay: OverlayData, accent: string): SNode {
+  return {
+    type: "div",
+    props: {
+      style: { display: "flex", flexDirection: "column", alignItems: "center", gap: 8 },
+      children: compact([
+        {
+          type: "div",
+          props: {
+            style: { fontSize: 26, fontWeight: 700, color: "#FFFFFF", textAlign: "center", lineHeight: 1.3, maxWidth: 380 },
+            children: overlay.headline || "Halfspace",
+          },
+        },
+        overlay.subheadline && {
+          type: "div",
+          props: {
+            style: { fontSize: 14, color: "rgba(57,255,20,0.55)", textAlign: "center", maxWidth: 340 },
+            children: overlay.subheadline,
+          },
+        },
+      ]),
+    },
+  }
+}
+
+// ─── Dispatch content renderer ────────────────────────────────────────────────
+
+function renderContent(overlay: OverlayData, accent: string): SNode {
+  switch (overlay.contentType) {
+    case "match_result":     return renderMatchResult(overlay, accent)
+    case "transfer":         return renderTransfer(overlay, accent)
+    case "match_preview":    return renderMatchPreview(overlay, accent)
+    case "injury":           return renderInjury(overlay, accent)
+    case "press_conference": return renderPressConference(overlay, accent)
+    case "trivia":           return renderTrivia(overlay, accent)
+    case "schedule":         return renderSchedule(overlay, accent)
+    case "squad":            return renderSquad(overlay, accent)
+    case "prediction":       return renderPrediction(overlay, accent)
+    default:                 return renderGeneral(overlay, accent)
+  }
+}
+
+// ─── Satori composite builder ─────────────────────────────────────────────────
+// Layouts yang punya full-bleed internal layout (match_result, transfer, match_preview,
+// injury, press_conference, trivia) mengelola padding & struktur sendiri.
+// Sisanya (schedule, squad, prediction, general) memakai wrapper center default.
+
+const FULLBLEED_TYPES: ContentType[] = [
+  "match_result", "transfer", "match_preview", "injury", "press_conference", "trivia",
+]
 
 async function buildCompositeSVG(backgroundDataURI: string, overlay: OverlayData): Promise<string> {
   const { bold: fontBold, medium: fontMedium } = getFonts()
-  const { accent, bg, text } = THEMES[overlay.contentType]
+  const { accent, bg } = THEMES[overlay.contentType]
   const label = TYPE_LABELS[overlay.contentType]
+  const isFullBleed = FULLBLEED_TYPES.includes(overlay.contentType)
 
-  // ── Build inner content per type ──
-  const renderContent = (): SNode => {
-    const ct = overlay.contentType
-
-    if (ct === "match_preview" || ct === "match_result") {
-      const isResult = ct === "match_result"
-      return {
-        type: "div",
-        props: {
-          style: {
-            display: "flex",
-            flexDirection: "column",
-            alignItems: "center",
-            gap: 8,
-            width: "100%",
-          },
-          children: compact([
-            overlay.competition && {
-              type: "div",
-              props: {
-                style: { fontSize: 13, color: "#FFFFFF", fontWeight: 700, letterSpacing: 2, textTransform: "uppercase" },
-                children: overlay.competition,
-              },
-            },
-            {
-              type: "div",
-              props: {
-                style: {
-                  display: "flex",
-                  alignItems: "center",
-                  justifyContent: "center",
-                  gap: 16,
-                  width: "100%",
-                  marginTop: 4,
-                },
-                children: [
-                  {
-                    type: "div",
-                    props: {
-                      style: { display: "flex", flexDirection: "column", alignItems: "center", gap: 4, flex: 1 },
-                      children: compact([
-                        {
-                          type: "div",
-                          props: {
-                            style: { fontSize: isResult ? 22 : 26, fontWeight: 700, color: text, textAlign: "center", lineHeight: 1.1 },
-                            children: overlay.teamHome || "Home",
-                          },
-                        },
-                        isResult && overlay.scoreHome !== undefined && {
-                          type: "div",
-                          props: {
-                            style: { fontSize: 48, fontWeight: 700, color: accent, lineHeight: 1 },
-                            children: overlay.scoreHome,
-                          },
-                        },
-                      ]),
-                    },
-                  },
-                  {
-                    type: "div",
-                    props: {
-                      style: {
-                        fontSize: isResult ? 14 : 20,
-                        fontWeight: 700,
-                        color: "rgba(57,255,20,0.45)",
-                        paddingLeft: 8,
-                        paddingRight: 8,
-                      },
-                      children: isResult ? "—" : "VS",
-                    },
-                  },
-                  {
-                    type: "div",
-                    props: {
-                      style: { display: "flex", flexDirection: "column", alignItems: "center", gap: 4, flex: 1 },
-                      children: compact([
-                        {
-                          type: "div",
-                          props: {
-                            style: { fontSize: isResult ? 22 : 26, fontWeight: 700, color: text, textAlign: "center", lineHeight: 1.1 },
-                            children: overlay.teamAway || "Away",
-                          },
-                        },
-                        isResult && overlay.scoreAway !== undefined && {
-                          type: "div",
-                          props: {
-                            style: { fontSize: 48, fontWeight: 700, color: accent, lineHeight: 1 },
-                            children: overlay.scoreAway,
-                          },
-                        },
-                      ]),
-                    },
-                  },
-                ],
-              },
-            },
-            (overlay.matchDate || overlay.venue) && {
-              type: "div",
-              props: {
-                style: { fontSize: 12, color: "#FFFFFF", marginTop: 4, textAlign: "center" },
-                children: [overlay.matchDate, overlay.venue].filter(Boolean).join(" · "),
-              },
-            },
-          ]),
-        },
-      }
-    }
-
-    if (ct === "schedule") {
-      return {
-        type: "div",
-        props: {
-          style: { display: "flex", flexDirection: "column", alignItems: "center", gap: 8 },
-          children: compact([
-            overlay.competition && {
-              type: "div",
-              props: {
-                style: { fontSize: 13, color: "#FFFFFF", fontWeight: 700, letterSpacing: 2 },
-                children: overlay.competition,
-              },
-            },
-            {
-              type: "div",
-              props: {
-                style: { fontSize: 28, fontWeight: 700, color: text, textAlign: "center", lineHeight: 1.2 },
-                children: overlay.matchCount ? `${overlay.matchCount} Pertandingan` : "Jadwal Lengkap",
-              },
-            },
-            overlay.dateRange && {
-              type: "div",
-              props: {
-                style: { fontSize: 14, color: "rgba(57,255,20,0.55)", textAlign: "center" },
-                children: overlay.dateRange,
-              },
-            },
-          ]),
-        },
-      }
-    }
-
-    if (ct === "squad") {
-      return {
-        type: "div",
-        props: {
-          style: { display: "flex", flexDirection: "column", alignItems: "center", gap: 8 },
-          children: compact([
-            {
-              type: "div",
-              props: {
-                style: { fontSize: 30, fontWeight: 700, color: text, textAlign: "center" },
-                children: overlay.teamName || "Skuad",
-              },
-            },
-            overlay.season && {
-              type: "div",
-              props: {
-                style: { fontSize: 14, color: accent, fontWeight: 700, letterSpacing: 1 },
-                children: `Musim ${overlay.season}`,
-              },
-            },
-            overlay.playerCount && {
-              type: "div",
-              props: {
-                style: { fontSize: 13, color: "rgba(57,255,20,0.50)" },
-                children: `${overlay.playerCount} Pemain`,
-              },
-            },
-          ]),
-        },
-      }
-    }
-
-    if (ct === "prediction") {
-      return {
-        type: "div",
-        props: {
-          style: { display: "flex", flexDirection: "column", alignItems: "center", gap: 8 },
-          children: compact([
-            overlay.tournament && {
-              type: "div",
-              props: {
-                style: { fontSize: 13, color: accent, fontWeight: 700, letterSpacing: 2, textTransform: "uppercase" },
-                children: overlay.tournament,
-              },
-            },
-            {
-              type: "div",
-              props: {
-                style: { fontSize: 15, color: "rgba(57,255,20,0.50)", marginTop: 2 },
-                children: "Favorit Juara",
-              },
-            },
-            overlay.favorite && {
-              type: "div",
-              props: {
-                style: { fontSize: 34, fontWeight: 700, color: accent, textAlign: "center", lineHeight: 1.1 },
-                children: overlay.favorite,
-              },
-            },
-          ]),
-        },
-      }
-    }
-
-    if (ct === "transfer") {
-      return {
-        type: "div",
-        props: {
-          style: { display: "flex", flexDirection: "column", alignItems: "center", gap: 6 },
-          children: compact([
-            overlay.playerName && {
-              type: "div",
-              props: {
-                style: { fontSize: 30, fontWeight: 700, color: text, textAlign: "center" },
-                children: overlay.playerName,
-              },
-            },
-            (overlay.fromClub && overlay.toClub) && {
-              type: "div",
-              props: {
-                style: {
-                  display: "flex",
-                  alignItems: "center",
-                  gap: 10,
-                  marginTop: 4,
-                },
-                children: [
-                  {
-                    type: "div",
-                    props: {
-                      style: { fontSize: 16, color: "rgba(57,255,20,0.60)" },
-                      children: overlay.fromClub,
-                    },
-                  },
-                  {
-                    type: "div",
-                    props: {
-                      style: { fontSize: 18, color: accent, fontWeight: 700 },
-                      children: "→",
-                    },
-                  },
-                  {
-                    type: "div",
-                    props: {
-                      style: { fontSize: 16, color: text, fontWeight: 700 },
-                      children: overlay.toClub,
-                    },
-                  },
-                ],
-              },
-            },
-            overlay.transferFee && {
-              type: "div",
-              props: {
-                style: {
-                  marginTop: 6,
-                  backgroundColor: accent,
-                  color: "#000",
-                  fontWeight: 700,
-                  fontSize: 14,
-                  paddingLeft: 14,
-                  paddingRight: 14,
-                  paddingTop: 5,
-                  paddingBottom: 5,
-                  borderRadius: 20,
-                },
-                children: overlay.transferFee,
-              },
-            },
-          ]),
-        },
-      }
-    }
-
-    if (ct === "press_conference") {
-      return {
-        type: "div",
-        props: {
-          style: { display: "flex", flexDirection: "column", alignItems: "center", gap: 8 },
-          children: compact([
-            overlay.clubName && {
-              type: "div",
-              props: {
-                style: { fontSize: 13, color: accent, fontWeight: 700, letterSpacing: 2, textTransform: "uppercase" },
-                children: overlay.clubName,
-              },
-            },
-            overlay.managerName && {
-              type: "div",
-              props: {
-                style: { fontSize: 28, fontWeight: 700, color: text, textAlign: "center" },
-                children: overlay.managerName,
-              },
-            },
-          ]),
-        },
-      }
-    }
-
-    if (ct === "injury") {
-      return {
-        type: "div",
-        props: {
-          style: { display: "flex", flexDirection: "column", alignItems: "center", gap: 8 },
-          children: compact([
-            overlay.clubName && {
-              type: "div",
-              props: {
-                style: { fontSize: 13, color: accent, fontWeight: 700, letterSpacing: 2, textTransform: "uppercase" },
-                children: overlay.clubName,
-              },
-            },
-            overlay.playerName && {
-              type: "div",
-              props: {
-                style: { fontSize: 28, fontWeight: 700, color: text, textAlign: "center" },
-                children: overlay.playerName,
-              },
-            },
-            overlay.playerStatus && {
-              type: "div",
-              props: {
-                style: {
-                  marginTop: 4,
-                  backgroundColor: "rgba(57,255,20,0.15)",
-                  border: "1px solid rgba(57,255,20,0.5)",
-                  color: "#39FF14",
-                  fontWeight: 600,
-                  fontSize: 13,
-                  paddingLeft: 14,
-                  paddingRight: 14,
-                  paddingTop: 5,
-                  paddingBottom: 5,
-                  borderRadius: 20,
-                },
-                children: overlay.playerStatus,
-              },
-            },
-          ]),
-        },
-      }
-    }
-
-    // general fallback
-    return {
-      type: "div",
-      props: {
-        style: { display: "flex", flexDirection: "column", alignItems: "center", gap: 8 },
-        children: compact([
-          {
-            type: "div",
-            props: {
-              style: { fontSize: 26, fontWeight: 700, color: text, textAlign: "center", lineHeight: 1.3, maxWidth: 380 },
-              children: overlay.headline || "Halfspace",
-            },
-          },
-          overlay.subheadline && {
-            type: "div",
-            props: {
-              style: { fontSize: 14, color: "rgba(57,255,20,0.55)", textAlign: "center", maxWidth: 340 },
-              children: overlay.subheadline,
-            },
-          },
-        ]),
-      },
-    }
-  }
+  const contentNode = renderContent(overlay, accent)
 
   const svgString = await satori(
     {
@@ -592,13 +1057,12 @@ async function buildCompositeSVG(backgroundDataURI: string, overlay: OverlayData
           height: IMG_SIZE,
           position: "relative",
           fontFamily: "Inter",
-          // Background image di-embed langsung di sini — tidak perlu sharp composite
           backgroundImage: `url("${backgroundDataURI}")`,
           backgroundSize: "cover",
           backgroundPosition: "center",
         },
         children: [
-          // Semi-transparent gradient overlay — sangat gelap seperti referensi
+          // Dark gradient overlay
           {
             type: "div",
             props: {
@@ -609,73 +1073,37 @@ async function buildCompositeSVG(backgroundDataURI: string, overlay: OverlayData
               },
             },
           },
-          // Content wrapper (bottom) — dinaikkan agar ada ruang untuk branding di bawah
+          // Noise/vignette overlay
           {
             type: "div",
             props: {
               style: {
                 position: "absolute",
-                bottom: 75,
-                left: 0,
-                right: 0,
-                display: "flex",
-                flexDirection: "column",
-                alignItems: "center",
-                paddingBottom: 0,
-                paddingLeft: 24,
-                paddingRight: 24,
-                gap: 12,
+                inset: 0,
+                background: "radial-gradient(ellipse at center, transparent 40%, rgba(0,0,0,0.55) 100%)",
               },
-              children: [
-                // Type label badge
-                {
-                  type: "div",
-                  props: {
-                    style: {
-                      backgroundColor: accent,
-                      color: "#000000",
-                      fontSize: 10,
-                      fontWeight: 700,
-                      letterSpacing: 2,
-                      paddingLeft: 12,
-                      paddingRight: 12,
-                      paddingTop: 4,
-                      paddingBottom: 4,
-                      borderRadius: 4,
-                      textTransform: "uppercase",
-                    },
-                    children: label,
-                  },
-                },
-                // Dynamic content
-                renderContent(),
-              ],
             },
           },
-          // Branding — tetap di posisi paling bawah
+          // Tag pill — top right
           {
             type: "div",
             props: {
               style: {
                 position: "absolute",
-                bottom: 16,
-                left: 0,
-                right: 0,
-                display: "flex",
-                justifyContent: "center",
-                alignItems: "center",
+                top: 14,
+                right: 16,
+                backgroundColor: accent,
+                borderRadius: 4,
+                paddingLeft: 9,
+                paddingRight: 9,
+                paddingTop: 3,
+                paddingBottom: 3,
               },
               children: {
                 type: "div",
                 props: {
-                  style: {
-                    fontSize: 11,
-                    color: "rgba(255,255,255,0.75)",
-                    letterSpacing: 3,
-                    textTransform: "uppercase",
-                    fontWeight: 700,
-                  },
-                  children: "HALFSPACESPORT.COM",
+                  style: { fontSize: 8, fontWeight: 800, color: "#000", letterSpacing: 1.5 },
+                  children: label,
                 },
               },
             },
@@ -688,10 +1116,66 @@ async function buildCompositeSVG(backgroundDataURI: string, overlay: OverlayData
                 position: "absolute",
                 top: 20,
                 left: 20,
-                width: 36,
-                height: 4,
+                width: 32,
+                height: 3,
                 backgroundColor: accent,
                 borderRadius: 2,
+              },
+            },
+          },
+          // Main content — full-bleed layouts fill absolute inset,
+          // others are centered in the lower portion
+          isFullBleed
+            ? {
+                type: "div",
+                props: {
+                  style: { position: "absolute", inset: 0 },
+                  children: contentNode,
+                },
+              }
+            : {
+                type: "div",
+                props: {
+                  style: {
+                    position: "absolute",
+                    bottom: 75,
+                    left: 0,
+                    right: 0,
+                    display: "flex",
+                    flexDirection: "column",
+                    alignItems: "center",
+                    paddingLeft: 24,
+                    paddingRight: 24,
+                    gap: 12,
+                  },
+                  children: contentNode,
+                },
+              },
+          // Branding footer
+          {
+            type: "div",
+            props: {
+              style: {
+                position: "absolute",
+                bottom: 14,
+                left: 0,
+                right: 0,
+                display: "flex",
+                justifyContent: "center",
+                alignItems: "center",
+              },
+              children: {
+                type: "div",
+                props: {
+                  style: {
+                    fontSize: 10,
+                    color: "rgba(255,255,255,0.55)",
+                    letterSpacing: 3,
+                    textTransform: "uppercase",
+                    fontWeight: 700,
+                  },
+                  children: "HALFSPACESPORT.COM",
+                },
               },
             },
           },
@@ -711,13 +1195,12 @@ async function buildCompositeSVG(backgroundDataURI: string, overlay: OverlayData
   return svgString
 }
 
-// ─── Render SVG → PNG (tanpa sharp) ──────────────────────────────────────────
+// ─── Render SVG → PNG ─────────────────────────────────────────────────────────
 
 function renderSVGtoPNG(svgString: string): Buffer {
   const resvg = new Resvg(svgString, {
     fitTo: { mode: "width", value: IMG_SIZE },
-    // Aktifkan image loading agar <image> data URI di SVG terbaca
-    imageRendering: 1, // 0 = optimizeQuality, 1 = optimizeSpeed
+    imageRendering: 1,
   })
   return Buffer.from(resvg.render().asPng())
 }
@@ -725,7 +1208,6 @@ function renderSVGtoPNG(svgString: string): Buffer {
 // ─── POST handler ─────────────────────────────────────────────────────────────
 
 export async function POST(req: NextRequest) {
-  // Auth
   const user = await requireAdmin()
   if (!user) {
     return NextResponse.json({ error: "Unauthorized" }, { status: 401 })
@@ -787,15 +1269,11 @@ export async function POST(req: NextRequest) {
         continue
       }
 
-      // 1. Konversi base64 CF → data URI (deteksi format otomatis, no sharp)
       const backgroundDataURI = cfBase64ToDataURI(base64)
 
       let finalBuf: Buffer
       try {
-        // 2. Satori render SVG dengan background ter-embed + overlay teks
         const svgString = await buildCompositeSVG(backgroundDataURI, overlay)
-
-        // 3. Resvg render SVG → PNG final (background + teks, sekaligus)
         finalBuf = renderSVGtoPNG(svgString)
       } catch (compErr) {
         console.error("[generate-image] composite error:", compErr)
