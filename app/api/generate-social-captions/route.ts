@@ -1,13 +1,13 @@
 // app/api/generate-social-captions/route.ts
 //
-// Generate caption media sosial menggunakan Groq Qwen QwQ-32B.
+// Generate caption media sosial menggunakan Google Gemini 3.5 Flash.
 // Satu langkah langsung — tidak ada tahap revisi editor.
 //
 // Input : title, excerpt, firstSentence, slug
 // Output: { instagram, tiktok, x, facebook, threads }
 //
 // Catatan API key:
-// - GROQ_API_KEY → model: qwen-qwq-32b
+// - GEMINI_API_KEY → model: gemini-3.5-flash
 
 import { NextRequest, NextResponse } from "next/server"
 import { requireAdmin } from "@/lib/supabase/server-auth"
@@ -69,33 +69,36 @@ function extractJsonObject<T>(raw: string): T | null {
   return null
 }
 
-// ─── Groq Qwen QwQ-32B ───────────────────────────────────────────────────────
-async function groqGenerateCaptions(apiKey: string, prompt: string): Promise<string> {
-  const res = await fetch("https://api.groq.com/openai/v1/chat/completions", {
-    method:  "POST",
-    headers: {
-      "Content-Type":  "application/json",
-      "Authorization": `Bearer ${apiKey}`,
-    },
-    body: JSON.stringify({
-      model:             "qwen-qwq-32b",
-      temperature:       0.75,
-      max_tokens:        1500,
-      messages: [{ role: "user", content: prompt }],
-      response_format:   { type: "json_object" },
-    }),
-  })
+// ─── Google Gemini 2.5 Flash ──────────────────────────────────────────────────
+async function geminiGenerateCaptions(apiKey: string, prompt: string): Promise<string> {
+  const res = await fetch(
+    `https://generativelanguage.googleapis.com/v1beta/models/gemini-3.5-flash:generateContent?key=${apiKey}`,
+    {
+      method:  "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        contents: [{ parts: [{ text: prompt }] }],
+        generationConfig: {
+          temperature:     0.8,
+          maxOutputTokens: 2048,
+          responseMimeType: "application/json",
+        },
+      }),
+    }
+  )
 
   if (!res.ok) {
     const errText = await res.text()
-    if (res.status === 429) throw new Error("Groq API rate limit tercapai. Tunggu beberapa detik lalu coba lagi.")
-    if (res.status === 401) throw new Error("GROQ_API_KEY tidak valid. Hubungi administrator.")
-    if (res.status === 400) throw new Error("Request ke Groq gagal (400). Coba kurangi panjang excerpt/konteks.")
-    throw new Error(`Groq API error ${res.status}: ${errText.slice(0, 200)}`)
+    if (res.status === 429) throw new Error("Gemini API rate limit tercapai. Tunggu beberapa detik lalu coba lagi.")
+    if (res.status === 401 || res.status === 403) throw new Error("GEMINI_API_KEY tidak valid. Hubungi administrator.")
+    if (res.status === 400) throw new Error("Request ke Gemini gagal (400). Coba kurangi panjang excerpt/konteks.")
+    throw new Error(`Gemini API error ${res.status}: ${errText.slice(0, 200)}`)
   }
 
-  const data = await res.json() as { choices?: { message?: { content?: string } }[] }
-  return (data.choices?.[0]?.message?.content ?? "").trim()
+  const data = await res.json() as {
+    candidates?: { content?: { parts?: { text?: string }[] } }[]
+  }
+  return (data.candidates?.[0]?.content?.parts?.[0]?.text ?? "").trim()
 }
 
 // ─── POST handler ─────────────────────────────────────────────────────────────
@@ -107,10 +110,10 @@ export async function POST(request: NextRequest) {
     return NextResponse.json({ error: "Unauthorized" }, { status: 401 })
   }
 
-  const apiKey = process.env.GROQ_API_KEY
+  const apiKey = process.env.GEMINI_API_KEY
   if (!apiKey) {
     return NextResponse.json(
-      { error: "GROQ_API_KEY belum dikonfigurasi di environment variables." },
+      { error: "GEMINI_API_KEY belum dikonfigurasi di environment variables." },
       { status: 500 }
     )
   }
@@ -132,51 +135,59 @@ export async function POST(request: NextRequest) {
   const safeExcerpt = sanitizeExcerpt(excerpt ?? "")
   const safeFirst   = sanitizeFirstSentence(firstSentence ?? "")
 
-  const prompt = `Kamu adalah copywriter olahraga Indonesia yang energik untuk media sepak bola HalfSpace Sport (${SITE_URL.replace(/^https?:\/\//, "")}).
-Buat caption untuk 5 platform sekaligus berdasarkan artikel berikut.
+  const prompt = `Kamu adalah copywriter olahraga Indonesia yang berpengalaman di media digital sepak bola HalfSpace Sport (${SITE_URL.replace(/^https?:\/\//, "")}).
+
+Tugasmu: buat caption viral untuk 5 platform media sosial sekaligus berdasarkan artikel berikut.
 
 JUDUL: ${title.trim()}
 RINGKASAN: ${safeExcerpt || "(tidak ada)"}
 KALIMAT PERTAMA ARTIKEL: ${safeFirst || "(tidak tersedia)"}
 LINK ARTIKEL: ${articleUrl || "(tidak tersedia)"}
 
-BATAS KERAS: Setiap caption MAKSIMAL 150 kata termasuk hashtag. Jangan dilanggar.
-Tulis Bahasa Indonesia yang natural dan idiomatik — bukan terjemahan kaku.
-Jangan pakai frasa generik AI seperti "tentu saja" atau "tidak dapat dipungkiri".
+━━━ PRINSIP UTAMA ━━━
+- Setiap caption WAJIB punya HOOK kuat di baris pertama — kalimat pembuka yang langsung memancing rasa ingin tahu, emosi, atau kontroversi.
+- CTA (call-to-action) harus spesifik dan mendorong orang untuk klik, komentar, atau share.
+- Gunakan bahasa Indonesia yang natural, energik, dan idiomatik — bukan terjemahan kaku.
+- JANGAN pakai frasa AI generik seperti "tentu saja", "tidak dapat dipungkiri", "mari kita", "sudah tidak asing lagi".
+- BATAS KERAS: Setiap caption MAKSIMAL 150 kata termasuk hashtag.
 
 ━━━ ATURAN PER PLATFORM ━━━
 
 [INSTAGRAM]
-- Hook kuat di baris pertama (sebelum tombol "more") — max 1-2 kalimat
-- Line break setiap 2-3 kalimat
-- Emoji strategis, bukan dekorasi
-- CTA: "Link di bio 🔗"
-- Akhiri dengan 10-15 hashtag campuran (umum → niche), wajib ada #halfspacesport
+- HOOK baris pertama: kalimat provokatif, fakta mengejutkan, atau pertanyaan yang memancing — max 1-2 kalimat sebelum tombol "more"
+- Susun caption dengan ritme: Hook → Konteks singkat → Insight/angle unik → CTA
+- Line break setiap 2-3 kalimat agar mudah dibaca di mobile
+- Emoji strategis yang memperkuat emosi, bukan sekadar dekorasi
+- CTA eksplisit: "Link di bio 🔗" atau "Baca selengkapnya di bio 🔗"
+- Akhiri dengan 10-15 hashtag campuran (umum → niche), wajib ada #halfspacesport dan #bola
 
 [TIKTOK]
-- Hook baris pertama: "POV:", "Fakta:", atau pertanyaan langsung
-- Bahasa gaul, hype, singkat
-- Emoji secukupnya
+- HOOK baris pertama wajib pakai salah satu formula: "POV: ...", "Fakta: ...", "Ini dia kenapa ...", atau pertanyaan langsung yang bikin penasaran
+- Tone: gaul, hype, relate ke Gen Z dan Millennial
+- Struktur: Hook → 2-3 fakta/info menarik → CTA
+- Emoji secukupnya (tidak berlebihan)
 - CTA persis: "kunjungi www.halfspacesport.com"
-- 5-8 hashtag campuran, wajib ada #halfspacesport
+- 5-8 hashtag campuran, wajib ada #halfspacesport #fyp #football
 
-[X]
-- MAKSIMAL 280 karakter total termasuk link — batas keras platform
-- Hook kuat, to the point, sedikit provokatif
-- Gunakan/adaptasi kalimat pertama artikel sebagai hook
-- Sisipkan link artikel secara natural
-- 2-3 hashtag relevan
+[X / TWITTER]
+- TOTAL MAKSIMAL 280 karakter termasuk link dan hashtag — ini batas keras platform
+- HOOK: langsung ke inti, provokatif, to the point — adaptasi kalimat pertama artikel
+- Sisipkan link artikel secara natural di tengah atau akhir tweet
+- Boleh pakai angle kontroversial atau take yang "hot" untuk pancing retweet
+- 2-3 hashtag relevan, ringkas
 
 [FACEBOOK]
-- Hook di kalimat pertama — fakta menarik atau pertanyaan yang memancing komentar
-- Sisipkan 1 pertanyaan untuk mendorong engagement
-- Sisipkan link artikel secara inline dalam kalimat
+- HOOK kalimat pertama: fakta mengejutkan, statistik menarik, atau pertanyaan yang memancing diskusi
+- Sisipkan 1 pertanyaan terbuka di tengah/akhir untuk mendorong komentar
+- Sisipkan link artikel secara inline dalam kalimat (bukan di akhir saja)
+- Tone lebih informatif tapi tetap engaging
 - 3-5 hashtag relevan
 
 [THREADS]
-- Nada paling santai — seperti curhat ke teman
-- Cukup 2-3 kalimat dengan hook yang kuat
-- TIDAK ADA link, CTA, atau hashtag
+- Tone paling santai — seperti berbagi cerita ke teman dekat
+- Struktur: Hook kuat → opini/insight personal → pancing diskusi
+- TIDAK ADA link, CTA eksplisit, atau hashtag
+- Cukup 2-4 kalimat tapi berkesan dan bisa memancing balasan
 
 Jawab HANYA dalam format JSON berikut, tanpa teks lain, tanpa markdown backtick:
 {
@@ -188,11 +199,11 @@ Jawab HANYA dalam format JSON berikut, tanpa teks lain, tanpa markdown backtick:
 }`
 
   try {
-    const raw = await groqGenerateCaptions(apiKey, prompt)
+    const raw = await geminiGenerateCaptions(apiKey, prompt)
 
     const captions = extractJsonObject<Captions>(raw)
     if (!captions) {
-      console.error("[generate-social-captions] Gagal parse hasil Groq. Raw:", raw.slice(0, 800))
+      console.error("[generate-social-captions] Gagal parse hasil Gemini. Raw:", raw.slice(0, 800))
       return NextResponse.json(
         { error: "Gagal memproses hasil generate caption. Coba lagi." },
         { status: 422 }

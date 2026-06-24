@@ -65,7 +65,7 @@ function extractFirstSentence(html: string): string {
 }
 
 // Bersihkan HTML dan potong excerpt ke maks 300 karakter sebelum dikirim ke API.
-// Ini mencegah error 400 Groq akibat total token prompt terlalu panjang.
+// Ini mencegah error 400 akibat total token prompt terlalu panjang.
 function sanitizeExcerpt(raw: string): string {
   return raw
     .replace(/<[^>]+>/g, " ")
@@ -408,6 +408,7 @@ export function SocialMediaView({ onBack, articleId }: SocialMediaViewProps) {
   const [firstSentence, setFirstSentence] = useState("")
   const [captions, setCaptions] = useState<Captions>({ instagram: "", tiktok: "", x: "", facebook: "", threads: "" })
   const [generatingCaptions, setGeneratingCaptions] = useState(false)
+  const [captionStep, setCaptionStep] = useState<string | null>(null)
   const [captionError, setCaptionError] = useState<string | null>(null)
   const [copied, setCopied] = useState<CopyState>({})
 
@@ -457,7 +458,9 @@ export function SocialMediaView({ onBack, articleId }: SocialMediaViewProps) {
     if (!article || generatingCaptions) return
     setGeneratingCaptions(true)
     setCaptionError(null)
+    setCaptionStep("Mengirim data artikel ke Gemini 3.5 Flash...")
     try {
+      setCaptionStep("Gemini 3.5 Flash sedang menyusun caption untuk 5 platform...")
       const response = await fetch("/api/generate-social-captions", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
@@ -472,8 +475,11 @@ export function SocialMediaView({ onBack, articleId }: SocialMediaViewProps) {
         const err = await response.json()
         throw new Error(err.error || "Gagal generate caption")
       }
+      setCaptionStep("Memproses hasil dari Gemini...")
       setCaptions(await response.json())
+      setCaptionStep(null)
     } catch (err: any) {
+      setCaptionStep(null)
       setCaptionError(err.message || "Gagal generate caption. Coba lagi.")
     } finally {
       setGeneratingCaptions(false)
@@ -589,7 +595,7 @@ export function SocialMediaView({ onBack, articleId }: SocialMediaViewProps) {
                 <span className="flex h-6 w-6 items-center justify-center rounded-full bg-primary/15 text-primary text-xs font-black">1</span>
                 Caption Generator
               </h3>
-              <p className="text-xs text-muted-foreground mt-0.5">Generate caption untuk semua platform sekaligus — powered by Groq.</p>
+              <p className="text-xs text-muted-foreground mt-0.5">Generate caption untuk semua platform sekaligus — powered by Gemini 3.5 Flash.</p>
             </div>
             <div className="flex items-center gap-2 flex-wrap">
               <Button
@@ -603,6 +609,14 @@ export function SocialMediaView({ onBack, articleId }: SocialMediaViewProps) {
               </Button>
             </div>
           </div>
+
+          {/* Step indicator saat generating */}
+          {generatingCaptions && captionStep && (
+            <div className="mb-4 rounded-lg border border-primary/20 bg-primary/5 px-4 py-3 text-sm text-primary flex items-center gap-2">
+              <Loader2 className="h-4 w-4 animate-spin flex-shrink-0" />
+              <span>{captionStep}</span>
+            </div>
+          )}
 
           {captionError && (
             <div className="mb-4 rounded-lg border border-destructive/30 bg-destructive/10 px-4 py-3 text-sm text-destructive flex items-center gap-2">
