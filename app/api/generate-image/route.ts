@@ -81,6 +81,10 @@ export interface OverlayData {
   clubName?: string
   managerName?: string
   playerStatus?: string
+  // trivia
+  triviaNumber?: string
+  triviaUnit?: string
+  triviaFact?: string
   // general fallback
   headline?: string
   subheadline?: string
@@ -554,6 +558,50 @@ async function buildCompositeSVG(backgroundDataURI: string, overlay: OverlayData
                   borderRadius: 20,
                 },
                 children: overlay.playerStatus,
+              },
+            },
+          ]),
+        },
+      }
+    }
+
+    if (ct === "trivia") {
+      return {
+        type: "div",
+        props: {
+          style: { display: "flex", flexDirection: "column", alignItems: "center", gap: 6 },
+          children: compact([
+            overlay.triviaNumber && {
+              type: "div",
+              props: {
+                style: {
+                  display: "flex",
+                  alignItems: "baseline",
+                  gap: 6,
+                },
+                children: compact([
+                  {
+                    type: "div",
+                    props: {
+                      style: { fontSize: 56, fontWeight: 700, color: accent, lineHeight: 1 },
+                      children: overlay.triviaNumber,
+                    },
+                  },
+                  overlay.triviaUnit && {
+                    type: "div",
+                    props: {
+                      style: { fontSize: 18, fontWeight: 700, color: text, textTransform: "uppercase" },
+                      children: overlay.triviaUnit,
+                    },
+                  },
+                ]),
+              },
+            },
+            overlay.triviaFact && {
+              type: "div",
+              props: {
+                style: { fontSize: 16, color: text, textAlign: "center", lineHeight: 1.3, maxWidth: 380, marginTop: 4 },
+                children: overlay.triviaFact,
               },
             },
           ]),
