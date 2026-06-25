@@ -48,6 +48,7 @@ export type ContentType =
   | "transfer"         // Transfer Rumor
   | "press_conference" // Konferensi Pers
   | "injury"           // Update Cedera
+  | "trivia"           // Trivia & Feature
   | "general"          // Fallback
 
 // Data overlay per tipe konten
@@ -98,6 +99,7 @@ export function detectContentType(title: string): ContentType {
   if (/transfer|rumor|kabar|pindah|rekrut|kontrak|bursa/.test(t)) return "transfer"
   if (/konferensi pers|press conference|manajer bicara|pelatih bicara/.test(t)) return "press_conference"
   if (/cedera|injury|absen|pulih|kondisi/.test(t)) return "injury"
+  if (/trivia|fakta|sejarah|rekor|statistik|tahukah/.test(t)) return "trivia"
 
   return "general"
 }
@@ -117,6 +119,7 @@ function buildCFPrompt(contentType: ContentType, userPrompt: string): string {
     transfer:         "dark abstract football training ground night, stadium lights distant blur, dramatic moody atmosphere, no people",
     press_conference: "dark press conference room, microphones podium, dramatic spotlight, bokeh background, moody atmosphere, no faces",
     injury:           "dark medical room abstract, blue clinical tones, dramatic shadows, recovery atmosphere, no people",
+    trivia:           "dark abstract football archive aesthetic, vintage stadium silhouette, dramatic spotlight, moody editorial tones, no faces",
     general:          "dark dramatic football stadium panoramic, crowd silhouettes, floodlights, atmospheric fog, cinematic editorial, no faces",
   }
 
@@ -166,6 +169,7 @@ const THEMES: Record<ContentType, { accent: string; bg: string; text: string }> 
   transfer:         { accent: NEON, bg: "rgba(0,0,0,0.82)", text: "#FFFFFF" },
   press_conference: { accent: NEON, bg: "rgba(0,0,0,0.82)", text: "#FFFFFF" },
   injury:           { accent: NEON, bg: "rgba(0,0,0,0.82)", text: "#FFFFFF" },
+  trivia:           { accent: NEON, bg: "rgba(0,0,0,0.82)", text: "#FFFFFF" },
   general:          { accent: NEON, bg: "rgba(0,0,0,0.82)", text: "#FFFFFF" },
 }
 
@@ -178,6 +182,7 @@ const TYPE_LABELS: Record<ContentType, string> = {
   transfer:         "TRANSFER RUMOR",
   press_conference: "KONFERENSI PERS",
   injury:           "UPDATE CEDERA",
+  trivia:           "TRIVIA & FEATURE",
   general:          "BERITA",
 }
 
