@@ -6,6 +6,8 @@
 // tersedia dalam HTML awal — bukan setelah JS client berjalan.
 
 import { ArticleDetail } from "@/components/article-detail"
+import { createClient } from "@/lib/supabase/server"
+import type { RelatedArticle } from "@/components/article/RelatedArticles"
 
 const BASE_URL = process.env.NEXT_PUBLIC_BASE_URL ?? "https://halfspacesport.com"
 
@@ -30,6 +32,10 @@ interface ArticleSSR {
   created_at: string
   updated_at: string | null
   categories: { name: string; slug: string } | null
+  // Sudah di-fetch di query (article_tags(tags(name,slug))) tapi sebelumnya
+  // belum dideklarasikan di sini — ditambahkan untuk fetchRelatedArticles().
+  // Tangani objek tunggal ATAU array, sesuai inferensi nested relation Supabase.
+  article_tags?: { tags: { name: string; slug: string } | { name: string; slug: string }[] | null }[] | null
 }
 
 async function fetchArticleFull(id: string): Promise<ArticleSSR | null> {
@@ -50,6 +56,67 @@ async function fetchArticleFull(id: string): Promise<ArticleSSR | null> {
 
   const rows = await res.json()
   return rows?.[0] ?? null
+}
+
+// ─── Artikel Terkait — 3 artikel, prioritas TAG sama, fallback KATEGORI sama ─
+// Berbeda dari Internal Link Building inline (lib/internal-linking.ts) yang
+// hanya muncul kalau ada kecocokan KATA di body — ini SELALU tampil sebagai
+// jaring pengaman, dihitung dari relasi tag/kategori, bukan kecocokan teks.
+function extractTagSlugs(article: ArticleSSR): string[] {
+  const slugs: string[] = []
+  for (const at of article.article_tags ?? []) {
+    const t = at?.tags
+    if (!t) continue
+    if (Array.isArray(t)) {
+      for (const tt of t) if (tt?.slug) slugs.push(tt.slug)
+    } else if (t.slug) {
+      slugs.push(t.slug)
+    }
+  }
+  return slugs
+}
+
+async function fetchRelatedArticles(article: ArticleSSR): Promise<RelatedArticle[]> {
+  const supabase = await createClient()
+  const seen = new Map<string, RelatedArticle>()
+
+  // 1. Artikel lain yang berbagi minimal satu TAG yang sama.
+  const tagSlugs = extractTagSlugs(article)
+  if (tagSlugs.length > 0) {
+    const { data } = await supabase
+      .from("articles")
+      .select(
+        "id, title, slug, excerpt, featured_image_url, published_at, categories(name, slug), article_tags!inner(tags!inner(slug))"
+      )
+      .eq("status", "published")
+      .neq("id", article.id)
+      .in("article_tags.tags.slug", tagSlugs)
+      .order("published_at", { ascending: false })
+      .limit(10)
+
+    for (const row of (data ?? []) as any[]) {
+      if (!seen.has(row.id)) seen.set(row.id, row as RelatedArticle)
+    }
+  }
+
+  // 2. Kalau dari tag belum cukup 3, lengkapi dari KATEGORI yang sama.
+  if (seen.size < 3 && article.categories?.slug) {
+    const excludeIds = [article.id, ...seen.keys()]
+    const { data } = await supabase
+      .from("articles")
+      .select("id, title, slug, excerpt, featured_image_url, published_at, categories!inner(name, slug)")
+      .eq("status", "published")
+      .eq("categories.slug", article.categories.slug)
+      .not("id", "in", `(${excludeIds.join(",")})`)
+      .order("published_at", { ascending: false })
+      .limit(10)
+
+    for (const row of (data ?? []) as any[]) {
+      if (!seen.has(row.id)) seen.set(row.id, row as RelatedArticle)
+    }
+  }
+
+  return [...seen.values()].slice(0, 3)
 }
 
 // ─── JSON-LD dirender server-side ───────────────────────────────────────────
@@ -118,13 +185,14 @@ function ArticleJsonLd({ article }: { article: ArticleSSR }) {
 export async function ArticleDetailWrapper({ articleId, slug }: Props) {
   // Fetch di server — data tersedia saat HTML dikirim ke browser
   const article = await fetchArticleFull(articleId)
+  const relatedArticles = article ? await fetchRelatedArticles(article) : []
 
   return (
     <>
       {/* JSON-LD dirender server-side — tersedia di HTML awal untuk Googlebot */}
       {article && <ArticleJsonLd article={article} />}
       {/* Client component menerima initialData agar langsung render tanpa loading */}
-      <ArticleDetail articleId={articleId} initialData={article} />
+      <ArticleDetail articleId={articleId} initialData={article} relatedArticles={relatedArticles} />
     </>
   )
 }

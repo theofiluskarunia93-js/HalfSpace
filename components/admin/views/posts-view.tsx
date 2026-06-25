@@ -1,7 +1,7 @@
 "use client"
 
 import { useState, useEffect } from "react"
-import { Plus, Search, Edit, Trash2, Filter, Tag, Share2 } from "lucide-react"
+import { Plus, Search, Edit, Trash2, Filter, Tag, Share2, Link2, Loader2 } from "lucide-react"
 import { Button } from "@/components/ui/button"
 import { Input } from "@/components/ui/input"
 import { createClient } from "@/lib/supabase/client"
@@ -34,6 +34,8 @@ export function PostsView({ onCreateArticle, onEditArticle, onOpenSocialMedia }:
   const [searchQuery, setSearchQuery] = useState("")
   const [posts, setPosts] = useState<any[]>([])
   const [isLoading, setIsLoading] = useState(true)
+  // Internal Link Building — id artikel yang sedang diproses ("__bulk__" untuk jalankan semua)
+  const [linkingId, setLinkingId] = useState<string | null>(null)
   const supabase = createClient()
 
   useEffect(() => {
@@ -61,6 +63,45 @@ export function PostsView({ onCreateArticle, onEditArticle, onOpenSocialMedia }:
     if (!error) setPosts(posts.filter((post) => post.id !== id))
   }
 
+  // ── Internal Link Building (retroaktif) ──────────────────────────────────
+  // Memanggil API yang menyisipkan internal link ke konten artikel yang SUDAH
+  // publish. Artikel baru sudah otomatis ditautkan saat disimpan dari
+  // create-article-view.tsx — tombol ini khusus untuk "menyusulkan" link ke
+  // artikel lama yang sudah ada di database.
+  const handleBuildInternalLinks = async (articleId?: string) => {
+    const isBulk = !articleId
+    if (isBulk) {
+      const confirm = window.confirm(
+        "Jalankan Internal Link Building untuk SEMUA artikel published? Proses ini akan mengubah konten artikel yang sudah ada."
+      )
+      if (!confirm) return
+    }
+
+    setLinkingId(isBulk ? "__bulk__" : articleId!)
+    try {
+      const res = await fetch("/api/internal-linking", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify(articleId ? { articleId } : {}),
+      })
+      const result = await res.json()
+
+      if (!res.ok) {
+        window.alert(result.error || "Internal Link Building gagal.")
+        return
+      }
+
+      window.alert(
+        `Internal Link Building selesai.\nDiproses: ${result.processed} artikel.\nDiperbarui (ada link baru): ${result.updated} artikel.`
+      )
+      fetchPosts() // refresh agar daftar tetap sinkron (mis. updated_at)
+    } catch (e) {
+      window.alert("Internal Link Building gagal — cek koneksi/server.")
+    } finally {
+      setLinkingId(null)
+    }
+  }
+
   const filteredPosts = posts.filter((post) => {
     const categoryName = post.categories?.name || ""
     const matchesCategory = selectedCategory === "All" || categoryName === selectedCategory
@@ -84,6 +125,29 @@ export function PostsView({ onCreateArticle, onEditArticle, onOpenSocialMedia }:
         <Button onClick={onCreateArticle} className="bg-primary text-primary-foreground hover:bg-primary/90">
           <Plus className="mr-2 h-4 w-4" />
           Create Article
+        </Button>
+      </div>
+
+      {/* Internal Link Building — bulk run untuk artikel yang sudah publish */}
+      <div className="mb-6 flex items-center justify-between rounded-xl border border-border bg-card px-4 py-3">
+        <div>
+          <p className="text-sm font-medium text-foreground">Internal Link Building Otomatis</p>
+          <p className="text-xs text-muted-foreground">
+            Sisipkan internal link ke artikel published lain berdasarkan judul/tag. Artikel baru sudah otomatis ditautkan saat disimpan.
+          </p>
+        </div>
+        <Button
+          variant="outline"
+          size="sm"
+          disabled={linkingId !== null}
+          onClick={() => handleBuildInternalLinks()}
+        >
+          {linkingId === "__bulk__" ? (
+            <Loader2 className="mr-2 h-4 w-4 animate-spin" />
+          ) : (
+            <Link2 className="mr-2 h-4 w-4" />
+          )}
+          Jalankan untuk Semua Artikel Published
         </Button>
       </div>
 
@@ -185,6 +249,20 @@ export function PostsView({ onCreateArticle, onEditArticle, onOpenSocialMedia }:
                       </td>
                       <td className="px-6 py-4">
                         <div className="flex items-center justify-end gap-2">
+                          <Button
+                            variant="ghost"
+                            size="icon"
+                            className="h-8 w-8 text-muted-foreground hover:text-primary"
+                            title="Internal Link Building"
+                            disabled={linkingId !== null || post.status !== "published"}
+                            onClick={() => handleBuildInternalLinks(post.id)}
+                          >
+                            {linkingId === post.id ? (
+                              <Loader2 className="h-4 w-4 animate-spin" />
+                            ) : (
+                              <Link2 className="h-4 w-4" />
+                            )}
+                          </Button>
                           <Button
                             variant="ghost"
                             size="icon"

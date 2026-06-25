@@ -8,6 +8,7 @@ import { trackArticleView } from "@/lib/supabase/tracking"
 import { NavbarStandalone } from "@/components/navbar-standalone"
 import { FooterStandalone } from "@/components/footer-standalone"
 import { ArticleBody } from "@/components/article/ArticleBody"
+import { RelatedArticles, type RelatedArticle } from "@/components/article/RelatedArticles"
 import {
   Clock, Eye, Calendar, ChevronRight, Home,
   Share2, Twitter, Facebook, Link2, Check,
@@ -971,9 +972,11 @@ interface ArticleDetailProps {
     updated_at: string | null
     categories: { name: string; slug: string } | null
   } | null
+  /** Artikel terkait (tag sama → fallback kategori sama), sudah di-resolve di server. */
+  relatedArticles?: RelatedArticle[]
 }
 
-export function ArticleDetail({ articleId, initialData }: ArticleDetailProps) {
+export function ArticleDetail({ articleId, initialData, relatedArticles = [] }: ArticleDetailProps) {
   const [article, setArticle] = useState<Article | null>(
     initialData ? { ...(initialData as any), article_tags: (initialData as any).article_tags ?? null } as Article : null
   )
@@ -1425,6 +1428,9 @@ export function ArticleDetail({ articleId, initialData }: ArticleDetailProps) {
                     ))}
                   </div>
                 )}
+
+                {/* Artikel Terkait — 3 artikel, prioritas tag sama lalu kategori sama */}
+                <RelatedArticles articles={relatedArticles} />
 
                 {/* Author card */}
                 <div className="mt-6">

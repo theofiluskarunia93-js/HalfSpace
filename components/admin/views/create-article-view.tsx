@@ -22,6 +22,7 @@ import { createClient } from "@/lib/supabase/client"
 import { ArticleBody } from "@/components/article/ArticleBody"
 import { WidgetInserter } from "@/components/widgets/WidgetInserter"
 import type { WidgetType } from "@/components/widgets/WidgetInserter"
+import { applyInternalLinks, fetchLinkCandidates } from "@/lib/internal-linking"
 
 // ─── Types ───────────────────────────────────────────────────────────────────
 
@@ -1019,7 +1020,19 @@ export function CreateArticleView({ onBack, articleId }: CreateArticleViewProps)
     // 1. Konversi badge placeholder → shortcode teks
     const resolvedHtml = resolveShortcodesForSave(rawHtml)
     // 2. Sanitasi whitelist — blokir script/iframe/on* event, izinkan tag artikel
-    const htmlContent = sanitizeArticleHtml(resolvedHtml)
+    let htmlContent = sanitizeArticleHtml(resolvedHtml)
+
+    // 3. Internal Link Building otomatis — sisipkan link ke artikel lain yang
+    //    sudah publish berdasarkan kecocokan judul/tag, langsung di sini saat
+    //    artikel disimpan (baik draft, publish, maupun scheduled).
+    //    Gagal silent (best-effort) — jangan sampai proses save gagal karena ini.
+    try {
+      const linkCandidates = await fetchLinkCandidates(supabase, isEditMode ? articleId : null)
+      const { html: linkedHtml } = applyInternalLinks(htmlContent, articleId ?? null, linkCandidates)
+      htmlContent = linkedHtml
+    } catch (e) {
+      console.error("Internal link building gagal, lanjut tanpa internal link:", e)
+    }
 
     const now = new Date().toISOString()
     const articleSlug = isEditMode && savedSlug ? savedSlug : generateSlug(title)
@@ -1807,151 +1820,3 @@ export function CreateArticleView({ onBack, articleId }: CreateArticleViewProps)
                   : aiNewsType === "cedera"
                   ? "Sebutkan nama pemain & timnya — dipakai untuk mencari sinyal kehadiran di Bzzoiro & berita cedera di Tavily."
                   : aiNewsType === "konpers" || aiNewsType === "transfer"
-                  ? "Dipakai sebagai query pencarian berita di Tavily (2 hari terakhir)."
-                  : undefined}
-              </p>
-            </div>
-
-            {/* Konteks */}
-            <div>
-              <label className="mb-1.5 block text-xs font-semibold text-muted-foreground uppercase tracking-wide">
-                Konteks & Fakta {NEWS_TYPE_REQUIRES_MANUAL_CONTEXT[aiNewsType] ? (
-                  <span className="text-destructive">*</span>
-                ) : (
-                  <span className="font-normal text-muted-foreground">(opsional — melengkapi data otomatis)</span>
-                )}
-              </label>
-              <textarea
-                value={aiContext}
-                onChange={(e) => setAiContext(e.target.value)}
-                placeholder={
-                  aiNewsType === "transfer"
-                    ? "Opsional. Tambahkan detail yang belum tertangkap Tavily, mis. sumber internal atau nuansa tambahan."
-                    : aiNewsType === "konpers"
-                    ? "Opsional. Tambahkan kutipan atau detail tambahan yang belum tertangkap Tavily."
-                    : aiNewsType === "cedera"
-                    ? "WAJIB diisi: jenis cedera, prognosis, dan sumber resmi (klub/dokter tim) — Bzzoiro hanya menyediakan sinyal kehadiran, bukan data cedera resmi."
-                    : aiNewsType === "preview"
-                    ? "Opsional. Tambahkan detail yang belum tertangkap Bzzoiro/Tavily, mis. insider info atau nuansa tambahan."
-                    : aiNewsType === "hasil"
-                    ? "Opsional. Tambahkan detail yang belum tertangkap Bzzoiro/Tavily, mis. kontroversi atau cerita di balik laga."
-                    : "Contoh: Sadio Mane mencetak hat-trick dalam 2 menit 56 detik lawan Aston Villa (2015). Rekor ini masih bertahan hingga hari ini di Premier League."
-                }
-                rows={4}
-                className="w-full rounded-lg border border-border bg-secondary/50 px-3 py-2 text-sm text-foreground placeholder-muted-foreground focus:outline-none focus:ring-1 focus:ring-primary resize-none"
-              />
-              <p className="mt-1 text-[11px] text-muted-foreground">
-                {NEWS_TYPE_REQUIRES_MANUAL_CONTEXT[aiNewsType]
-                  ? "Tipe berita ini tidak punya sumber data otomatis — isi konteks selengkap mungkin."
-                  : "Konteks ini akan digabung dengan data otomatis sebagai catatan tambahan, bukan menggantikannya."}
-              </p>
-            </div>
-
-            {/* Model generate fix Llama 4 Scout via Cloudflare Workers AI —
-                dropdown pemilihan model sudah dihapus karena cuma 1 model yang dipakai. */}
-
-            {/* Error */}
-            {aiError && (
-              <p className="rounded-lg bg-destructive/10 px-3 py-2 text-xs text-destructive">
-                ⚠ {aiError}
-              </p>
-            )}
-
-            {/* Progress Steps */}
-            {aiGenerating && aiProgress && (
-              <div className="rounded-xl border border-primary/30 bg-primary/5 px-4 py-3">
-                <div className="mb-2.5 flex items-center gap-2">
-                  <svg className="h-3.5 w-3.5 animate-spin text-primary" viewBox="0 0 24 24" fill="none">
-                    <circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4"/>
-                    <path className="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8v8z"/>
-                  </svg>
-                  <span className="text-xs font-semibold text-primary">Memproses artikel…</span>
-                </div>
-                <div className="flex flex-col gap-1.5">
-                  {[
-                    { step: 1, label: `Mengambil Data dari ${NEWS_TYPE_SOURCE[aiNewsType]}` },
-                    { step: 2, label: "Menyusun Prompt Editorial" },
-                    { step: 3, label: `Menulis Artikel · ${AI_MODEL_LABEL}` },
-                    { step: 4, label: "Draft Selesai" },
-                  ].map(({ step, label }) => {
-                    const isDone    = aiProgress.step > step
-                    const isActive  = aiProgress.step === step
-                    // Saat step aktif punya label realtime dari server (mis. nama sumber
-                    // data spesifik atau pesan warning), tampilkan itu — bukan label default.
-                    const displayLabel = isActive && aiProgress.label ? aiProgress.label : label
-                    return (
-                      <div key={step} className="flex items-center gap-2">
-                        <div className={[
-                          "flex h-4 w-4 items-center justify-center rounded-full text-[10px] font-bold flex-shrink-0",
-                          isDone   ? "bg-primary text-black" :
-                          isActive ? "bg-primary/30 text-primary ring-1 ring-primary animate-pulse" :
-                                     "bg-secondary text-muted-foreground",
-                        ].join(" ")}>
-                          {isDone ? "✓" : step}
-                        </div>
-                        <span className={[
-                          "text-xs",
-                          isActive && aiProgress.warning ? "text-amber-500 font-semibold" :
-                          isDone   ? "text-primary/70 line-through" :
-                          isActive ? "text-foreground font-semibold" :
-                                     "text-muted-foreground",
-                        ].join(" ")}>
-                          {displayLabel}
-                        </span>
-                      </div>
-                    )
-                  })}
-                </div>
-              </div>
-            )}
-
-            {/* Konfirmasi sumber data yang akhirnya dipakai (setelah selesai/saat error fallback) */}
-            {!aiGenerating && aiSourceUsed && (
-              <p className="rounded-lg bg-primary/10 px-3 py-2 text-xs text-primary">
-                ✓ Data diambil dari: {aiSourceUsed}
-              </p>
-            )}
-          </div>
-
-          {/* Footer */}
-          <div className="flex items-center justify-between border-t border-border px-6 py-4">
-            <p className="text-[11px] text-muted-foreground">
-              Draft Stage — Powered by {AI_MODEL_LABEL} (Cloudflare Workers AI)
-            </p>
-            <div className="flex gap-3">
-              <button
-                onClick={() => { setAiModalOpen(false); setAiError(null); setAiSourceUsed(null) }}
-                disabled={aiGenerating}
-                className="rounded-lg border border-border px-4 py-2 text-sm text-foreground hover:bg-secondary disabled:opacity-40 disabled:pointer-events-none"
-              >
-                Batal
-              </button>
-              <button
-                onClick={handleAiGenerate}
-                disabled={aiGenerating || !aiTopic.trim() || (NEWS_TYPE_REQUIRES_MANUAL_CONTEXT[aiNewsType] && !aiContext.trim())}
-                className="flex items-center gap-2 rounded-lg bg-primary px-4 py-2 text-sm font-bold text-black hover:bg-primary/90 disabled:opacity-40 disabled:pointer-events-none"
-              >
-                {aiGenerating ? (
-                  <>
-                    <svg className="h-3.5 w-3.5 animate-spin" viewBox="0 0 24 24" fill="none">
-                      <circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4"/>
-                      <path className="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8v8z"/>
-                    </svg>
-                    Generating…
-                  </>
-                ) : (
-                  <>
-                    <Sparkles className="h-3.5 w-3.5" />
-                    Generate Artikel
-                  </>
-                )}
-              </button>
-            </div>
-          </div>
-        </div>
-      </div>
-    )}
-
-    </>
-  )
-}
