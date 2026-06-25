@@ -1,443 +1,826 @@
-// app/api/generate-article/route.ts
+// app/api/generate-image/route.ts
 //
-// Generate artikel sepak bola bergaya The Athletic menggunakan Cloudflare Workers AI
-// (@cf/meta/llama-4-scout-17b-16e-instruct), satu langkah, tanpa tahap editor terpisah.
+// Flow:
+//   1. Cloudflare Workers AI (FLUX.1-schnell) → pure background image (base64 PNG/JPEG)
+//   2. Background dikonversi ke WebP data-URI (pure JS, tanpa sharp/canvas)
+//   3. Satori → render overlay teks sebagai SVG dengan background ter-embed sebagai <image>
+//   4. @resvg/resvg-js → render SVG final (background + teks) → PNG buffer
 //
-// Migrasi dari Groq gpt-oss-120b (TPM 8K free tier, sering 413 "Request too large")
-// ke Cloudflare Llama 4 Scout — context window 131K (vs TPM Groq 8K) dan rate limit
-// Text Generation 300 RPM (vs 30 RPM Groq free tier). Verifikasi limit aktual akun
-// di dashboard Cloudflare (Workers AI → Limits) sebelum mengandalkan angka publik ini.
+// Tidak ada sharp, tidak ada canvas — aman di Vercel & Edge.
 //
-// ━━━ PIPELINE DATA (v3 — Bzzoiro + Serper + Tavily) ━━━
+// Env vars yang dibutuhkan:
+//   CF_ACCOUNT_ID
+//   CF_API_TOKEN  (permission: Workers AI - Read)
 //
-//   Bzzoiro (data & statistik terverifikasi)
-//     ↓
-//   Serper  (media: ESPN, Sky Sports, Detik Sport, CNN Indonesia, BBC, FIFA.com, dll —
-//            tergantung tipe berita)
-//     ↓
-//   Tavily  (backup + berita tambahan yang belum tertangkap Serper — max_results 2)
-//     ↓
-//   LLM (Cloudflare Workers AI — Llama 4 Scout, context window ~131.000 token)
-//     ↓
-//   Artikel SEO
+// Install dependencies:
+//   npm install satori @resvg/resvg-js
+//   npm uninstall sharp canvas   ← hapus ini
 //
-// BOBOT SUMBER PER TIPE BERITA:
-//
-//   - preview  → Bzzoiro 60% (H2H 5, form 5, win probability, odds, klasemen) +
-//                Serper 25% (ESPN, Sky Sports, Detik Sport, CNN Indonesia — prediksi
-//                media, kondisi skuad, quote pelatih, pemain kunci, narasi) +
-//                Tavily 15% (backup: cedera terbaru, update latihan, berita minor)
-//
-//   - hasil    → Bzzoiro (skor, xG, shots, SOT, possession, momentum, insiden) +
-//                Serper (ESPN, Sky Sports, Detik Sport, CNN Indonesia — player ratings,
-//                MOTM, analisis, komentar pelatih) +
-//                Tavily (backup: reaksi pemain, reaksi media, statistik tambahan)
-//
-//   - transfer → Bzzoiro (profil & statistik pemain) +
-//                Serper (Sky Sports, The Athletic, BBC Sport, ESPN, Fabrizio Romano —
-//                status negosiasi, nilai transfer, sumber rumor, komentar agen/pelatih) +
-//                Tavily (validasi tambahan)
-//
-//   - konpers  → Bzzoiro (form tim, posisi klasemen, 5 laga terakhir) +
-//                Serper (ESPN, Sky Sports, FIFA.com — quote pelatih, quote pemain,
-//                pernyataan penting) +
-//                Tavily (pelengkap)
-//
-//   - cedera   → Bzzoiro (profil pemain, kontribusi, menit, gol, assist) +
-//                Serper (ESPN, BBC, Sky Sports, situs resmi klub — injury update,
-//                official statement) +
-//                Tavily (pelengkap, info yang tidak ada di Serper, max_results 2)
-//
-//   - trivia   → TIDAK ada sumber otomatis, tetap pakai konteks manual admin
-//
-// Konteks manual admin TETAP dikirim & digabung sebagai "[CATATAN TAMBAHAN ADMIN]".
-// Fallback ke manual jika SEMUA fetch otomatis gagal.
+// Font yang dibutuhkan (taruh di public/fonts/):
+//   Inter-Bold.ttf
+//   Inter-Medium.ttf
+//   Download dari: https://fonts.google.com/specimen/Inter
+//   atau: https://github.com/rsms/inter/releases
 
+import type React from "react"
 import { NextRequest, NextResponse } from "next/server"
 import { requireAdmin } from "@/lib/supabase/server-auth"
-import {
-  BASE_SYSTEM,
-  TYPE_INSTRUCTION,
-  extractJsonObject,
-  sseEvent,
-  type NewsType,
-} from "@/lib/ai/article-prompts"
-import {
-  fetchHasilContext,
-  fetchPreviewContext,
-  fetchCederaContext,
-  fetchTransferContext,
-  fetchKonpersContext,
-  type BzzoiroContextResult,
-} from "@/lib/news-context/bzzoiro"
-import {
-  fetchSerperContext,
-  SERPER_DATA_NEEDED,
-  serperSourceLabel,
-  type SerperNewsType,
-} from "@/lib/news-context/serper"
-import { fetchTavilyContext, TAVILY_BACKUP_DATA } from "@/lib/news-context/tavily"
+import satori from "satori"
+import { Resvg } from "@resvg/resvg-js"
+import fs from "fs"
+import path from "path"
 
-export type { NewsType }
+// ─── Constants ────────────────────────────────────────────────────────────────
 
-export const maxDuration = 120
+const MAX_PROMPT_LENGTH = 300
+const FETCH_TIMEOUT_MS = 30_000
+const MAX_RETRIES = 2
+const IMG_SIZE = 512
 
-// ─── Cloudflare Workers AI — Llama 4 Scout ───────────────────────────────────
-// Model dipanggil lewat REST API native Cloudflare (bukan SDK npm), karena route
-// ini sudah jalan di server Next.js — fetch biasa ke endpoint Workers AI sudah cukup.
-export const CF_MODEL       = "@cf/meta/llama-4-scout-17b-16e-instruct" as const
-export const CF_MODEL_LABEL = "Llama 4 Scout (Cloudflare Workers AI)" as const
+// ─── Content Types ────────────────────────────────────────────────────────────
 
-// Target artikel 500-700 kata = ~900-1300 token output. Context window Llama 4 Scout
-// di Workers AI ~131.000 token (input+output gabungan) — jauh lebih lega dari Groq (8K TPM),
-// tapi max_tokens tetap dibatasi di sini supaya output konsisten & tidak melebar tanpa kendali.
-const CF_MAX_TOKENS = 2000
+export type ContentType =
+  | "match_preview"    // Preview Pertandingan
+  | "match_result"     // Hasil Pertandingan
+  | "schedule"         // Jadwal Lengkap
+  | "squad"            // Daftar Skuad
+  | "prediction"       // Prediksi Juara
+  | "transfer"         // Transfer Rumor
+  | "press_conference" // Konferensi Pers
+  | "injury"           // Update Cedera
+  | "general"          // Fallback
 
-interface RequestBody {
-  newsType: NewsType
-  topic:    string
-  context:  string
+// Data overlay per tipe konten
+export interface OverlayData {
+  contentType: ContentType
+  // match_preview / match_result
+  teamHome?: string
+  teamAway?: string
+  scoreHome?: string
+  scoreAway?: string
+  matchDate?: string
+  venue?: string
+  competition?: string
+  // schedule
+  matchCount?: string
+  dateRange?: string
+  // squad
+  teamName?: string
+  playerCount?: string
+  season?: string
+  // prediction
+  tournament?: string
+  favorite?: string
+  // transfer
+  playerName?: string
+  fromClub?: string
+  toClub?: string
+  transferFee?: string
+  // press_conference / injury
+  clubName?: string
+  managerName?: string
+  playerStatus?: string
+  // general fallback
+  headline?: string
+  subheadline?: string
 }
 
-// Tipe berita yang punya pipeline otomatis 3-sumber (semua kecuali trivia).
-type AutoNewsType = SerperNewsType // "preview" | "hasil" | "transfer" | "konpers" | "cedera"
+// ─── Detect content type from title ──────────────────────────────────────────
 
-// ─── Bzzoiro fetcher per tipe — map agar orkestrasi di bawah seragam ─────────
-const BZZOIRO_FETCHERS: Record<AutoNewsType, (topic: string) => Promise<BzzoiroContextResult>> = {
-  hasil:    fetchHasilContext,
-  preview:  fetchPreviewContext,
-  cedera:   fetchCederaContext,
-  transfer: fetchTransferContext,
-  konpers:  fetchKonpersContext,
+export function detectContentType(title: string): ContentType {
+  const t = title.toLowerCase()
+
+  if (/hasil|skor|menang|kalah|imbang|gol|FT|HT/.test(t)) return "match_result"
+  if (/preview|prediksi laga|head.to.head|pertemuan|lawan/.test(t)) return "match_preview"
+  if (/jadwal|fixture|schedule/.test(t)) return "schedule"
+  if (/skuad|squad|daftar pemain|lineup/.test(t)) return "squad"
+  if (/prediksi juara|favorit juara|peluang juara|odds/.test(t)) return "prediction"
+  if (/transfer|rumor|kabar|pindah|rekrut|kontrak|bursa/.test(t)) return "transfer"
+  if (/konferensi pers|press conference|manajer bicara|pelatih bicara/.test(t)) return "press_conference"
+  if (/cedera|injury|absen|pulih|kondisi/.test(t)) return "injury"
+
+  return "general"
 }
 
-// ─── Label sumber data otomatis per tipe — dipakai untuk progress UI ─────────
-const AUTO_SOURCE_LABEL: Record<NewsType, string> = {
-  preview:  "Bzzoiro 60% (H2H, form, win probability, odds, klasemen) + Serper 25% (ESPN, Sky Sports, Detik Sport, CNN Indonesia) + Tavily 15% (backup)",
-  hasil:    "Bzzoiro (data & statistik pertandingan) + Serper (ESPN, Sky Sports, Detik Sport, CNN Indonesia) + Tavily (backup)",
-  cedera:   "Bzzoiro (profil & kontribusi pemain) + Serper (ESPN, BBC, Sky Sports, situs resmi klub) + Tavily (pelengkap, max 2)",
-  konpers:  "Bzzoiro (form & klasemen tim) + Serper (ESPN, Sky Sports, FIFA.com) + Tavily (pelengkap)",
-  transfer: "Bzzoiro (profil & statistik pemain) + Serper (Sky Sports, The Athletic, BBC Sport, ESPN, Fabrizio Romano) + Tavily (validasi tambahan)",
-  trivia:   "Tidak ada — konteks manual admin",
-}
+// ─── Build Cloudflare prompt per content type ─────────────────────────────────
 
-// ─── Ambil konteks otomatis sesuai tipe berita ───────────────────────────────
-async function fetchAutoContext(
-  newsType: NewsType,
-  topic: string,
-  manualContext: string,
-): Promise<{ combinedContext: string; warning?: string; sourceUsed: string }> {
-  const manualBlock = manualContext.trim()
-    ? `[CATATAN TAMBAHAN ADMIN]\n${manualContext.trim()}`
-    : ""
+function buildCFPrompt(contentType: ContentType, userPrompt: string): string {
+  const base = userPrompt.slice(0, MAX_PROMPT_LENGTH)
 
-  try {
-    let apiBlock = ""
-    let warning: string | undefined
-
-    if (newsType === "trivia") {
-      // Tidak ada sumber otomatis — tetap pakai konteks manual admin saja.
-    } else {
-      const autoType: AutoNewsType = newsType
-      const warnParts: string[] = []
-      const parts: string[] = []
-
-      // Bzzoiro, Serper, dan Tavily dipanggil PARALEL — independen satu sama lain.
-      const [bzzoiroResult, serperResult, tavilyResult] = await Promise.allSettled([
-        BZZOIRO_FETCHERS[autoType](topic),
-        fetchSerperContext(autoType, topic),
-        fetchTavilyContext(autoType, topic),
-      ])
-
-      // ── 1. Bzzoiro — data & statistik terverifikasi ───────────────────
-      if (bzzoiroResult.status === "fulfilled" && bzzoiroResult.value.contextText) {
-        parts.push(bzzoiroResult.value.contextText)
-        if (bzzoiroResult.value.warning) warnParts.push(bzzoiroResult.value.warning)
-      } else {
-        const reason = bzzoiroResult.status === "rejected"
-          ? (bzzoiroResult.reason?.message ?? "error tidak diketahui")
-          : "tidak ada data ditemukan"
-        warnParts.push(`Bzzoiro gagal: ${reason}.`)
-      }
-
-      // ── 2. Serper — media (ESPN, Sky Sports, dll sesuai tipe) ──────────
-      if (serperResult.status === "fulfilled") {
-        parts.push(
-          `[SUMBER MEDIA — Serper Search: ${serperSourceLabel(autoType)}]\n` +
-          `Ambil: ${SERPER_DATA_NEEDED[autoType]}.\n` +
-          serperResult.value.contextText
-        )
-      } else {
-        warnParts.push(
-          `Serper tidak menemukan berita media untuk "${topic}" ` +
-          `(${serperResult.reason?.message ?? "error tidak diketahui"}).`
-        )
-      }
-
-      // ── 3. Tavily — backup + berita tambahan ───────────────────────────
-      if (tavilyResult.status === "fulfilled") {
-        parts.push(
-          `[BACKUP & BERITA TAMBAHAN — Tavily Search]\n` +
-          `Ambil: ${TAVILY_BACKUP_DATA[autoType]}.\n` +
-          tavilyResult.value.contextText
-        )
-      } else {
-        warnParts.push(
-          `Tavily tidak menemukan info tambahan untuk "${topic}" ` +
-          `(${tavilyResult.reason?.message ?? "error tidak diketahui"}).`
-        )
-      }
-
-      apiBlock = parts.join("\n\n")
-      warning  = warnParts.length > 0 ? warnParts.join(" | ") : undefined
-    }
-
-    const combinedContext = [apiBlock, manualBlock].filter(Boolean).join("\n\n")
-
-    if (!combinedContext.trim()) {
-      throw new Error("Tidak ada data API maupun konteks manual yang tersedia.")
-    }
-
-    return { combinedContext, warning, sourceUsed: AUTO_SOURCE_LABEL[newsType] }
-
-  } catch (err: unknown) {
-    const message = err instanceof Error ? err.message : "Gagal mengambil data otomatis."
-    console.error(`[generate-article] Auto-context gagal untuk newsType="${newsType}":`, message)
-
-    if (!manualBlock.trim()) {
-      throw new Error(
-        `Gagal mengambil data otomatis dari ${AUTO_SOURCE_LABEL[newsType]} (${message}), ` +
-        `dan kolom konteks manual masih kosong. Isi konteks manual lalu coba lagi.`
-      )
-    }
-
-    return {
-      combinedContext: manualBlock,
-      warning: `Data otomatis dari ${AUTO_SOURCE_LABEL[newsType]} gagal diambil (${message}). ` +
-               `Artikel digenerate hanya dari catatan manual admin.`,
-      sourceUsed: "Konteks manual admin (fallback)",
-    }
-  }
-}
-
-// ─── Cloudflare Workers AI: generate artikel ─────────────────────────────────
-async function cfGenerateJson(
-  accountId: string,
-  apiToken: string,
-  systemPrompt: string,
-  userPrompt: string,
-): Promise<{ raw: string; usage?: { promptTokens: number; completionTokens: number; totalTokens: number } }> {
-  const url = `https://api.cloudflare.com/client/v4/accounts/${accountId}/ai/run/${CF_MODEL}`
-
-  const res = await fetch(url, {
-    method: "POST",
-    headers: {
-      "Authorization": `Bearer ${apiToken}`,
-      "Content-Type":  "application/json",
-    },
-    body: JSON.stringify({
-      messages: [
-        { role: "system", content: systemPrompt },
-        { role: "user",   content: userPrompt },
-      ],
-      max_tokens: CF_MAX_TOKENS,
-      // Llama 4 Scout tidak punya native json_object mode seperti gpt-oss di Groq —
-      // kepatuhan format JSON murni mengandalkan instruksi tegas di BASE_SYSTEM/userPrompt.
-    }),
-    signal: AbortSignal.timeout(110_000),
-  })
-
-  if (!res.ok) {
-    const bodyText = await res.text().catch(() => "")
-    console.error(`[generate-article] Cloudflare Workers AI error ${res.status}:`, bodyText.slice(0, 500))
-    throw new Error(`Cloudflare Workers AI error ${res.status}: ${bodyText.slice(0, 300)}`)
+  // Semua style: gelap dramatis, fokus stadion / siluet / penonton — TANPA pemain AI
+  const styleMap: Record<ContentType, string> = {
+    match_preview:    "dark dramatic football stadium at night, floodlights blazing, packed crowd silhouettes, atmospheric fog, deep shadows, cinematic wide angle, no people faces",
+    match_result:     "football stadium celebration night, confetti falling, crowd silhouettes cheering, dramatic dark atmosphere, spotlights, no faces visible",
+    schedule:         "empty football stadium aerial view dusk, floodlights on, green pitch glowing, dark dramatic sky, no people",
+    squad:            "dark football locker room atmosphere, silhouettes of players standing, dramatic backlight, cinematic moody, no faces",
+    prediction:       "world cup trophy dramatic dark spotlight, gold glowing on black background, stadium blurred dark background, cinematic dramatic",
+    transfer:         "dark abstract football training ground night, stadium lights distant blur, dramatic moody atmosphere, no people",
+    press_conference: "dark press conference room, microphones podium, dramatic spotlight, bokeh background, moody atmosphere, no faces",
+    injury:           "dark medical room abstract, blue clinical tones, dramatic shadows, recovery atmosphere, no people",
+    general:          "dark dramatic football stadium panoramic, crowd silhouettes, floodlights, atmospheric fog, cinematic editorial, no faces",
   }
 
-  const json = await res.json()
+  const style = styleMap[contentType]
+  return `${base}, ${style}, absolutely no text, no letters, no numbers, no watermark, no typography, no identifiable faces, pure dark cinematic background, high quality, editorial photography style`
+}
 
-  if (json.success === false) {
-    const errMsg = (json.errors ?? []).map((e: any) => e.message).join("; ") || "Error tidak diketahui."
-    throw new Error(`Cloudflare Workers AI gagal: ${errMsg}`)
-  }
+// ─── Load font ────────────────────────────────────────────────────────────────
+// Font harus ada di public/fonts/Inter-Bold.ttf dan public/fonts/Inter-Medium.ttf
+// Download: https://fonts.google.com/specimen/Inter → klik "Download family"
+// Ekstrak lalu ambil file dari folder "static/"
 
-  const raw = (json.result?.response ?? "").trim()
+let _fontBoldCache: Buffer | null = null
+let _fontMediumCache: Buffer | null = null
 
-  // Cloudflare Workers AI mengembalikan usage di beberapa model — field & nama bisa
-  // berbeda dari Groq (prompt_tokens/completion_tokens vs format lain), jadi dibaca
-  // secara defensif. Kalau tidak ada, dicatat sebagai undefined (bukan error).
-  const u = json.result?.usage
-  const usage = u
-    ? {
-        promptTokens:     u.prompt_tokens     ?? u.input_tokens  ?? 0,
-        completionTokens: u.completion_tokens ?? u.output_tokens ?? 0,
-        totalTokens:      u.total_tokens      ?? ((u.prompt_tokens ?? u.input_tokens ?? 0) + (u.completion_tokens ?? u.output_tokens ?? 0)),
-      }
-    : undefined
+function loadFont(name: string): Buffer {
+  const fontPath = path.join(process.cwd(), "public", "fonts", name)
 
-  // LOG token aktual dari Cloudflare — dicatat untuk SETIAP generate (sukses maupun
-  // mendekati limit), supaya konsumsi nyata diketahui dibandingkan context window ~131K.
-  if (usage) {
-    console.log(
-      `[generate-article] Token usage — prompt: ${usage.promptTokens}, ` +
-      `completion: ${usage.completionTokens}, total: ${usage.totalTokens} ` +
-      `(context window Llama 4 Scout: ~131.000)`
+  if (!fs.existsSync(fontPath)) {
+    throw new Error(
+      `Font tidak ditemukan: public/fonts/${name}\n` +
+      `Download Inter dari https://fonts.google.com/specimen/Inter lalu taruh file .ttf di public/fonts/`
     )
-  } else {
-    console.log("[generate-article] Token usage tidak tersedia di response Cloudflare (field 'usage' kosong).")
   }
 
-  return { raw, usage }
+  return fs.readFileSync(fontPath)
+}
+
+function getFonts(): { bold: Buffer; medium: Buffer } {
+  // Cache font agar tidak re-read setiap request
+  if (!_fontBoldCache)   _fontBoldCache   = loadFont("Inter-Bold.ttf")
+  if (!_fontMediumCache) _fontMediumCache = loadFont("Inter-Medium.ttf")
+  return { bold: _fontBoldCache, medium: _fontMediumCache }
+}
+
+// ─── Color themes per content type ────────────────────────────────────────────
+
+// Semua tipe pakai neon green sebagai accent warna utama
+const NEON = "#39FF14"
+
+const THEMES: Record<ContentType, { accent: string; bg: string; text: string }> = {
+  match_preview:    { accent: NEON, bg: "rgba(0,0,0,0.82)", text: "#FFFFFF" },
+  match_result:     { accent: NEON, bg: "rgba(0,0,0,0.85)", text: "#FFFFFF" },
+  schedule:         { accent: NEON, bg: "rgba(0,0,0,0.82)", text: "#FFFFFF" },
+  squad:            { accent: NEON, bg: "rgba(0,0,0,0.82)", text: "#FFFFFF" },
+  prediction:       { accent: NEON, bg: "rgba(0,0,0,0.85)", text: "#FFFFFF" },
+  transfer:         { accent: NEON, bg: "rgba(0,0,0,0.82)", text: "#FFFFFF" },
+  press_conference: { accent: NEON, bg: "rgba(0,0,0,0.82)", text: "#FFFFFF" },
+  injury:           { accent: NEON, bg: "rgba(0,0,0,0.82)", text: "#FFFFFF" },
+  general:          { accent: NEON, bg: "rgba(0,0,0,0.82)", text: "#FFFFFF" },
+}
+
+const TYPE_LABELS: Record<ContentType, string> = {
+  match_preview:    "PREVIEW PERTANDINGAN",
+  match_result:     "HASIL PERTANDINGAN",
+  schedule:         "JADWAL LENGKAP",
+  squad:            "DAFTAR SKUAD",
+  prediction:       "PREDIKSI JUARA",
+  transfer:         "TRANSFER RUMOR",
+  press_conference: "KONFERENSI PERS",
+  injury:           "UPDATE CEDERA",
+  general:          "BERITA",
+}
+
+// ─── Satori node helper ───────────────────────────────────────────────────────
+
+// eslint-disable-next-line @typescript-eslint/no-explicit-any
+type SNode = Record<string, any>
+
+/** Type-safe .filter(Boolean) untuk SNode arrays */
+function compact(arr: (SNode | string | number | null | undefined | false | 0 | "")[]): SNode[] {
+  return arr.filter((x): x is SNode => Boolean(x))
+}
+
+// ─── Konversi base64 CF response → data URI untuk <image> di SVG ──────────────
+// Cloudflare FLUX mengembalikan base64 PNG.
+// Kita embed langsung sebagai data URI — tidak perlu sharp atau canvas.
+
+function cfBase64ToDataURI(base64: string): string {
+  // Deteksi format dari magic bytes (PNG: iVBOR, JPEG: /9j/, WebP: UklGR)
+  const header = base64.slice(0, 12)
+  let mimeType = "image/png" // default
+  if (header.startsWith("/9j/"))   mimeType = "image/jpeg"
+  if (header.startsWith("UklGR")) mimeType = "image/webp"
+
+  return `data:${mimeType};base64,${base64}`
+}
+
+// ─── Satori overlay builder ───────────────────────────────────────────────────
+// Background di-embed sebagai <image> di root SVG agar tidak perlu sharp composite.
+
+async function buildCompositeSVG(backgroundDataURI: string, overlay: OverlayData): Promise<string> {
+  const { bold: fontBold, medium: fontMedium } = getFonts()
+  const { accent, bg, text } = THEMES[overlay.contentType]
+  const label = TYPE_LABELS[overlay.contentType]
+
+  // ── Build inner content per type ──
+  const renderContent = (): SNode => {
+    const ct = overlay.contentType
+
+    if (ct === "match_preview" || ct === "match_result") {
+      const isResult = ct === "match_result"
+      return {
+        type: "div",
+        props: {
+          style: {
+            display: "flex",
+            flexDirection: "column",
+            alignItems: "center",
+            gap: 8,
+            width: "100%",
+          },
+          children: compact([
+            overlay.competition && {
+              type: "div",
+              props: {
+                style: { fontSize: 13, color: "#FFFFFF", fontWeight: 700, letterSpacing: 2, textTransform: "uppercase" },
+                children: overlay.competition,
+              },
+            },
+            {
+              type: "div",
+              props: {
+                style: {
+                  display: "flex",
+                  alignItems: "center",
+                  justifyContent: "center",
+                  gap: 16,
+                  width: "100%",
+                  marginTop: 4,
+                },
+                children: [
+                  {
+                    type: "div",
+                    props: {
+                      style: { display: "flex", flexDirection: "column", alignItems: "center", gap: 4, flex: 1 },
+                      children: compact([
+                        {
+                          type: "div",
+                          props: {
+                            style: { fontSize: isResult ? 22 : 26, fontWeight: 700, color: text, textAlign: "center", lineHeight: 1.1 },
+                            children: overlay.teamHome || "Home",
+                          },
+                        },
+                        isResult && overlay.scoreHome !== undefined && {
+                          type: "div",
+                          props: {
+                            style: { fontSize: 48, fontWeight: 700, color: accent, lineHeight: 1 },
+                            children: overlay.scoreHome,
+                          },
+                        },
+                      ]),
+                    },
+                  },
+                  {
+                    type: "div",
+                    props: {
+                      style: {
+                        fontSize: isResult ? 14 : 20,
+                        fontWeight: 700,
+                        color: "rgba(57,255,20,0.45)",
+                        paddingLeft: 8,
+                        paddingRight: 8,
+                      },
+                      children: isResult ? "—" : "VS",
+                    },
+                  },
+                  {
+                    type: "div",
+                    props: {
+                      style: { display: "flex", flexDirection: "column", alignItems: "center", gap: 4, flex: 1 },
+                      children: compact([
+                        {
+                          type: "div",
+                          props: {
+                            style: { fontSize: isResult ? 22 : 26, fontWeight: 700, color: text, textAlign: "center", lineHeight: 1.1 },
+                            children: overlay.teamAway || "Away",
+                          },
+                        },
+                        isResult && overlay.scoreAway !== undefined && {
+                          type: "div",
+                          props: {
+                            style: { fontSize: 48, fontWeight: 700, color: accent, lineHeight: 1 },
+                            children: overlay.scoreAway,
+                          },
+                        },
+                      ]),
+                    },
+                  },
+                ],
+              },
+            },
+            (overlay.matchDate || overlay.venue) && {
+              type: "div",
+              props: {
+                style: { fontSize: 12, color: "#FFFFFF", marginTop: 4, textAlign: "center" },
+                children: [overlay.matchDate, overlay.venue].filter(Boolean).join(" · "),
+              },
+            },
+          ]),
+        },
+      }
+    }
+
+    if (ct === "schedule") {
+      return {
+        type: "div",
+        props: {
+          style: { display: "flex", flexDirection: "column", alignItems: "center", gap: 8 },
+          children: compact([
+            overlay.competition && {
+              type: "div",
+              props: {
+                style: { fontSize: 13, color: "#FFFFFF", fontWeight: 700, letterSpacing: 2 },
+                children: overlay.competition,
+              },
+            },
+            {
+              type: "div",
+              props: {
+                style: { fontSize: 28, fontWeight: 700, color: text, textAlign: "center", lineHeight: 1.2 },
+                children: overlay.matchCount ? `${overlay.matchCount} Pertandingan` : "Jadwal Lengkap",
+              },
+            },
+            overlay.dateRange && {
+              type: "div",
+              props: {
+                style: { fontSize: 14, color: "rgba(57,255,20,0.55)", textAlign: "center" },
+                children: overlay.dateRange,
+              },
+            },
+          ]),
+        },
+      }
+    }
+
+    if (ct === "squad") {
+      return {
+        type: "div",
+        props: {
+          style: { display: "flex", flexDirection: "column", alignItems: "center", gap: 8 },
+          children: compact([
+            {
+              type: "div",
+              props: {
+                style: { fontSize: 30, fontWeight: 700, color: text, textAlign: "center" },
+                children: overlay.teamName || "Skuad",
+              },
+            },
+            overlay.season && {
+              type: "div",
+              props: {
+                style: { fontSize: 14, color: accent, fontWeight: 700, letterSpacing: 1 },
+                children: `Musim ${overlay.season}`,
+              },
+            },
+            overlay.playerCount && {
+              type: "div",
+              props: {
+                style: { fontSize: 13, color: "rgba(57,255,20,0.50)" },
+                children: `${overlay.playerCount} Pemain`,
+              },
+            },
+          ]),
+        },
+      }
+    }
+
+    if (ct === "prediction") {
+      return {
+        type: "div",
+        props: {
+          style: { display: "flex", flexDirection: "column", alignItems: "center", gap: 8 },
+          children: compact([
+            overlay.tournament && {
+              type: "div",
+              props: {
+                style: { fontSize: 13, color: accent, fontWeight: 700, letterSpacing: 2, textTransform: "uppercase" },
+                children: overlay.tournament,
+              },
+            },
+            {
+              type: "div",
+              props: {
+                style: { fontSize: 15, color: "rgba(57,255,20,0.50)", marginTop: 2 },
+                children: "Favorit Juara",
+              },
+            },
+            overlay.favorite && {
+              type: "div",
+              props: {
+                style: { fontSize: 34, fontWeight: 700, color: accent, textAlign: "center", lineHeight: 1.1 },
+                children: overlay.favorite,
+              },
+            },
+          ]),
+        },
+      }
+    }
+
+    if (ct === "transfer") {
+      return {
+        type: "div",
+        props: {
+          style: { display: "flex", flexDirection: "column", alignItems: "center", gap: 6 },
+          children: compact([
+            overlay.playerName && {
+              type: "div",
+              props: {
+                style: { fontSize: 30, fontWeight: 700, color: text, textAlign: "center" },
+                children: overlay.playerName,
+              },
+            },
+            (overlay.fromClub && overlay.toClub) && {
+              type: "div",
+              props: {
+                style: {
+                  display: "flex",
+                  alignItems: "center",
+                  gap: 10,
+                  marginTop: 4,
+                },
+                children: [
+                  {
+                    type: "div",
+                    props: {
+                      style: { fontSize: 16, color: "rgba(57,255,20,0.60)" },
+                      children: overlay.fromClub,
+                    },
+                  },
+                  {
+                    type: "div",
+                    props: {
+                      style: { fontSize: 18, color: accent, fontWeight: 700 },
+                      children: "→",
+                    },
+                  },
+                  {
+                    type: "div",
+                    props: {
+                      style: { fontSize: 16, color: text, fontWeight: 700 },
+                      children: overlay.toClub,
+                    },
+                  },
+                ],
+              },
+            },
+            overlay.transferFee && {
+              type: "div",
+              props: {
+                style: {
+                  marginTop: 6,
+                  backgroundColor: accent,
+                  color: "#000",
+                  fontWeight: 700,
+                  fontSize: 14,
+                  paddingLeft: 14,
+                  paddingRight: 14,
+                  paddingTop: 5,
+                  paddingBottom: 5,
+                  borderRadius: 20,
+                },
+                children: overlay.transferFee,
+              },
+            },
+          ]),
+        },
+      }
+    }
+
+    if (ct === "press_conference") {
+      return {
+        type: "div",
+        props: {
+          style: { display: "flex", flexDirection: "column", alignItems: "center", gap: 8 },
+          children: compact([
+            overlay.clubName && {
+              type: "div",
+              props: {
+                style: { fontSize: 13, color: accent, fontWeight: 700, letterSpacing: 2, textTransform: "uppercase" },
+                children: overlay.clubName,
+              },
+            },
+            overlay.managerName && {
+              type: "div",
+              props: {
+                style: { fontSize: 28, fontWeight: 700, color: text, textAlign: "center" },
+                children: overlay.managerName,
+              },
+            },
+          ]),
+        },
+      }
+    }
+
+    if (ct === "injury") {
+      return {
+        type: "div",
+        props: {
+          style: { display: "flex", flexDirection: "column", alignItems: "center", gap: 8 },
+          children: compact([
+            overlay.clubName && {
+              type: "div",
+              props: {
+                style: { fontSize: 13, color: accent, fontWeight: 700, letterSpacing: 2, textTransform: "uppercase" },
+                children: overlay.clubName,
+              },
+            },
+            overlay.playerName && {
+              type: "div",
+              props: {
+                style: { fontSize: 28, fontWeight: 700, color: text, textAlign: "center" },
+                children: overlay.playerName,
+              },
+            },
+            overlay.playerStatus && {
+              type: "div",
+              props: {
+                style: {
+                  marginTop: 4,
+                  backgroundColor: "rgba(57,255,20,0.15)",
+                  border: "1px solid rgba(57,255,20,0.5)",
+                  color: "#39FF14",
+                  fontWeight: 600,
+                  fontSize: 13,
+                  paddingLeft: 14,
+                  paddingRight: 14,
+                  paddingTop: 5,
+                  paddingBottom: 5,
+                  borderRadius: 20,
+                },
+                children: overlay.playerStatus,
+              },
+            },
+          ]),
+        },
+      }
+    }
+
+    // general fallback
+    return {
+      type: "div",
+      props: {
+        style: { display: "flex", flexDirection: "column", alignItems: "center", gap: 8 },
+        children: compact([
+          {
+            type: "div",
+            props: {
+              style: { fontSize: 26, fontWeight: 700, color: text, textAlign: "center", lineHeight: 1.3, maxWidth: 380 },
+              children: overlay.headline || "Halfspace",
+            },
+          },
+          overlay.subheadline && {
+            type: "div",
+            props: {
+              style: { fontSize: 14, color: "rgba(57,255,20,0.55)", textAlign: "center", maxWidth: 340 },
+              children: overlay.subheadline,
+            },
+          },
+        ]),
+      },
+    }
+  }
+
+  const svgString = await satori(
+    {
+      type: "div",
+      props: {
+        style: {
+          display: "flex",
+          flexDirection: "column",
+          width: IMG_SIZE,
+          height: IMG_SIZE,
+          position: "relative",
+          fontFamily: "Inter",
+          // Background image di-embed langsung di sini — tidak perlu sharp composite
+          backgroundImage: `url("${backgroundDataURI}")`,
+          backgroundSize: "cover",
+          backgroundPosition: "center",
+        },
+        children: [
+          // Semi-transparent gradient overlay — sangat gelap seperti referensi
+          {
+            type: "div",
+            props: {
+              style: {
+                position: "absolute",
+                inset: 0,
+                background: `linear-gradient(to top, ${bg} 0%, rgba(0,0,0,0.80) 50%, rgba(0,0,0,0.60) 100%)`,
+              },
+            },
+          },
+          // Content wrapper (bottom) — dinaikkan agar ada ruang untuk branding di bawah
+          {
+            type: "div",
+            props: {
+              style: {
+                position: "absolute",
+                bottom: 75,
+                left: 0,
+                right: 0,
+                display: "flex",
+                flexDirection: "column",
+                alignItems: "center",
+                paddingBottom: 0,
+                paddingLeft: 24,
+                paddingRight: 24,
+                gap: 12,
+              },
+              children: [
+                // Type label badge
+                {
+                  type: "div",
+                  props: {
+                    style: {
+                      backgroundColor: accent,
+                      color: "#000000",
+                      fontSize: 10,
+                      fontWeight: 700,
+                      letterSpacing: 2,
+                      paddingLeft: 12,
+                      paddingRight: 12,
+                      paddingTop: 4,
+                      paddingBottom: 4,
+                      borderRadius: 4,
+                      textTransform: "uppercase",
+                    },
+                    children: label,
+                  },
+                },
+                // Dynamic content
+                renderContent(),
+              ],
+            },
+          },
+          // Branding — tetap di posisi paling bawah
+          {
+            type: "div",
+            props: {
+              style: {
+                position: "absolute",
+                bottom: 16,
+                left: 0,
+                right: 0,
+                display: "flex",
+                justifyContent: "center",
+                alignItems: "center",
+              },
+              children: {
+                type: "div",
+                props: {
+                  style: {
+                    fontSize: 11,
+                    color: "rgba(255,255,255,0.75)",
+                    letterSpacing: 3,
+                    textTransform: "uppercase",
+                    fontWeight: 700,
+                  },
+                  children: "HALFSPACESPORT.COM",
+                },
+              },
+            },
+          },
+          // Top-left accent bar
+          {
+            type: "div",
+            props: {
+              style: {
+                position: "absolute",
+                top: 20,
+                left: 20,
+                width: 36,
+                height: 4,
+                backgroundColor: accent,
+                borderRadius: 2,
+              },
+            },
+          },
+        ],
+      },
+    } as unknown as React.ReactNode,
+    {
+      width: IMG_SIZE,
+      height: IMG_SIZE,
+      fonts: [
+        { name: "Inter", data: fontBold,   weight: 700, style: "normal" },
+        { name: "Inter", data: fontMedium, weight: 500, style: "normal" },
+      ],
+    }
+  )
+
+  return svgString
+}
+
+// ─── Render SVG → PNG (tanpa sharp) ──────────────────────────────────────────
+
+function renderSVGtoPNG(svgString: string): Buffer {
+  const resvg = new Resvg(svgString, {
+    fitTo: { mode: "width", value: IMG_SIZE },
+    // Aktifkan image loading agar <image> data URI di SVG terbaca
+    imageRendering: 1, // 0 = optimizeQuality, 1 = optimizeSpeed
+  })
+  return Buffer.from(resvg.render().asPng())
 }
 
 // ─── POST handler ─────────────────────────────────────────────────────────────
+
 export async function POST(req: NextRequest) {
+  // Auth
   const user = await requireAdmin()
   if (!user) {
     return NextResponse.json({ error: "Unauthorized" }, { status: 401 })
   }
 
-  const cfAccountId = process.env.CLOUDFLARE_ACCOUNT_ID
-  const cfApiToken  = process.env.CLOUDFLARE_API_TOKEN
-  if (!cfAccountId || !cfApiToken) {
+  const accountId = process.env.CF_ACCOUNT_ID
+  const apiToken  = process.env.CF_API_TOKEN
+  if (!accountId || !apiToken) {
     return NextResponse.json(
-      { error: "CLOUDFLARE_ACCOUNT_ID dan/atau CLOUDFLARE_API_TOKEN belum dikonfigurasi di environment variables." },
+      { error: "CF_ACCOUNT_ID / CF_API_TOKEN belum dikonfigurasi di server." },
       { status: 500 }
     )
   }
 
-  let body: RequestBody
+  let body: { prompt?: string; overlay?: OverlayData }
   try {
     body = await req.json()
   } catch {
     return NextResponse.json({ error: "Request body tidak valid." }, { status: 400 })
   }
 
-  const { newsType, topic, context } = body
-
-  if (!newsType || !topic?.trim()) {
-    return NextResponse.json({ error: "newsType dan topic wajib diisi." }, { status: 400 })
+  const prompt = body.prompt?.trim()
+  if (!prompt) {
+    return NextResponse.json({ error: "Prompt wajib diisi." }, { status: 400 })
   }
 
-  const validTypes: NewsType[] = ["transfer", "konpers", "cedera", "preview", "hasil", "trivia"]
-  if (!validTypes.includes(newsType)) {
-    return NextResponse.json({ error: "newsType tidak valid." }, { status: 400 })
-  }
+  const overlay: OverlayData = body.overlay ?? { contentType: "general" }
+  const cfPrompt = buildCFPrompt(overlay.contentType, prompt)
 
-  if (newsType === "trivia" && !context?.trim()) {
-    return NextResponse.json(
-      { error: "context wajib diisi untuk tipe berita Trivia (tidak ada sumber data otomatis)." },
-      { status: 400 }
-    )
-  }
+  const url = `https://api.cloudflare.com/client/v4/accounts/${accountId}/ai/run/@cf/black-forest-labs/flux-1-schnell`
 
-  // ── SSE Stream ───────────────────────────────────────────────────────────────
-  const encoder = new TextEncoder()
+  let lastError = "Cloudflare Workers AI gagal merespons."
 
-  const stream = new ReadableStream({
-    async start(controller) {
-      const send = (event: string, data: unknown) => {
-        controller.enqueue(encoder.encode(sseEvent(event, data)))
+  for (let attempt = 0; attempt <= MAX_RETRIES; attempt++) {
+    try {
+      const res = await fetch(url, {
+        method: "POST",
+        headers: {
+          Authorization: `Bearer ${apiToken}`,
+          "Content-Type": "application/json",
+        },
+        body: JSON.stringify({ prompt: cfPrompt }),
+        signal: AbortSignal.timeout(FETCH_TIMEOUT_MS),
+      })
+
+      if (!res.ok) {
+        const text = await res.text().catch(() => "")
+        lastError = `Cloudflare error ${res.status}`
+        console.error("[generate-image] non-ok response:", res.status, text)
+        continue
       }
 
+      const data = await res.json()
+      const base64 = data?.result?.image
+
+      if (!base64) {
+        lastError = "Cloudflare tidak mengembalikan gambar."
+        console.error("[generate-image] unexpected shape:", JSON.stringify(data).slice(0, 500))
+        continue
+      }
+
+      // 1. Konversi base64 CF → data URI (deteksi format otomatis, no sharp)
+      const backgroundDataURI = cfBase64ToDataURI(base64)
+
+      let finalBuf: Buffer
       try {
-        // ── STEP 1: Ambil data pendukung otomatis (Bzzoiro + Serper + Tavily) ──
-        send("progress", {
-          step: 1,
-          label: `Mengambil Data dari ${AUTO_SOURCE_LABEL[newsType]}`,
-          source: AUTO_SOURCE_LABEL[newsType],
-        })
+        // 2. Satori render SVG dengan background ter-embed + overlay teks
+        const svgString = await buildCompositeSVG(backgroundDataURI, overlay)
 
-        const { combinedContext, warning, sourceUsed } = await fetchAutoContext(
-          newsType,
-          topic.trim(),
-          context ?? "",
+        // 3. Resvg render SVG → PNG final (background + teks, sekaligus)
+        finalBuf = renderSVGtoPNG(svgString)
+      } catch (compErr) {
+        console.error("[generate-image] composite error:", compErr)
+        return NextResponse.json(
+          { error: "Gagal memproses gambar: " + (compErr instanceof Error ? compErr.message : String(compErr)) },
+          { status: 500 }
         )
-
-        if (warning) {
-          send("progress", { step: 1, label: warning, source: sourceUsed, warning: true })
-        }
-
-        // ── STEP 2: Susun prompt ─────────────────────────────────────────
-        send("progress", { step: 2, label: "Menyusun Prompt Editorial", source: sourceUsed })
-
-        const userPrompt = `${TYPE_INSTRUCTION[newsType]}
-
-TOPIK: ${topic.trim()}
-
-KONTEKS / FAKTA YANG DIKETAHUI:
-${combinedContext}
-
-Tulis artikel berdasarkan topik dan konteks di atas.
-Gunakan HANYA informasi yang ada di konteks — jangan tambahkan fakta, nama, skor, atau angka yang tidak disebutkan.
-Pilih angle paling menarik dari konteks, dan biarkan narasi berkembang sesuai struktur tipe berita di atas.
-
-INSTRUKSI PANJANG (WAJIB DIPATUHI):
-- WAJIB 500-700 kata. Hitung kata sebelum selesai menulis.
-- WAJIB minimal 8 paragraf. Setiap paragraf harus membawa satu ide atau momen baru.
-- WAJIB minimal 3 subheading <h2>.
-- Setiap subheading WAJIB diikuti minimal 2 paragraf sebelum subheading berikutnya.
-- Setiap fakta dari konteks WAJIB dikembangkan menjadi analisis, bukan sekadar disebutkan.
-- Artikel pendek TIDAK DITERIMA. Jika terasa selesai sebelum 500 kata, tambahkan analisis implikasi, konteks historis, atau elaborasi taktis dari data yang ada.
-
-Kembalikan HANYA JSON dengan format berikut (tidak ada teks di luar JSON):
-{
-  "title": "<judul artikel: menarik, max 80 karakter, tanpa tanda tanya, tanpa clickbait, bukan format 'Tim A vs Tim B'>",
-  "content": "<konten artikel dalam HTML — gunakan <h2> untuk judul bagian, <p> untuk paragraf, <blockquote> untuk kutipan langsung dari narasumber. JANGAN gunakan tag HTML lain apapun.>"
-}`
-
-        // ── STEP 3: Llama 4 Scout menulis artikel ────────────────────────
-        send("progress", {
-          step: 3,
-          label: `Menulis Artikel dengan ${CF_MODEL_LABEL}`,
-          source: sourceUsed,
-          model: CF_MODEL,
-        })
-
-        const { raw, usage } = await cfGenerateJson(cfAccountId, cfApiToken, BASE_SYSTEM, userPrompt)
-
-        if (!raw) {
-          throw new Error(
-            `${CF_MODEL_LABEL} tidak menghasilkan output. ` +
-            `Kemungkinan timeout, request diblokir safety filter, atau kuota Workers AI habis.`
-          )
-        }
-
-        const result = extractJsonObject<{ title: string; content: string }>(raw)
-
-        if (!result?.title?.trim() || !result?.content?.trim()) {
-          console.error("[generate-article] Gagal parse hasil Cloudflare. Raw:", raw.slice(0, 800))
-          throw new Error(`Gagal memproses hasil dari ${CF_MODEL_LABEL}. Coba lagi.`)
-        }
-
-        // ── STEP 4: Done ─────────────────────────────────────────────────
-        send("progress", { step: 4, label: "Artikel Selesai", source: sourceUsed })
-
-        send("done", {
-          title:      result.title.trim(),
-          content:    result.content.trim(),
-          sourceUsed,
-          modelUsed:  CF_MODEL,
-          modelLabel: CF_MODEL_LABEL,
-          // Token aktual dari Cloudflare — berguna utk memantau jarak ke context window ~131K
-          // tanpa harus menunggu error/limit terjadi dulu.
-          tokenUsage: usage,
-        })
-
-      } catch (err: unknown) {
-        const message = err instanceof Error ? err.message : "Terjadi error. Coba lagi."
-        console.error("[generate-article] Error:", err)
-        send("error", { error: message })
-      } finally {
-        controller.close()
       }
-    },
-  })
 
-  return new Response(stream, {
-    headers: {
-      "Content-Type":  "text/event-stream",
-      "Cache-Control": "no-cache",
-      "Connection":    "keep-alive",
-    },
-  })
+      return new NextResponse(new Uint8Array(finalBuf), {
+        status: 200,
+        headers: {
+          "Content-Type": "image/png",
+          "Cache-Control": "no-store",
+        },
+      })
+    } catch (err) {
+      const isTimeout = err instanceof Error && err.name === "TimeoutError"
+      lastError = isTimeout
+        ? "Cloudflare timeout — server terlalu lama merespons."
+        : "Gagal menghubungi Cloudflare Workers AI."
+      console.error("[generate-image] CF fetch error:", err)
+    }
+  }
+
+  console.error("[generate-image] failed after retries:", lastError)
+  return NextResponse.json({ error: lastError }, { status: 502 })
 }
