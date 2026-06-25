@@ -1,7 +1,8 @@
 // lib/internal-linking.ts
 //
 // Internal Link Building otomatis — menyisipkan link antar-artikel ke dalam
-// konten HTML berdasarkan kecocokan judul/tag artikel lain yang sudah publish.
+// konten HTML berdasarkan relevansi semantik + kecocokan teks.
+//
 // Dipakai di dua tempat:
 //   1. components/admin/views/create-article-view.tsx → saat artikel baru
 //      disimpan/dipublish (otomatis, berjalan sendiri tiap save).
@@ -13,12 +14,20 @@ export interface LinkCandidate {
   slug: string
   title: string
   tags?: string[]
+  categoryId?: string
+}
+
+// Konteks artikel yang sedang diproses — dipakai untuk semantic scoring.
+// Opsional agar backward-compatible dengan semua pemanggil lama.
+export interface SourceArticleContext {
+  categoryId?: string | null
+  tags?: string[]
 }
 
 export interface InternalLinkOptions {
-  /** Maksimal jumlah link baru yang disisipkan per artikel. Default 5. */
+  /** Maksimal jumlah link baru yang disisipkan per artikel. Default: auto (1 per ~400 kata, min 3 max 8). */
   maxLinks?: number
-  /** Minimal panjang keyword (judul/tag) agar tidak match ke kata terlalu umum. Default 6. */
+  /** Minimal panjang keyword agar tidak match ke kata terlalu umum. Default 8. */
   minKeywordLength?: number
   /** Prefix URL artikel. Default "/article/". */
   basePath?: string
@@ -29,61 +38,163 @@ interface Hit {
   end: number
   candidate: LinkCandidate
   text: string
+  contextPhrase: string  // frasa 2-3 kata di sekitar match untuk anchor text yang lebih deskriptif
 }
 
 const DEFAULT_OPTIONS: Required<InternalLinkOptions> = {
-  maxLinks: 5,
-  minKeywordLength: 6,
+  maxLinks: 0,          // 0 = auto-calculate dari panjang konten
+  minKeywordLength: 8,
   basePath: "/article/",
 }
+
+// Kata-kata yang terlalu umum untuk dijadikan anchor link meski lolos minKeywordLength.
+// Daftar ini spesifik untuk konten sepakbola berbahasa Indonesia.
+const BLOCKED_KEYWORDS = new Set([
+  "taktik", "formasi", "pemain", "pelatih", "wasit", "kapten", "striker",
+  "pemain", "musim", "kompetisi", "turnamen", "klasemen", "pertandingan",
+  "tendangan", "gawang", "kiper", "bola", "sepakbola", "football",
+  "manager", "skuad", "timnas", "transfer", "kontrak", "liga",
+])
 
 function escapeRegExp(str: string): string {
   return str.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")
 }
 
-// Keyword per kandidat: judul penuh + tag-tag. Tag biasanya lebih pendek &
-// lebih spesifik (nama klub/pemain) sehingga lebih sering match di body teks
-// daripada judul artikel yang berupa kalimat naratif panjang.
+// Hitung semantic relevance score kandidat terhadap artikel sumber.
+// Makin tinggi score → kandidat makin diprioritaskan di antrian matching.
+function calcRelevanceScore(candidate: LinkCandidate, source: SourceArticleContext): number {
+  let score = 0
+
+  // Kategori sama: sinyal terkuat — artikel taktik lebih relevan ke artikel taktik lain
+  if (source.categoryId && candidate.categoryId && source.categoryId === candidate.categoryId) {
+    score += 5
+  }
+
+  // Setiap tag yang sama menambah skor
+  const sourceTags = new Set((source.tags ?? []).map(t => t.toLowerCase()))
+  for (const tag of candidate.tags ?? []) {
+    if (sourceTags.has(tag.toLowerCase())) score += 2
+  }
+
+  return score
+}
+
+// Keyword per kandidat: tag-tag (lebih spesifik, sering muncul di body) + judul penuh.
+// Urutan: tag terpanjang dulu → judul → tag pendek, agar match yang lebih spesifik menang.
 function buildKeywords(candidate: LinkCandidate, minLen: number): string[] {
   const keywords = new Set<string>()
-  if (candidate.title && candidate.title.length >= minLen) keywords.add(candidate.title)
+
   for (const tag of candidate.tags ?? []) {
-    if (tag && tag.length >= minLen) keywords.add(tag)
+    const t = tag.trim()
+    if (t.length >= minLen && !BLOCKED_KEYWORDS.has(t.toLowerCase())) {
+      keywords.add(t)
+    }
   }
-  return [...keywords].sort((a, b) => b.length - a.length)
+
+  if (candidate.title && candidate.title.length >= minLen) {
+    keywords.add(candidate.title)
+  }
+
+  // Urutkan: tag panjang dulu (lebih spesifik), judul panjang mendukung fallback
+  return [...keywords].sort((a, b) => {
+    const aIsTitle = a === candidate.title
+    const bIsTitle = b === candidate.title
+    if (!aIsTitle && bIsTitle) return -1  // tag sebelum judul
+    if (aIsTitle && !bIsTitle) return 1
+    return b.length - a.length            // yang lebih panjang dulu
+  })
+}
+
+// Cari frasa 2–3 kata yang mencakup keyword di dalam teks segmen.
+// Dipakai sebagai anchor text yang lebih deskriptif daripada satu kata saja.
+// Contoh: keyword "Liverpool" di "taktik pressing Liverpool" → anchor "pressing Liverpool"
+function extractContextPhrase(seg: string, start: number, end: number): string {
+  // Ambil window ±40 karakter, lalu pilih 2–3 kata yang mencakup match
+  const windowStart = Math.max(0, start - 40)
+  const windowEnd = Math.min(seg.length, end + 40)
+  const window = seg.slice(windowStart, windowEnd)
+  const relStart = start - windowStart
+  const relEnd = end - windowStart
+
+  // Cari batas kata di sekitar match
+  const words = window.split(/\s+/)
+  let charPos = 0
+  let matchWordStart = -1
+  let matchWordEnd = -1
+
+  for (let i = 0; i < words.length; i++) {
+    const wStart = charPos
+    const wEnd = charPos + words[i].length
+    if (wEnd >= relStart && matchWordStart === -1) matchWordStart = i
+    if (wStart <= relEnd) matchWordEnd = i
+    charPos += words[i].length + 1
+  }
+
+  if (matchWordStart === -1) return seg.slice(start, end)
+
+  // Ambil 1 kata sebelum keyword (jika ada) + keyword — max 3 kata total
+  const phraseStart = Math.max(0, matchWordStart - 1)
+  const phraseEnd = Math.min(words.length - 1, matchWordEnd + 1)
+  const phrase = words.slice(phraseStart, phraseEnd + 1).join(" ").trim()
+
+  // Jangan kembalikan frasa yang terlalu panjang (>35 karakter) atau terlalu pendek
+  if (phrase.length > 35 || phrase.length < seg.slice(start, end).length) {
+    return seg.slice(start, end)
+  }
+  return phrase
+}
+
+// Hitung maxLinks otomatis berdasarkan perkiraan jumlah kata di konten HTML.
+// Rasio: 1 link per 400 kata, min 3, max 8.
+function calcAutoMaxLinks(html: string): number {
+  const textApprox = html.replace(/<[^>]+>/g, " ").trim()
+  const wordCount = textApprox.split(/\s+/).filter(Boolean).length
+  return Math.max(3, Math.min(8, Math.floor(wordCount / 400)))
 }
 
 /**
- * Sisipkan internal link ke dalam HTML artikel.
+ * Sisipkan internal link ke dalam HTML artikel dengan semantic scoring.
  *
- * Aman terhadap:
- * - Tag HTML & attribute (regex hanya jalan di segmen teks, bukan di dalam tag).
- * - Link yang sudah ada (<a>...</a> tidak ditimpa / tidak ditumpuk jadi nested link).
- * - Heading (<h1>-<h6>) — dilewati agar judul section tidak penuh link.
- * - Widget shortcode teks, mis. [match_data id="..."] — dilewati apa adanya.
+ * Perbedaan dari versi sebelumnya:
+ * - Kandidat diurutkan berdasarkan relevance score (kategori + tag sama) sebelum matching.
+ *   Artikel yang topiknya lebih dekat diprioritaskan mendapat slot link.
+ * - Tag umum (taktik, pemain, dll.) diblokir agar tidak jadi anchor.
+ * - Anchor text diambil sebagai frasa 2–3 kata yang mencakup keyword,
+ *   bukan sekadar satu kata, agar lebih deskriptif untuk SEO.
+ * - maxLinks dihitung otomatis dari panjang konten jika tidak di-set.
+ * - minKeywordLength naik ke 8 untuk mengurangi false positive.
  *
- * Setiap kandidat hanya ditautkan SATU KALI per artikel (match pertama yang
- * ditemukan), dan total link baru dibatasi `maxLinks`.
+ * Tetap aman terhadap:
+ * - Tag HTML & atribut (hanya segmen teks yang diubah).
+ * - Link yang sudah ada (<a> tidak ditumpuk).
+ * - Heading (<h1>–<h6>) dilewati.
+ * - Widget shortcode dilewati.
  */
 export function applyInternalLinks(
   html: string,
   currentArticleId: string | null | undefined,
   candidates: LinkCandidate[],
-  options: InternalLinkOptions = {}
+  options: InternalLinkOptions = {},
+  sourceContext: SourceArticleContext = {}
 ): { html: string; linkedSlugs: string[] } {
   const opts = { ...DEFAULT_OPTIONS, ...options }
+  const maxLinks = opts.maxLinks > 0 ? opts.maxLinks : calcAutoMaxLinks(html)
 
+  // Filter kandidat valid, lalu urutkan berdasarkan semantic score (tinggi → rendah)
   const usable = candidates
     .filter((c) => c.id !== currentArticleId && c.slug)
-    .map((c) => ({ candidate: c, keywords: buildKeywords(c, opts.minKeywordLength) }))
+    .map((c) => ({
+      candidate: c,
+      keywords: buildKeywords(c, opts.minKeywordLength),
+      score: calcRelevanceScore(c, sourceContext),
+    }))
     .filter((c) => c.keywords.length > 0)
+    .sort((a, b) => b.score - a.score)  // kandidat paling relevan masuk antrian duluan
 
-  if (usable.length === 0 || opts.maxLinks <= 0) {
+  if (usable.length === 0 || maxLinks <= 0) {
     return { html, linkedSlugs: [] }
   }
 
-  // Pecah HTML jadi segmen tag vs teks — hanya segmen teks (index ganjil/genap
-  // berseling) yang boleh diubah.
   const segments = html.split(/(<[^>]+>)/g)
 
   let depthInsideA = 0
@@ -96,9 +207,8 @@ export function applyInternalLinks(
     const seg = segments[i]
     if (!seg) continue
 
-    // Segmen tag → hanya update state, jangan diubah.
     if (seg.startsWith("<")) {
-      const tagMatch = /^<\/?\s*([a-zA-Z0-9]+)/.exec(seg)
+      const tagMatch = /^<\/?([a-zA-Z0-9]+)/.exec(seg)
       const tagName = tagMatch?.[1]?.toLowerCase()
       const isClosing = /^<\//.test(seg)
       if (tagName === "a") depthInsideA += isClosing ? -1 : 1
@@ -107,13 +217,10 @@ export function applyInternalLinks(
     }
 
     if (depthInsideA > 0 || depthInsideHeading > 0) continue
-    if (linksInserted >= opts.maxLinks) continue
+    if (linksInserted >= maxLinks) continue
     if (!seg.trim()) continue
-    // Lewati segmen yang murni shortcode widget, mis. [match_data id="x"]
     if (/^\s*\[[a-z_]+_data\s+id="[^"]+"\]\s*$/i.test(seg)) continue
 
-    // Kumpulkan semua match kandidat di segmen ini dulu (tanpa mengubah string),
-    // supaya tidak ada link yang ter-nested di dalam link lain.
     const hits: Hit[] = []
     for (const { candidate, keywords } of usable) {
       if (linkedCandidateIds.has(candidate.id)) continue
@@ -124,33 +231,59 @@ export function applyInternalLinks(
         )
         const m = pattern.exec(seg)
         if (m && m.index !== undefined) {
-          hits.push({ start: m.index, end: m.index + m[1].length, candidate, text: m[1] })
-          break // satu keyword cukup untuk kandidat ini, lanjut ke kandidat lain
+          const contextPhrase = extractContextPhrase(seg, m.index, m.index + m[1].length)
+          hits.push({
+            start: m.index,
+            end: m.index + m[1].length,
+            candidate,
+            text: m[1],
+            contextPhrase,
+          })
+          break
         }
       }
     }
     if (hits.length === 0) continue
 
-    // Pilih match yang tidak overlap, urut dari posisi paling awal, sesuai sisa kuota.
     hits.sort((a, b) => a.start - b.start)
     const chosen: Hit[] = []
     let lastEnd = -1
     for (const hit of hits) {
-      if (chosen.length + linksInserted >= opts.maxLinks) break
+      if (chosen.length + linksInserted >= maxLinks) break
       if (hit.start < lastEnd) continue
       chosen.push(hit)
       lastEnd = hit.end
     }
     if (chosen.length === 0) continue
 
-    // Bangun ulang segmen dari belakang ke depan supaya index tetap valid.
+    // Bangun ulang segmen dari belakang ke depan.
+    // Anchor text: gunakan contextPhrase jika lebih deskriptif dari satu kata,
+    // dan pastikan frasa yang dijadikan link persis menggantikan rentang teks yang match.
     let segOut = seg
     for (let k = chosen.length - 1; k >= 0; k--) {
       const hit = chosen[k]
       const href = `${opts.basePath}${hit.candidate.slug}`
       const safeTitle = hit.candidate.title.replace(/"/g, "&quot;")
-      const anchor = `<a href="${href}" title="${safeTitle}">${hit.text}</a>`
-      segOut = segOut.slice(0, hit.start) + anchor + segOut.slice(hit.end)
+
+      // Jika contextPhrase berbeda dari match asli, kita perlu memperluas rentang yang diganti
+      const phrase = hit.contextPhrase
+      const usePhrase = phrase !== hit.text && phrase.includes(hit.text)
+
+      let replaceStart = hit.start
+      let replaceEnd = hit.end
+      let anchorText = hit.text
+
+      if (usePhrase) {
+        const phraseIdx = seg.lastIndexOf(phrase, hit.end)
+        if (phraseIdx !== -1 && phraseIdx <= hit.start) {
+          replaceStart = phraseIdx
+          replaceEnd = phraseIdx + phrase.length
+          anchorText = phrase
+        }
+      }
+
+      const anchor = `<a href="${href}" title="${safeTitle}">${anchorText}</a>`
+      segOut = segOut.slice(0, replaceStart) + anchor + segOut.slice(replaceEnd)
     }
 
     for (const hit of chosen) {
@@ -165,11 +298,8 @@ export function applyInternalLinks(
 }
 
 /**
- * Ambil daftar kandidat artikel published dari Supabase, siap dipakai sebagai
- * argumen `candidates` di atas. Dipisah dari `applyInternalLinks` (pure
- * function, tanpa I/O) supaya bisa dipanggil baik dari client (browser, saat
- * admin menyimpan artikel di create-article-view.tsx) maupun dari server
- * (API route untuk proses retroaktif).
+ * Ambil daftar kandidat artikel published dari Supabase.
+ * Sekarang juga mengambil category_id agar bisa dipakai untuk semantic scoring.
  */
 export async function fetchLinkCandidates(
   supabase: any,
@@ -177,10 +307,10 @@ export async function fetchLinkCandidates(
 ): Promise<LinkCandidate[]> {
   let query = supabase
     .from("articles")
-    .select("id, slug, title, article_tags(tags(name))")
+    .select("id, slug, title, category_id, article_tags(tags(name))")
     .eq("status", "published")
     .order("published_at", { ascending: false })
-    .limit(300) // batasi agar query & matching tetap ringan
+    .limit(300)
 
   if (excludeArticleId) query = query.neq("id", excludeArticleId)
 
@@ -191,8 +321,7 @@ export async function fetchLinkCandidates(
     id: row.id,
     slug: row.slug,
     title: row.title,
-    // article_tags(tags(name)) bisa muncul sebagai objek tunggal ATAU array
-    // tergantung cara Supabase menginferensi relasi — tangani keduanya.
+    categoryId: row.category_id ?? undefined,
     tags: (row.article_tags ?? []).flatMap((at: any) => {
       const t = at?.tags
       if (!t) return []

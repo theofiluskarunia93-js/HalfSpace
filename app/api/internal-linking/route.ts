@@ -1,6 +1,6 @@
 // app/api/internal-linking/route.ts
 //
-// Internal Link Building — versi RETROAKTIF.
+// Internal Link Building — versi RETROAKTIF dengan semantic scoring.
 // Dipicu manual dari Posts view (admin) untuk menyisipkan/menyegarkan internal
 // link pada artikel yang SUDAH publish. Untuk artikel BARU, proses ini sudah
 // berjalan otomatis sendiri di create-article-view.tsx saat disimpan — route
@@ -13,7 +13,7 @@
 import { NextRequest, NextResponse } from "next/server"
 import { createClient } from "@/lib/supabase/server"
 import { requireAdmin } from "@/lib/supabase/server-auth"
-import { applyInternalLinks, type LinkCandidate } from "@/lib/internal-linking"
+import { applyInternalLinks, type LinkCandidate, type SourceArticleContext } from "@/lib/internal-linking"
 
 export const maxDuration = 60
 
@@ -27,6 +27,7 @@ interface ArticleRow {
   slug: string
   title: string
   content: string
+  category_id?: string | null
   article_tags?: { tags: { name: string } | { name: string }[] | null }[] | null
 }
 
@@ -41,7 +42,20 @@ function toCandidate(row: ArticleRow): LinkCandidate {
       tagNames.push(t.name)
     }
   }
-  return { id: row.id, slug: row.slug, title: row.title, tags: tagNames }
+  return {
+    id: row.id,
+    slug: row.slug,
+    title: row.title,
+    categoryId: row.category_id ?? undefined,
+    tags: tagNames,
+  }
+}
+
+function toSourceContext(row: ArticleRow): SourceArticleContext {
+  return {
+    categoryId: row.category_id ?? null,
+    tags: toCandidate(row).tags,
+  }
 }
 
 export async function POST(req: NextRequest) {
@@ -62,14 +76,14 @@ export async function POST(req: NextRequest) {
 
   // Ambil semua artikel published — dipakai SEKALIGUS sebagai (a) daftar target
   // yang akan diproses, dan (b) daftar kandidat sumber link satu sama lain.
-  let query = supabase
+  // category_id ditambahkan agar semantic scoring bisa membandingkan kategori.
+  const { data, error } = await supabase
     .from("articles")
-    .select("id, slug, title, content, article_tags(tags(name))")
+    .select("id, slug, title, content, category_id, article_tags(tags(name))")
     .eq("status", "published")
     .order("published_at", { ascending: false })
     .limit(300)
 
-  const { data, error } = await query
   if (error) {
     return NextResponse.json({ error: error.message }, { status: 500 })
   }
@@ -90,7 +104,10 @@ export async function POST(req: NextRequest) {
   let updatedCount = 0
 
   for (const row of targets) {
-    const { html, linkedSlugs } = applyInternalLinks(row.content, row.id, candidates)
+    // Kirim sourceContext agar kandidat diurutkan berdasarkan relevansi topik
+    // artikel ini (kategori + tag yang sama mendapat prioritas lebih tinggi).
+    const sourceContext = toSourceContext(row)
+    const { html, linkedSlugs } = applyInternalLinks(row.content, row.id, candidates, {}, sourceContext)
 
     // Hanya tulis ke DB kalau memang ada perubahan — hindari update sia-sia
     // yang cuma menyentuh updated_at tanpa perubahan konten nyata.
