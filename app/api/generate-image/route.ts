@@ -80,7 +80,11 @@ export interface OverlayData {
   // press_conference / injury
   clubName?: string
   managerName?: string
+  managerRole?: string
+  quote?: string
   playerStatus?: string
+  injuryType?: string
+  injuryDuration?: string
   // trivia
   triviaNumber?: string
   triviaUnit?: string
@@ -516,6 +520,20 @@ async function buildCompositeSVG(backgroundDataURI: string, overlay: OverlayData
                 children: overlay.managerName,
               },
             },
+            overlay.managerRole && {
+              type: "div",
+              props: {
+                style: { fontSize: 13, color: "rgba(57,255,20,0.55)", textAlign: "center" },
+                children: overlay.managerRole,
+              },
+            },
+            overlay.quote && {
+              type: "div",
+              props: {
+                style: { fontSize: 15, color: text, textAlign: "center", lineHeight: 1.3, maxWidth: 380, marginTop: 6, fontStyle: "italic" },
+                children: `"${overlay.quote}"`,
+              },
+            },
           ]),
         },
       }
@@ -558,6 +576,20 @@ async function buildCompositeSVG(backgroundDataURI: string, overlay: OverlayData
                   borderRadius: 20,
                 },
                 children: overlay.playerStatus,
+              },
+            },
+            overlay.injuryType && {
+              type: "div",
+              props: {
+                style: { fontSize: 15, color: text, textAlign: "center", marginTop: 4 },
+                children: overlay.injuryType,
+              },
+            },
+            overlay.injuryDuration && {
+              type: "div",
+              props: {
+                style: { fontSize: 13, color: "rgba(57,255,20,0.55)", textAlign: "center" },
+                children: `Absen ${overlay.injuryDuration}`,
               },
             },
           ]),
