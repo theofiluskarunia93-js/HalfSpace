@@ -35,20 +35,6 @@ interface Article {
   article_tags: { tags: { name: string; slug: string } | null }[] | null
 }
 
-interface RelatedArticle {
-  id: string
-  title: string
-  slug: string
-  excerpt: string | null
-  featured_image_url: string | null
-  featured_image_alt: string | null
-  author: string
-  views: number
-  published_at: string
-  created_at: string
-  categories: { name: string; slug: string } | null
-}
-
 interface TocItem {
   id: string
   text: string
@@ -629,102 +615,6 @@ function AuthorCard() {
           Lihat semua artikel
         </button>
       </div>
-    </div>
-  )
-}
-
-// ─── Related Articles ──────────────────────────────────────────────────────
-function RelatedArticles({ currentId, categorySlug }: { currentId: string; categorySlug?: string }) {
-  const [articles, setArticles] = useState<RelatedArticle[]>([])
-  const [isLoading, setIsLoading] = useState(true)
-  const router = useRouter()
-  const supabase = createClient()
-
-  useEffect(() => {
-    async function fetchRelated() {
-      let query = supabase
-        .from("articles")
-        .select("id, title, slug, excerpt, featured_image_url, featured_image_alt, author, views, published_at, created_at, categories(name, slug)")
-        .eq("status", "published")
-        .neq("id", currentId)
-        .order("published_at", { ascending: false })
-        .limit(3)
-
-      if (categorySlug) {
-        const { data: cat } = await supabase.from("categories").select("id").eq("slug", categorySlug).maybeSingle()
-        if (cat) query = query.eq("category_id", cat.id)
-      }
-
-      const { data } = await query
-      setArticles(((data as any[]) || []) as RelatedArticle[])
-      setIsLoading(false)
-    }
-    fetchRelated()
-  }, [currentId, categorySlug])
-
-  if (isLoading) {
-    return (
-      <div className="grid gap-4 sm:grid-cols-2 lg:grid-cols-3">
-        {[1, 2, 3].map((i) => (
-          <div key={i} className="animate-pulse rounded-xl border border-border bg-card">
-            <div className="aspect-video bg-muted rounded-t-xl" />
-            <div className="p-4 space-y-2">
-              <div className="h-3 w-16 bg-muted rounded" />
-              <div className="h-4 w-full bg-muted rounded" />
-              <div className="h-3 w-3/4 bg-muted rounded" />
-            </div>
-          </div>
-        ))}
-      </div>
-    )
-  }
-
-  if (articles.length === 0) return null
-
-  return (
-    <div className="grid gap-4 sm:grid-cols-2 lg:grid-cols-3">
-      {articles.map((article) => (
-        <article
-          key={article.id}
-          onClick={async () => {
-            await trackArticleView(article.id)
-            router.push(`/article/${article.slug}`)
-          }}
-          className="group cursor-pointer overflow-hidden rounded-xl border border-border bg-card transition-colors hover:border-primary/50"
-        >
-          <div className="aspect-video overflow-hidden bg-muted relative">
-            {article.featured_image_url ? (
-              <Image
-                src={article.featured_image_url}
-                alt={article.featured_image_alt || article.title}
-                fill
-                sizes="(max-width: 640px) 100vw, (max-width: 1024px) 50vw, 33vw"
-                className="object-cover transition-transform duration-300 group-hover:scale-105"
-              />
-            ) : (
-              <div className="flex h-full items-center justify-center text-muted-foreground/30">
-                <svg className="h-10 w-10" fill="currentColor" viewBox="0 0 24 24" aria-hidden="true">
-                  <path d="M21 19V5c0-1.1-.9-2-2-2H5c-1.1 0-2 .9-2 2v14c0 1.1.9 2 2 2h14c1.1 0 2-.9 2-2zM8.5 13.5l2.5 3.01L14.5 12l4.5 6H5l3.5-4.5z" />
-                </svg>
-              </div>
-            )}
-          </div>
-          <div className="p-4">
-            {article.categories && (
-              <span className="mb-2 inline-block rounded bg-primary/15 px-2 py-0.5 text-xs font-semibold text-primary">
-                {(article.categories as any).name}
-              </span>
-            )}
-            <h3 className="font-semibold text-foreground transition-colors group-hover:text-primary line-clamp-2 text-sm">
-              {article.title}
-            </h3>
-            <div className="mt-2 flex items-center gap-2 text-xs text-muted-foreground">
-              <Calendar className="h-3 w-3 flex-shrink-0" aria-hidden="true" />
-              <span>{formatDate(article.published_at || article.created_at)}</span>
-            </div>
-          </div>
-        </article>
-      ))}
     </div>
   )
 }
