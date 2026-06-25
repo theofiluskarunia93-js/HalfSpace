@@ -1025,12 +1025,33 @@ export function CreateArticleView({ onBack, articleId }: CreateArticleViewProps)
     let htmlContent = sanitizeArticleHtml(resolvedHtml)
 
     // 3. Internal Link Building otomatis — sisipkan link ke artikel lain yang
-    //    sudah publish berdasarkan kecocokan judul/tag, langsung di sini saat
-    //    artikel disimpan (baik draft, publish, maupun scheduled).
+    //    sudah publish berdasarkan kecocokan kategori/tag DAN semantic
+    //    similarity (Gemini Embedding), langsung di sini saat artikel
+    //    disimpan (baik draft, publish, maupun scheduled).
     //    Gagal silent (best-effort) — jangan sampai proses save gagal karena ini.
+    let pendingEmbedding: number[] | null = null
     try {
       const linkCandidates = await fetchLinkCandidates(supabase, isEditMode ? articleId : null)
-      const { html: linkedHtml } = applyInternalLinks(htmlContent, articleId ?? null, linkCandidates)
+
+      // Generate embedding semantik artikel ini lewat server route — supaya
+      // GEMINI_API_KEY tidak pernah dipanggil langsung dari browser.
+      try {
+        const plainText = htmlContent.replace(/<[^>]+>/g, " ").replace(/\s+/g, " ").trim()
+        const embedRes = await fetch("/api/internal-linking/embed-source", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ title, text: plainText }),
+        })
+        if (embedRes.ok) {
+          const embedData = await embedRes.json()
+          pendingEmbedding = embedData.embedding ?? null
+        }
+      } catch (embedErr) {
+        console.error("Gagal generate embedding semantik, lanjut tanpa semantic scoring:", embedErr)
+      }
+
+      const sourceContext = { categoryId: category || null, tags, embedding: pendingEmbedding }
+      const { html: linkedHtml } = applyInternalLinks(htmlContent, articleId ?? null, linkCandidates, {}, sourceContext)
       htmlContent = linkedHtml
     } catch (e) {
       console.error("Internal link building gagal, lanjut tanpa internal link:", e)
@@ -1088,6 +1109,20 @@ export function CreateArticleView({ onBack, articleId }: CreateArticleViewProps)
     }
 
     if (savedArticleId) await syncTags(savedArticleId)
+
+    // Simpan embedding semantik yang sudah di-generate di atas ke kolom DB —
+    // dipisah dari payload utama karena savedArticleId baru pasti ada di
+    // sini (insert butuh .select("id") dulu). Best-effort, tidak mem-block UI.
+    if (savedArticleId && pendingEmbedding) {
+      const { error: embedSaveError } = await supabase
+        .from("articles")
+        .update({ embedding: pendingEmbedding })
+        .eq("id", savedArticleId)
+      if (embedSaveError) {
+        console.error("Gagal menyimpan embedding semantik artikel:", embedSaveError.message)
+      }
+    }
+
     setIsLoading(false)
     setMessage({
       type: "success",

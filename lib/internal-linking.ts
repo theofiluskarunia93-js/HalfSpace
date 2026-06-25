@@ -15,6 +15,8 @@ export interface LinkCandidate {
   title: string
   tags?: string[]
   categoryId?: string
+  /** Vector embedding semantik (Gemini Embedding API). null/undefined = belum di-embed. */
+  embedding?: number[] | null
 }
 
 // Konteks artikel yang sedang diproses — dipakai untuk semantic scoring.
@@ -22,6 +24,23 @@ export interface LinkCandidate {
 export interface SourceArticleContext {
   categoryId?: string | null
   tags?: string[]
+  /** Vector embedding semantik artikel sumber, dari Gemini Embedding API. */
+  embedding?: number[] | null
+}
+
+// Cosine similarity lokal (bukan import dari lib/gemini-embeddings.ts) supaya
+// file ini tetap aman dipakai dari komponen "use client" — tidak ada satu pun
+// kode pemanggil Gemini API (yang butuh GEMINI_API_KEY) ikut ke-bundle ke browser.
+function cosineSimilarity(a: number[] | null | undefined, b: number[] | null | undefined): number {
+  if (!a || !b || a.length === 0 || a.length !== b.length) return 0
+  let dot = 0, normA = 0, normB = 0
+  for (let i = 0; i < a.length; i++) {
+    dot += a[i] * b[i]
+    normA += a[i] * a[i]
+    normB += b[i] * b[i]
+  }
+  if (normA === 0 || normB === 0) return 0
+  return Math.max(0, Math.min(1, dot / (Math.sqrt(normA) * Math.sqrt(normB))))
 }
 
 export interface InternalLinkOptions {
@@ -75,6 +94,16 @@ function calcRelevanceScore(candidate: LinkCandidate, source: SourceArticleConte
   for (const tag of candidate.tags ?? []) {
     if (sourceTags.has(tag.toLowerCase())) score += 2
   }
+
+  // Semantic similarity (Gemini Embedding) — sinyal utama untuk "paham makna".
+  // Beda dari kategori/tag yang cuma cocokkan metadata persis, ini bisa
+  // menangkap artikel yang topiknya nyambung secara makna walau tag/kategori
+  // beda atau kosong. Dikali 8 supaya similarity tinggi (>0.8) bisa
+  // mengungguli 1 tag yang sama, tapi nggak otomatis menang dari kombinasi
+  // kategori+tag yang sudah pasti relevan secara struktural.
+  // Kalau salah satu artikel belum punya embedding, ini otomatis 0 — fallback
+  // ke scoring tag/kategori seperti sebelumnya (graceful degradation).
+  score += cosineSimilarity(source.embedding, candidate.embedding) * 8
 
   return score
 }
@@ -307,7 +336,7 @@ export async function fetchLinkCandidates(
 ): Promise<LinkCandidate[]> {
   let query = supabase
     .from("articles")
-    .select("id, slug, title, category_id, article_tags(tags(name))")
+    .select("id, slug, title, category_id, embedding, article_tags(tags(name))")
     .eq("status", "published")
     .order("published_at", { ascending: false })
     .limit(300)
@@ -322,6 +351,7 @@ export async function fetchLinkCandidates(
     slug: row.slug,
     title: row.title,
     categoryId: row.category_id ?? undefined,
+    embedding: Array.isArray(row.embedding) ? row.embedding : null,
     tags: (row.article_tags ?? []).flatMap((at: any) => {
       const t = at?.tags
       if (!t) return []
