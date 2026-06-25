@@ -8,11 +8,13 @@
  *
  * WidgetType yang didukung:
  *  jadwal | klasemen | transfer | peluang | analisa_taktis
- *  perbandingan_tim | timeline_pertandingan   ← BARU
+ *  perbandingan_tim | timeline_pertandingan | profil_stadion
+ *  daftar_pemain | pemain_andalan | hub
  */
 
 import { useState, useEffect } from "react"
 import { createClient } from "@/lib/supabase/client"
+import { Plus, Trash2 } from "lucide-react"
 
 
 // ─── Type ─────────────────────────────────────────────────────────────────────
@@ -27,6 +29,7 @@ export type WidgetType =
   | "profil_stadion"
   | "daftar_pemain"
   | "pemain_andalan"
+  | "hub"
 
 // ─── Shortcode map ────────────────────────────────────────────────────────────
 export const SHORTCODE_MAP: Record<WidgetType, string> = {
@@ -40,6 +43,7 @@ export const SHORTCODE_MAP: Record<WidgetType, string> = {
   profil_stadion:          "profil_stadion_data",
   daftar_pemain:           "daftar_pemain_data",
   pemain_andalan:          "pemain_andalan_data",
+  hub:                     "hub_data",
 }
 
 export const TABLE_MAP: Record<WidgetType, string> = {
@@ -53,6 +57,7 @@ export const TABLE_MAP: Record<WidgetType, string> = {
   profil_stadion:          "widget_profil_stadion",
   daftar_pemain:           "widget_daftar_pemain",
   pemain_andalan:          "widget_pemain_andalan",
+  hub:                     "widget_hub",
 }
 
 export const WIDGET_META: Record<WidgetType, { icon: string; label: string }> = {
@@ -66,6 +71,7 @@ export const WIDGET_META: Record<WidgetType, { icon: string; label: string }> = 
   profil_stadion:          { icon: "🏟️", label: "Profil Stadion" },
   daftar_pemain:           { icon: "👥", label: "Daftar Pemain Tim" },
   pemain_andalan:          { icon: "⭐", label: "Pemain Andalan" },
+  hub:                     { icon: "🗂️", label: "Widget Hub" },
 }
 
 // ─── Props ────────────────────────────────────────────────────────────────────
@@ -1042,6 +1048,185 @@ function PemainAndalanForm({ widgetId, onSaved }: { widgetId: string; onSaved: (
   )
 }
 
+// ─── Form: Widget Hub ─────────────────────────────────────────────────────────
+
+interface HubSlotDraft {
+  type: WidgetType
+  widget_id: string
+  label: string
+}
+
+const HUB_SLOT_OPTIONS: { value: WidgetType; label: string; icon: string }[] = [
+  { value: "jadwal",                label: "Jadwal Pertandingan",   icon: "📅" },
+  { value: "klasemen",              label: "Klasemen Grup",         icon: "🏆" },
+  { value: "transfer",              label: "Transfer Pemain",       icon: "🔄" },
+  { value: "peluang",               label: "Peluang Juara",         icon: "⭐" },
+  { value: "analisa_taktis",        label: "Analisa Taktis",        icon: "🧠" },
+  { value: "perbandingan_tim",      label: "Perbandingan Tim",      icon: "⚔️" },
+  { value: "timeline_pertandingan", label: "Timeline Pertandingan", icon: "📋" },
+  { value: "profil_stadion",        label: "Profil Stadion",        icon: "🏟️" },
+  { value: "daftar_pemain",         label: "Daftar Pemain Tim",     icon: "👥" },
+  { value: "pemain_andalan",        label: "Pemain Andalan",        icon: "🌟" },
+]
+
+function HubForm({ widgetId, onSaved }: { widgetId: string; onSaved: () => void }) {
+  const supabase = createClient()
+  const [saving, setSaving]   = useState(false)
+  const [title, setTitle]     = useState("")
+  const [slots, setSlots]     = useState<HubSlotDraft[]>([])
+
+  // Load existing hub jika edit mode
+  useEffect(() => {
+    supabase
+      .from("widget_hub")
+      .select("*")
+      .eq("id", widgetId)
+      .maybeSingle()
+      .then(({ data }) => {
+        if (data) {
+          setTitle(data.title ?? "")
+          setSlots(data.slots ?? [])
+        }
+      })
+  }, [widgetId])
+
+  function addSlot() {
+    setSlots(prev => [
+      ...prev,
+      { type: "jadwal", widget_id: "", label: "Jadwal" },
+    ])
+  }
+
+  function removeSlot(idx: number) {
+    setSlots(prev => prev.filter((_, i) => i !== idx))
+  }
+
+  function updateSlot(idx: number, key: keyof HubSlotDraft, value: string) {
+    setSlots(prev =>
+      prev.map((s, i) => {
+        if (i !== idx) return s
+        if (key === "type") {
+          // auto-set label ke nama widget saat tipe berubah
+          const meta = HUB_SLOT_OPTIONS.find(o => o.value === value)
+          return { ...s, type: value as WidgetType, label: meta?.label ?? s.label }
+        }
+        return { ...s, [key]: value }
+      })
+    )
+  }
+
+  async function save() {
+    if (!title.trim()) return alert("Judul hub harus diisi.")
+    const emptyId = slots.findIndex(s => !s.widget_id.trim())
+    if (emptyId !== -1) return alert(`Widget ID pada slot #${emptyId + 1} belum diisi.`)
+
+    setSaving(true)
+    const { error } = await supabase
+      .from("widget_hub")
+      .upsert({ id: widgetId, title: title.trim(), slots })
+    setSaving(false)
+    if (error) { alert("Gagal menyimpan: " + error.message); return }
+    onSaved()
+  }
+
+  const inputCls = "w-full rounded-md border border-border bg-secondary/20 px-2.5 py-1.5 text-xs text-foreground placeholder:text-muted-foreground focus:outline-none focus:border-primary/60"
+  const selectCls = "w-full rounded-md border border-border bg-secondary/20 px-2.5 py-1.5 text-xs text-foreground focus:outline-none focus:border-primary/60"
+
+  return (
+    <div className="space-y-4">
+      {/* Judul hub */}
+      <div>
+        <label className="block text-xs text-muted-foreground mb-1">Judul Hub</label>
+        <input
+          className={inputCls}
+          placeholder="contoh: Analisis Lengkap Laga"
+          value={title}
+          onChange={e => setTitle(e.target.value)}
+        />
+      </div>
+
+      {/* Daftar slot */}
+      <div className="space-y-2">
+        <p className="text-xs font-semibold text-muted-foreground uppercase tracking-widest">
+          Slot Widget ({slots.length})
+        </p>
+
+        {slots.length === 0 && (
+          <p className="text-xs text-muted-foreground italic">Belum ada slot. Klik "+ Tambah Slot" di bawah.</p>
+        )}
+
+        {slots.map((slot, idx) => (
+          <div key={idx} className="rounded-lg border border-border bg-secondary/10 p-3 space-y-2">
+            <div className="flex items-center justify-between">
+              <span className="text-xs font-bold text-foreground">Slot #{idx + 1}</span>
+              <button
+                onClick={() => removeSlot(idx)}
+                className="text-xs text-red-400 hover:text-red-300"
+              >
+                <Trash2 size={13} />
+              </button>
+            </div>
+
+            {/* Tipe widget */}
+            <div>
+              <label className="block text-[10px] text-muted-foreground mb-1">Tipe Widget</label>
+              <select
+                className={selectCls}
+                value={slot.type}
+                onChange={e => updateSlot(idx, "type", e.target.value)}
+              >
+                {HUB_SLOT_OPTIONS.map(o => (
+                  <option key={o.value} value={o.value}>
+                    {o.icon} {o.label}
+                  </option>
+                ))}
+              </select>
+            </div>
+
+            {/* Widget ID */}
+            <div>
+              <label className="block text-[10px] text-muted-foreground mb-1">Widget ID (UUID)</label>
+              <input
+                className={inputCls}
+                placeholder="Paste UUID widget yang sudah ada..."
+                value={slot.widget_id}
+                onChange={e => updateSlot(idx, "widget_id", e.target.value)}
+              />
+            </div>
+
+            {/* Label tab */}
+            <div>
+              <label className="block text-[10px] text-muted-foreground mb-1">Label Tab</label>
+              <input
+                className={inputCls}
+                placeholder="contoh: Timeline, Taktik, Hasil..."
+                value={slot.label}
+                onChange={e => updateSlot(idx, "label", e.target.value)}
+              />
+            </div>
+          </div>
+        ))}
+
+        <button
+          onClick={addSlot}
+          className="flex w-full items-center justify-center gap-1.5 rounded-lg border border-dashed border-primary/40 py-2 text-xs text-primary/70 hover:border-primary hover:text-primary transition-colors"
+        >
+          <Plus size={12} /> Tambah Slot
+        </button>
+      </div>
+
+      {/* Simpan */}
+      <button
+        onClick={save}
+        disabled={saving}
+        className="w-full rounded-lg bg-primary py-2 text-xs font-bold text-primary-foreground hover:bg-primary/90 disabled:opacity-60 transition-colors"
+      >
+        {saving ? "Menyimpan..." : "Simpan & Sisipkan Hub"}
+      </button>
+    </div>
+  )
+}
+
 // ─── Main WidgetInserter ──────────────────────────────────────────────────────
 
 export function WidgetInserter({ onInsert, editWidgetId, editWidgetType, onResetEdit, initialWidgets = [] }: Props) {
@@ -1137,6 +1322,9 @@ export function WidgetInserter({ onInsert, editWidgetId, editWidgetType, onReset
           )}
           {selectedType === "pemain_andalan" && (
             <PemainAndalanForm widgetId={activeWidgetId} onSaved={handleSaved} />
+          )}
+          {selectedType === "hub" && (
+            <HubForm widgetId={activeWidgetId} onSaved={handleSaved} />
           )}
         </div>
       )}

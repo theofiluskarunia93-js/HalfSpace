@@ -12,9 +12,10 @@
  *  [analisa_taktis_data id="<uuid>"]         → AnalisaTaktisCard
  *  [perbandingan_tim_data id="<uuid>"]       → PerbandinganTimCard
  *  [timeline_pertandingan_data id="<uuid>"]  → TimelinePertandinganCard
- *  [profil_stadion_data id="<uuid>"]         → ProfilStadionCard   ← BARU
- *  [daftar_pemain_data id="<uuid>"]          → DaftarPemainCard    ← BARU
- *  [pemain_andalan_data id="<uuid>"]         → PemainAndalanCard   ← BARU
+ *  [profil_stadion_data id="<uuid>"]         → ProfilStadionCard
+ *  [daftar_pemain_data id="<uuid>"]          → DaftarPemainCard
+ *  [pemain_andalan_data id="<uuid>"]         → PemainAndalanCard
+ *  [hub_data id="<uuid>"]                    → WidgetHubCard
  */
 
 import React from "react"
@@ -28,11 +29,12 @@ import { TimelinePertandinganCard } from "@/components/widgets/TimelinePertandin
 import { ProfilStadionCard }        from "@/components/widgets/ProfilStadionCard"
 import { DaftarPemainCard }         from "@/components/widgets/DaftarPemainCard"
 import { PemainAndalanCard }        from "@/components/widgets/PemainAndalanCard"
+import { WidgetHubCard }            from "@/components/widgets/WidgetHubCard"
 import type { WidgetType }          from "@/components/widgets/WidgetInserter"
 
 // ─── Regex: cocokkan SEMUA shortcode yang dikenal ─────────────────────────────
 const WIDGET_SHORTCODE_RE =
-  /\[(match_data|klasemen_data|transfer_data|peluang_data|analisa_taktis_data|perbandingan_tim_data|timeline_pertandingan_data|profil_stadion_data|daftar_pemain_data|pemain_andalan_data)\s+id="([a-fA-F0-9-]{36})"\]/g
+  /\[(match_data|klasemen_data|transfer_data|peluang_data|analisa_taktis_data|perbandingan_tim_data|timeline_pertandingan_data|profil_stadion_data|daftar_pemain_data|pemain_andalan_data|hub_data)\s+id="([a-fA-F0-9-]{36})"\]/g
 
 // ─── hasWidgetShortcode ───────────────────────────────────────────────────────
 export function hasWidgetShortcode(content: string): boolean {
@@ -201,6 +203,20 @@ export function parseWidgetContent(
             isAdmin,
             onEdit: isAdmin && onEdit
               ? (id: string) => onEdit(id, "pemain_andalan" as WidgetType)
+              : undefined,
+            refreshKey,
+          })
+        )
+        break
+
+      case "hub_data":
+        nodes.push(
+          React.createElement(WidgetHubCard, {
+            key,
+            widgetId,
+            isAdmin,
+            onEdit: isAdmin && onEdit
+              ? (id: string) => onEdit(id, "hub" as WidgetType)
               : undefined,
             refreshKey,
           })

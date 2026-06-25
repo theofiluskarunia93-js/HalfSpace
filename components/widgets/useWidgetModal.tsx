@@ -13,9 +13,10 @@ export type WidgetType =
   | "profil_stadion"
   | "daftar_pemain"
   | "pemain_andalan"
+  | "hub"
 
 export function useWidgetModal() {
-  const [modalWidgetId, setModalWidgetId] = useState<string | null>(null)
+  const [modalWidgetId, setModalWidgetId]     = useState<string | null>(null)
   const [modalWidgetType, setModalWidgetType] = useState<WidgetType | null>(null)
 
   function openWidgetModal(widgetId: string, widgetType: WidgetType) {
