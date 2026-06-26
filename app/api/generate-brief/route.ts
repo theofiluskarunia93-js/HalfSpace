@@ -93,7 +93,7 @@ export async function POST(req: NextRequest) {
     })
 
     // ── Simpan ke Supabase ────────────────────────────────────────────────
-    const supabase = createClient()
+    const supabase = await createClient()
     const { data: generation, error: dbError } = await supabase
       .from("article_generations")
       .insert({

@@ -71,7 +71,7 @@ export async function POST(req: NextRequest) {
         // ── Ambil draft dari Supabase ───────────────────────────────────
         send("progress", { step: 1, total: 3, label: "Mengambil draft artikel..." })
 
-        const supabase = createClient()
+        const supabase = await createClient()
         const { data: generation, error: fetchError } = await supabase
           .from("article_generations")
           .select("draft_title, draft_content, draft_word_count, status")

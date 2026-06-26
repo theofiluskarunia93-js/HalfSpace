@@ -109,7 +109,7 @@ export async function POST(req: NextRequest) {
         // ── 1. Ambil brief dari Supabase ────────────────────────────────
         send("progress", { step: 1, total: 5, label: "Mengambil editorial brief..." })
 
-        const supabase = createClient()
+        const supabase = await createClient()
         const { data: generation, error } = await supabase
           .from("article_generations")
           .select("editorial_brief, news_type, topic")
