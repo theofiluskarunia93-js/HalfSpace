@@ -114,7 +114,14 @@ export async function POST(req: NextRequest) {
 
     if (dbError) {
       console.error("❌ Supabase insert error:", dbError)
-      // Jangan gagalkan request karena DB error — brief tetap dikembalikan
+      // Jangan gagalkan request karena DB error — brief tetap dikembalikan,
+      // TAPI beri tahu user secara eksplisit, karena generationId akan null
+      // dan langkah berikutnya (Generate Draft) tidak akan bisa jalan tanpa ini.
+      sourceWarnings.push(
+        `Brief berhasil dibuat, tapi GAGAL disimpan ke database (${dbError.message}). ` +
+        `Tombol "Generate Draft" tidak akan berfungsi sampai masalah ini diperbaiki — ` +
+        `cek skema tabel "article_generations" di Supabase.`
+      )
     }
 
     return NextResponse.json({

@@ -290,6 +290,21 @@ export function GenerationPanel({ newsType, topic, onDraftReady, onFinalReady }:
       if (!res.ok || !json.success) throw new Error(json.error ?? "Gagal generate brief")
       setBrief(json.brief)
       setGenerationId(json.generationId)
+
+      if (!json.generationId) {
+        // Brief berhasil dibuat tapi gagal disimpan ke DB — tombol Generate Draft
+        // tidak akan bisa jalan (butuh generationId). Tampilkan error JELAS,
+        // jangan diam-diam lanjut ke brief_ready seolah semuanya normal.
+        setErrorMsg(
+          (json.sourceWarnings?.join(" | ") ?? "") ||
+          "Brief berhasil dibuat tapi gagal disimpan ke database, sehingga langkah Generate Draft tidak bisa dilanjutkan. Cek log server / tabel article_generations di Supabase."
+        )
+        setStatus("brief_ready") // brief tetap ditampilkan, tapi error di atas akan kelihatan
+        setProgressLabel("")
+        return
+      }
+
+      if (json.sourceWarnings?.length) setWarningMsg(json.sourceWarnings.join(" | "))
       setStatus("brief_ready")
       setProgressLabel("")
     } catch (err) {
