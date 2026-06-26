@@ -79,7 +79,13 @@ CONTOH LEAD BERKUALITAS — The Athletic Indonesia
 ══════════════════════════════════════════════════
 FORMAT OUTPUT — JSON murni, tanpa backtick, tanpa komentar:
 ══════════════════════════════════════════════════
-{"title":"<judul: [SEO keyword]: [hook editorial], max 85 karakter, tanpa tanda tanya, tanpa angka di karakter pertama>","content":"<HTML: hanya <h2> <p> <blockquote>. Tidak ada tag lain. Semua tanda kutip dalam content wajib di-escape sebagai \\\">"}`
+{"title":"<judul: [SEO keyword]: [hook editorial], max 85 karakter, tanpa tanda tanya, tanpa angka di karakter pertama>","content":"<HTML: hanya <h2> <p> <blockquote>. Tidak ada tag lain. Semua tanda kutip dalam content wajib di-escape sebagai \\\">"}
+
+PENTING — content HARUS satu baris tunggal (single-line), TANPA newline mentah
+di antara paragraf/tag HTML. Pemisah antar elemen HANYA <h2>...</h2> dan
+<p>...</p> yang ditulis langsung bersambung, BUKAN dengan menekan Enter.
+Kalau butuh baris baru di dalam teks, gunakan \\n (escaped), JANGAN newline
+asli — newline mentah akan merusak JSON dan membuat seluruh draft gagal diparse.`
 }
 
 // ─────────────────────────────────────────────────────────────────────────────

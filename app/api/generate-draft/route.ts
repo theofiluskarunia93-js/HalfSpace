@@ -25,16 +25,52 @@ function countWordsFromHTML(html: string): number {
   return html.replace(/<[^>]+>/g, " ").split(/\s+/).filter(Boolean).length
 }
 
+// Llama (lewat Cloudflare Workers AI) tidak punya mode "JSON terjamin" seperti
+// response_format di Groq/OpenAI — model ini kadang menulis newline/tab MENTAH
+// di tengah paragraf (bukan \n yang di-escape), padahal JSON murni tidak boleh
+// ada karakter kontrol mentah di dalam string. Sanitizer ini menyusuri karakter
+// satu per satu, dan HANYA meng-escape newline/tab ketika posisinya di DALAM
+// string JSON (antara tanda kutip) — supaya struktur { } di luar string tidak
+// ikut rusak.
+function sanitizeJsonControlChars(raw: string): string {
+  let out = ""
+  let inString = false
+  let escaped = false
+  for (let i = 0; i < raw.length; i++) {
+    const ch = raw[i]
+    if (inString) {
+      if (escaped) { out += ch; escaped = false; continue }
+      if (ch === "\\") { out += ch; escaped = true; continue }
+      if (ch === '"') { out += ch; inString = false; continue }
+      if (ch === "\n") { out += "\\n"; continue }
+      if (ch === "\r") { continue } // buang CR, biasanya pasangan \r\n
+      if (ch === "\t") { out += "\\t"; continue }
+      out += ch
+    } else {
+      if (ch === '"') inString = true
+      out += ch
+    }
+  }
+  return out
+}
+
 function extractJsonFromLlama(raw: string): { title: string; content: string } {
-  try { const p = JSON.parse(raw); if (p.title && p.content) return p } catch {}
+  const clean = sanitizeJsonControlChars(raw)
+  let lastErr = ""
 
-  const block = raw.match(/```(?:json)?\s*([\s\S]+?)```/)
-  if (block) { try { const p = JSON.parse(block[1].trim()); if (p.title && p.content) return p } catch {} }
+  try { const p = JSON.parse(clean); if (p.title && p.content) return p } catch (e) { lastErr = e instanceof Error ? e.message : String(e) }
 
-  const i = raw.indexOf("{"), j = raw.lastIndexOf("}")
-  if (i !== -1 && j !== -1) { try { const p = JSON.parse(raw.slice(i, j + 1)); if (p.title && p.content) return p } catch {} }
+  const block = clean.match(/```(?:json)?\s*([\s\S]+?)```/)
+  if (block) { try { const p = JSON.parse(block[1].trim()); if (p.title && p.content) return p } catch (e) { lastErr = e instanceof Error ? e.message : lastErr } }
 
-  throw new Error("Llama tidak mengembalikan JSON valid. Snippet: " + raw.slice(0, 200))
+  const i = clean.indexOf("{"), j = clean.lastIndexOf("}")
+  if (i !== -1 && j !== -1) { try { const p = JSON.parse(clean.slice(i, j + 1)); if (p.title && p.content) return p } catch (e) { lastErr = e instanceof Error ? e.message : lastErr } }
+
+  throw new Error(
+    `Llama tidak mengembalikan JSON valid (panjang respons: ${raw.length} karakter). ` +
+    `Parse error: ${lastErr}. ` +
+    `Awal: ${raw.slice(0, 150)} ||| Akhir: ${raw.slice(-150)}`
+  )
 }
 
 // ── Bangun instruksi retry berdasarkan kegagalan spesifik ───────────────────
