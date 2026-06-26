@@ -108,7 +108,7 @@ export async function POST(req: NextRequest) {
             { role: "system", content: buildEditorSystem() },
             { role: "user",   content: buildEditorUser(generation.draft_title, generation.draft_content) },
           ],
-          max_tokens:       2500,
+          max_tokens:       4096,
           temperature:      0.2,    // editor harus konservatif
           response_format:  { type: "json_object" },
         })

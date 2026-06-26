@@ -72,7 +72,7 @@ async function callCloudflareAI(
     headers: { "Authorization": `Bearer ${cfToken}`, "Content-Type": "application/json" },
     body: JSON.stringify({
       messages,
-      max_tokens:  2048,
+      max_tokens:  4096,
       temperature: 0.4,
       stream:      false,
     }),
