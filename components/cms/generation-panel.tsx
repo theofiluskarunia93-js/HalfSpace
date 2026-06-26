@@ -89,7 +89,7 @@ async function consumeSSE(
       let parsed: Record<string, unknown> = {}
       try { parsed = JSON.parse(data) } catch {}
       if (ev === "progress") onProgress(parsed as any)
-      if (ev === "done")     onDone(parsed as DoneEvent)
+      if (ev === "done")     onDone(parsed as unknown as DoneEvent)
       if (ev === "error")    onError((parsed as { message?: string }).message ?? "Error")
     }
   }
