@@ -15,7 +15,6 @@ import {
   Undo2, Redo2, Star,
   Pilcrow, MessageSquareQuote, Sparkles,
 } from "lucide-react"
-import type { NewsType } from "@/app/api/generate-article/route"
 import { Button } from "@/components/ui/button"
 import { Input } from "@/components/ui/input"
 import { createClient } from "@/lib/supabase/client"
@@ -23,6 +22,16 @@ import { ArticleBody } from "@/components/article/ArticleBody"
 import { WidgetInserter } from "@/components/widgets/WidgetInserter"
 import type { WidgetType } from "@/components/widgets/WidgetInserter"
 import { applyInternalLinks, fetchLinkCandidates } from "@/lib/internal-linking"
+
+// ── INTEGRASI PIPELINE BARU ───────────────────────────────────────────────────
+// GenerationPanel menggantikan modal AI Generate lama (handleAiGenerate + aiModalOpen).
+// Pipeline baru:
+//   STEP 1: /api/generate-brief  → Editorial Brief JSON (tanpa AI)
+//   STEP 2: /api/generate-draft  → Llama 4 Scout via Cloudflare Workers AI
+//   STEP 3: /api/polish-article  → GPT OSS 120B via Groq (manual, opsional)
+// Tombol ✨ di toolbar sekarang membuka panel samping (bukan modal overlay).
+import { GenerationPanel } from "@/components/cms/generation-panel"
+import type { NewsType } from "@/lib/editorial/types"
 
 // ─── Types ───────────────────────────────────────────────────────────────────
 
@@ -70,8 +79,6 @@ function ToolbarSeparator() {
 }
 
 // ─── Shortcode placeholder builder ───────────────────────────────────────────
-// Membangun HTML badge yang ditampilkan di editor sebagai representasi visual shortcode.
-// Shortcode asli disimpan sebagai data attribute agar bisa diekstrak saat save.
 
 function buildShortcodePlaceholder(widgetId: string, widgetType: WidgetType): string {
   const shortcodeMap: Record<WidgetType, string> = {
@@ -100,9 +107,9 @@ function buildShortcodePlaceholder(widgetId: string, widgetType: WidgetType): st
     hub: "Widget Hub",
   }
   const shortcode = shortcodeMap[widgetType] ?? shortcodeMap.jadwal
-  const icon = iconMap[widgetType] ?? "📦"
-  const label = labelMap[widgetType] ?? widgetType
-  const shortId = widgetId.slice(0, 8)
+  const icon      = iconMap[widgetType] ?? "📦"
+  const label     = labelMap[widgetType] ?? widgetType
+  const shortId   = widgetId.slice(0, 8)
 
   return (
     `<div class="widget-shortcode-badge" ` +
@@ -120,7 +127,6 @@ function buildShortcodePlaceholder(widgetId: string, widgetType: WidgetType): st
       `cursor:default;` +
       `font-family:inherit;` +
     `">` +
-    // Header
     `<div style="` +
       `background:#13151c;` +
       `border-bottom:1.5px solid rgba(57,255,20,0.25);` +
@@ -137,11 +143,9 @@ function buildShortcodePlaceholder(widgetId: string, widgetType: WidgetType): st
         `<span style="color:#39FF14;font-size:9px;font-weight:700;">AKTIF</span>` +
       `</div>` +
     `</div>` +
-    // Body
     `<div style="padding:10px 14px;">` +
       `<code style="font-size:10px;color:#a0a0a0;background:#1a1d24;padding:3px 8px;border-radius:6px;">${shortcode}</code>` +
     `</div>` +
-    // Footer
     `<div style="padding:4px 14px 10px;display:flex;align-items:center;justify-content:flex-end;gap:4px;">` +
       `<span style="color:#39FF14;font-size:9px;opacity:0.7;">ID: ${shortId}...</span>` +
     `</div>` +
@@ -150,22 +154,18 @@ function buildShortcodePlaceholder(widgetId: string, widgetType: WidgetType): st
 }
 
 // ─── Ekstrak shortcode dari HTML editor ──────────────────────────────────────
-// Membaca shortcode dari badge placeholder (data-shortcode) dan
-// juga dari shortcode mentah yang mungkin sudah ada di konten artikel lama.
 
 function resolveShortcodesForSave(html: string): string {
   const parser = new DOMParser()
-  const doc = parser.parseFromString(html, "text/html")
+  const doc    = parser.parseFromString(html, "text/html")
 
-  // Ganti setiap badge placeholder dengan shortcode teks
   doc.querySelectorAll<HTMLElement>(".widget-shortcode-badge").forEach((el) => {
     const shortcode = el.dataset.shortcode
     const p = doc.createElement("p")
     if (shortcode) {
       p.textContent = shortcode
     } else {
-      // Fallback: coba ekstrak dari data-widget-id & data-widget-type
-      const wId = el.dataset.widgetId
+      const wId   = el.dataset.widgetId
       const wType = el.dataset.widgetType
       if (wId && wType) {
         const scMap: Record<string, string> = {
@@ -183,7 +183,6 @@ function resolveShortcodesForSave(html: string): string {
         return
       }
     }
-    // Ganti elemen atau parent <p>-nya
     const parentP = el.closest("p")
     if (parentP && parentP !== el) parentP.replaceWith(p)
     else el.replaceWith(p)
@@ -192,9 +191,7 @@ function resolveShortcodesForSave(html: string): string {
   return doc.body.innerHTML
 }
 
-// ─── Custom Blockquote — preserve class="pull-quote" ─────────────────────────
-// StarterKit Blockquote default tidak menyimpan attribute class.
-// Extension ini override parseHTML & renderHTML agar class pull-quote tetap ada.
+// ─── Custom Blockquote ────────────────────────────────────────────────────────
 const CustomBlockquote = Blockquote.extend({
   addAttributes() {
     return {
@@ -207,9 +204,7 @@ const CustomBlockquote = Blockquote.extend({
   },
 })
 
-// ─── Custom Paragraph — preserve class="section-label" ──────────────────────
-// StarterKit Paragraph tidak menyimpan attribute class sama sekali.
-// Extension ini membuatnya bisa menyimpan class agar section-label tetap ada.
+// ─── Custom Paragraph ─────────────────────────────────────────────────────────
 const CustomParagraph = Paragraph.extend({
   addAttributes() {
     return {
@@ -222,20 +217,15 @@ const CustomParagraph = Paragraph.extend({
   },
 })
 
-// ─── Sanitasi HTML artikel — whitelist tag & attribute ───────────────────────
-// Dijalankan SETELAH resolveShortcodesForSave agar shortcode sudah jadi teks
-// bersih dan badge custom sudah hilang. Hanya tag + attribute yang dipakai
-// konten artikel yang diizinkan — script, iframe, on* event diblokir total.
+// ─── Sanitasi HTML ────────────────────────────────────────────────────────────
 function sanitizeArticleHtml(html: string): string {
   if (typeof window === "undefined") return html
   const parser = new DOMParser()
-  const doc = parser.parseFromString(html, "text/html")
+  const doc    = parser.parseFromString(html, "text/html")
 
-  // Tag yang sama sekali tidak boleh ada
   const BLOCKED_TAGS = ["script","iframe","object","embed","form","input",
     "button","select","textarea","base","link","meta","style","svg","math"]
 
-  // Tag yang diizinkan untuk konten artikel
   const ALLOWED_TAGS = new Set([
     "p","br","hr","h1","h2","h3","h4","h5","h6",
     "strong","b","em","i","u","s","del","mark","sup","sub","small","code","pre",
@@ -244,24 +234,21 @@ function sanitizeArticleHtml(html: string): string {
     "div","span","section","article","aside","header","footer","nav",
   ])
 
-  // Attribute yang diizinkan per tag
   const ALLOWED_ATTRS: Record<string, string[]> = {
-    "*":          ["class","id"],
-    "a":          ["href","target","rel","title"],
-    "img":        ["src","alt","width","height","loading"],
-    "th":         ["colspan","rowspan","scope"],
-    "td":         ["colspan","rowspan"],
-    "col":        ["span"],
-    "colgroup":   ["span"],
+    "*":        ["class","id"],
+    "a":        ["href","target","rel","title"],
+    "img":      ["src","alt","width","height","loading"],
+    "th":       ["colspan","rowspan","scope"],
+    "td":       ["colspan","rowspan"],
+    "col":      ["span"],
+    "colgroup": ["span"],
   }
 
-  // Class yang diizinkan (whitelist eksplisit untuk custom styling artikel)
   const ALLOWED_CLASSES = new Set([
     "section-label","pull-quote",
     "card-table-block","card-table-card","card-table-field","card-table-label","card-table-value",
     "card-design","card-design-card","card-design-field","card-design-label","card-design-value",
-    "modern-table",
-    "group-standings-block",
+    "modern-table","group-standings-block",
     "gs-header","gs-header-icon","gs-header-title","gs-header-sub",
     "gs-table-wrap","gs-table","gs-thead-row","gs-th","gs-th-rank",
     "gs-tr","gs-td","gs-td-rank","gs-td-name","gs-td-stat",
@@ -270,33 +257,23 @@ function sanitizeArticleHtml(html: string): string {
 
   function cleanNode(node: Element) {
     const tag = node.tagName.toLowerCase()
-
-    // Hapus tag terblokir beserta seluruh isinya
     if (BLOCKED_TAGS.includes(tag)) { node.remove(); return }
-
-    // Ganti tag tidak dikenal dengan span (pertahankan kontennya)
     if (!ALLOWED_TAGS.has(tag)) {
       const span = doc.createElement("span")
       span.innerHTML = node.innerHTML
       node.replaceWith(span)
       return
     }
-
-    // Hapus semua attribute lalu pasang kembali yang diizinkan
-    const allowed = [...(ALLOWED_ATTRS["*"] || []), ...(ALLOWED_ATTRS[tag] || [])]
+    const allowed   = [...(ALLOWED_ATTRS["*"] || []), ...(ALLOWED_ATTRS[tag] || [])]
     const attrNames = [...node.attributes].map(a => a.name)
     attrNames.forEach(attr => {
-      // Blokir total event handler (onclick, onerror, dll)
       if (/^on/i.test(attr)) { node.removeAttribute(attr); return }
-      // Blokir javascript: di href/src
       if ((attr === "href" || attr === "src")) {
         const val = node.getAttribute(attr) || ""
         if (/^\s*javascript:/i.test(val)) { node.removeAttribute(attr); return }
       }
-      if (!allowed.includes(attr)) { node.removeAttribute(attr) }
+      if (!allowed.includes(attr)) node.removeAttribute(attr)
     })
-
-    // Sanitasi class — hanya izinkan class dari whitelist
     if (node.hasAttribute("class")) {
       const cleaned = node.getAttribute("class")!
         .split(/\s+/)
@@ -305,8 +282,6 @@ function sanitizeArticleHtml(html: string): string {
       if (cleaned) node.setAttribute("class", cleaned)
       else node.removeAttribute("class")
     }
-
-    // Rekursif ke child elements
     ;[...node.children].forEach(cleanNode)
   }
 
@@ -314,21 +289,17 @@ function sanitizeArticleHtml(html: string): string {
   return doc.body.innerHTML
 }
 
-// ─── Bersihkan konten lama yang tersimpan sebagai HTML badge penuh ────────────
-// Dipanggil saat fetchArticle — mendeteksi badge HTML yang terlanjur tersimpan
-// di DB dan mengekstrak shortcode bersihnya agar bisa diproses normal.
+// ─── Bersihkan badge lama ─────────────────────────────────────────────────────
 function cleanLegacyBadgeContent(content: string): string {
-  // Jika tidak ada badge HTML, return langsung
   if (!content.includes("widget-shortcode-badge")) return content
-
   const parser = new DOMParser()
-  const doc = parser.parseFromString(content, "text/html")
+  const doc    = parser.parseFromString(content, "text/html")
 
   doc.querySelectorAll<HTMLElement>(".widget-shortcode-badge").forEach((el) => {
     const shortcode = el.dataset.shortcode
-    const wId = el.dataset.widgetId
+    const wId   = el.dataset.widgetId
     const wType = el.dataset.widgetType
-    const resolvedShortcode = shortcode ||
+    const resolved = shortcode ||
       (wId && wType
         ? ({
             jadwal:   `[match_data id="${wId}"]`,
@@ -341,10 +312,9 @@ function cleanLegacyBadgeContent(content: string): string {
           }[wType] ?? null)
         : null)
 
-    if (!resolvedShortcode) { el.remove(); return }
-
+    if (!resolved) { el.remove(); return }
     const p = doc.createElement("p")
-    p.textContent = resolvedShortcode
+    p.textContent = resolved
     const parentP = el.closest("p")
     if (parentP && parentP !== el) parentP.replaceWith(p)
     else el.replaceWith(p)
@@ -353,40 +323,7 @@ function cleanLegacyBadgeContent(content: string): string {
   return doc.body.innerHTML
 }
 
-// ─── Info Pipeline Generate Artikel ──────────────────────────────────────────
-// Generate Draft (tombol Sparkles) → POST /api/generate-article
-//   Model fix Llama 4 Scout via Cloudflare Workers AI (@cf/meta/llama-4-scout-17b-16e-instruct).
-//   Sebelumnya Groq gpt-oss-120b (TPM 8K free tier, sering 413 "Request too large"),
-//   dipindah karena context window Llama 4 Scout ~131K + rate limit 300 RPM jauh lebih
-//   lega. Tidak ada lagi dropdown pemilihan model di modal — kalau suatu hari mau ganti
-//   model lagi, ubah konstanta AI_MODEL_LABEL ini saja (dan konstanta senama di route.ts).
-//   Sejak integrasi sumber data per tipe berita, server otomatis mengambil
-//   data faktual sebelum menulis (admin tidak perlu isi context manual,
-//   kecuali untuk Trivia yang tetap wajib manual):
-//     - Hasil Pertandingan   → Bzzoiro (skor/insiden/statistik) + Serper (ESPN, Sky
-//                              Sports, Detik Sport, CNN Indonesia) + Tavily (backup)
-//     - Preview Pertandingan → Bzzoiro (H2H, form, win probability, odds) + Serper
-//                              (prediksi media, kondisi skuad) + Tavily (backup)
-//     - Injury Update        → Bzzoiro (profil/menit main) + Serper (ESPN, BBC, Sky
-//                              Sports, situs resmi klub) + Tavily (pelengkap)
-//     - Konferensi Pers, Transfer Rumor → Serper + Tavily (quote, rumor, validasi)
-//
-// Catatan: tombol "Revisi Editor AI" (tahap kedua, /api/edit-article) sudah
-// DIHAPUS dari UI ini sesuai permintaan — sudah tidak dipakai. Generate Draft
-// di atas sekarang satu-satunya jalur AI di view ini.
-//
-// Label model yang ditampilkan di UI (progress step & footer modal).
-// Tidak ada lagi dropdown — kalau suatu hari mau ganti model, ubah konstanta
-// ini saja (dan konstanta senama di route.ts) supaya tetap konsisten.
-const AI_MODEL_LABEL = "Llama 4 Scout"
-
-// ─── Inject section-label otomatis ke hasil AI generate ──────────────────────
-// Memproses HTML hasil AI dan menyisipkan <p class="section-label"> sebelum
-// setiap heading (h2/h3) sesuai tipe berita, sehingga hasil generate langsung
-// kompatibel dengan tools Pilcrow di editor tanpa harus manual.
-//
-// Pemetaan label per tipe berita mengikuti struktur narasi yang sudah didefinisikan
-// di route.ts — urutan label mengikuti urutan bagian yang diminta di prompt editorial.
+// ─── Section labels ───────────────────────────────────────────────────────────
 const SECTION_LABELS: Record<string, string[]> = {
   hasil:    ["BABAK · PERTAMA", "BABAK · KEDUA", "MOMEN · PENENTU", "DAMPAK · HASIL"],
   preview:  ["KONDISI · SKUAT", "KONDISI · SKUAT", "PERTARUNGAN · KUNCI", "PREDIKSI · PERTANDINGAN"],
@@ -398,58 +335,24 @@ const SECTION_LABELS: Record<string, string[]> = {
 
 function injectSectionLabels(html: string, newsType: string): string {
   if (typeof window === "undefined") return html
-
   const labels = SECTION_LABELS[newsType]
-  if (!labels || labels.length === 0) return html
+  if (!labels?.length) return html
 
-  const parser = new DOMParser()
-  const doc = parser.parseFromString(html, "text/html")
-
-  // Cari semua heading h2 dan h3 yang ada di konten
+  const parser   = new DOMParser()
+  const doc      = parser.parseFromString(html, "text/html")
   const headings = Array.from(doc.body.querySelectorAll("h2, h3"))
 
   headings.forEach((heading, i) => {
-    // Jangan sisipkan label jika sudah ada section-label tepat sebelumnya
     const prev = heading.previousElementSibling
     if (prev?.classList.contains("section-label")) return
-
-    // Ambil label sesuai urutan, kalau index melebihi daftar pakai yang terakhir
     const labelText = labels[i] ?? labels[labels.length - 1]
-
-    const labelEl = doc.createElement("p")
-    labelEl.className = "section-label"
+    const labelEl   = doc.createElement("p")
+    labelEl.className   = "section-label"
     labelEl.textContent = labelText
-
     heading.parentNode?.insertBefore(labelEl, heading)
   })
 
   return doc.body.innerHTML
-}
-
-// ─── Sumber data otomatis per tipe berita ───────────────────────────────────
-// Ditampilkan di modal Generate Draft supaya admin tahu dari mana data
-// faktual artikel ini diambil sebelum ditulis oleh Llama 4 Scout (Cloudflare Workers AI).
-//   - Hasil       → Bzzoiro (skor/insiden/statistik) + Serper (ESPN, Sky Sports, Detik
-//                   Sport, CNN Indonesia) + Tavily (backup)
-//   - Preview     → Bzzoiro (H2H, form, win probability, odds) + Serper (prediksi
-//                   media, kondisi skuad) + Tavily (backup)
-//   - Injury      → Bzzoiro (profil/menit main) + Serper (ESPN, BBC, Sky Sports,
-//                   situs resmi klub) + Tavily (pelengkap)
-//   - Konpers     → Serper + Tavily (quote pelatih/pemain, 2 hari terakhir)
-//   - Transfer    → Tavily Search (2 hari terakhir)
-//   - Trivia      → tidak ada, murni konteks manual
-const NEWS_TYPE_SOURCE: Record<string, string> = {
-  hasil:    "Bzzoiro (skor & insiden) + Tavily (laporan post-match hari ini)",
-  preview:  "Bzzoiro (jadwal & prediksi ML) + Tavily (analisis pra-laga 12 jam)",
-  cedera:   "Bzzoiro (sinyal kehadiran/menit main) + Tavily (berita cedera 3 hari)",
-  konpers:  "Tavily Search — berita 2 hari terakhir",
-  transfer: "Tavily Search — berita 2 hari terakhir",
-  trivia:   "Tidak ada sumber otomatis — murni konteks manual",
-}
-
-// Tipe berita yang context-nya WAJIB diisi manual (tidak ada fetch otomatis).
-const NEWS_TYPE_REQUIRES_MANUAL_CONTEXT: Record<string, boolean> = {
-  hasil: false, preview: false, cedera: false, konpers: false, transfer: false, trivia: true,
 }
 
 // ─── Main Component ───────────────────────────────────────────────────────────
@@ -458,12 +361,14 @@ export function CreateArticleView({ onBack, articleId }: CreateArticleViewProps)
   const isEditMode = !!articleId
   const supabase   = createClient()
 
+  // ── Form state ────────────────────────────────────────────────────────────
   const [title,           setTitle]           = useState("")
-  const [savedSlug,       setSavedSlug]       = useState("")   // slug yang sudah tersimpan di DB (edit mode)
+  const [savedSlug,       setSavedSlug]       = useState("")
   const [category,        setCategory]        = useState("")
   const [excerpt,         setExcerpt]         = useState("")
   const [contentType,     setContentType]     = useState("")
-  // Structured caption fields — disimpan sebagai JSON di kolom featured_image_caption
+
+  // Caption fields
   const [captionPhotoTitle,       setCaptionPhotoTitle]       = useState("")
   const [captionPhotographer,     setCaptionPhotographer]     = useState("")
   const [captionPhotographerUrl,  setCaptionPhotographerUrl]  = useState("")
@@ -472,7 +377,6 @@ export function CreateArticleView({ onBack, articleId }: CreateArticleViewProps)
   const [captionLicense,          setCaptionLicense]          = useState("")
   const [captionLicenseUrl,       setCaptionLicenseUrl]       = useState("")
 
-  // Helper: serialize structured caption ke JSON string (untuk disimpan ke DB)
   function serializeCaption(): string | null {
     const obj = {
       photoTitle:       captionPhotoTitle      || undefined,
@@ -488,7 +392,6 @@ export function CreateArticleView({ onBack, articleId }: CreateArticleViewProps)
     return JSON.stringify(obj)
   }
 
-  // Helper: parse JSON caption dari DB ke state (edit mode)
   function parseAndSetCaption(raw: string | null) {
     if (!raw) return
     try {
@@ -501,10 +404,10 @@ export function CreateArticleView({ onBack, articleId }: CreateArticleViewProps)
       setCaptionLicense(obj.license || "")
       setCaptionLicenseUrl(obj.licenseUrl || "")
     } catch {
-      // Caption lama (plain text) — isi ke photoTitle saja
       setCaptionPhotoTitle(raw)
     }
   }
+
   const [metaTitle,       setMetaTitle]       = useState("")
   const [metaDescription, setMetaDescription] = useState("")
   const [categories,      setCategories]      = useState<{ id: string; name: string }[]>([])
@@ -512,13 +415,13 @@ export function CreateArticleView({ onBack, articleId }: CreateArticleViewProps)
   const [isFetching,      setIsFetching]      = useState(isEditMode)
   const [message,         setMessage]         = useState<{ type: "success" | "error"; text: string } | null>(null)
   const [isEditorChoice,  setIsEditorChoice]  = useState(false)
-  const [scheduledAt,     setScheduledAt]     = useState<string>("")   // ISO string dari datetime-local input
+  const [scheduledAt,     setScheduledAt]     = useState<string>("")
 
-  // ── Editor tab ──────────────────────────────────────────────────────────────
+  // ── Editor tab ────────────────────────────────────────────────────────────
   const [editorTab,      setEditorTab]      = useState<"write" | "preview">("write")
   const [previewContent, setPreviewContent] = useState("")
 
-  // ── Link Dialog ──────────────────────────────────────────────────────────────
+  // ── Link Dialog ───────────────────────────────────────────────────────────
   const [linkDialogOpen, setLinkDialogOpen] = useState(false)
   const [linkText,       setLinkText]       = useState("")
   const [linkUrl,        setLinkUrl]        = useState("https://")
@@ -536,28 +439,19 @@ export function CreateArticleView({ onBack, articleId }: CreateArticleViewProps)
   const [showSuggestions, setShowSuggestions] = useState(false)
   const tagInputRef = useRef<HTMLInputElement>(null)
 
-  // ── Widget edit state ──────────────────────────────────────────────────────
-  // Diisi saat admin klik "Edit Widget" pada badge di editor (edit mode)
+  // ── Widget edit state ─────────────────────────────────────────────────────
   const [editWidgetId,   setEditWidgetId]   = useState<string | null>(null)
   const [editWidgetType, setEditWidgetType] = useState<WidgetType | null>(null)
-
-  // ── AI Generate state ────────────────────────────────────────────────────────────
-  const [aiModalOpen,   setAiModalOpen]   = useState(false)
-  const [aiNewsType,    setAiNewsType]    = useState<"transfer" | "konpers" | "cedera" | "preview" | "hasil" | "trivia">("transfer")
-  const [aiTopic,       setAiTopic]       = useState("")
-  const [aiContext,     setAiContext]     = useState("")
-  // Model generate sudah fix Llama 4 Scout (lihat konstanta AI_MODEL_LABEL
-  // di atas) — tidak ada lagi state pemilihan model di sini.
-  const [aiGenerating,  setAiGenerating]  = useState(false)
-  const [aiError,       setAiError]       = useState<string | null>(null)
-  const [aiProgress,    setAiProgress]    = useState<{ step: number; label: string; source?: string; warning?: boolean } | null>(null)
-  const [aiSourceUsed,  setAiSourceUsed]  = useState<string | null>(null)
-
-  // ── Pre-loaded widgets (untuk artikel lama dari Posts → Edit) ──────────────
-  // Diisi setelah fetchArticle parse shortcode dari konten artikel.
   const [preloadedWidgets, setPreloadedWidgets] = useState<{ widgetId: string; widgetType: WidgetType }[]>([])
 
-  // Dengarkan custom event dari tombol Edit di panel WidgetInserter
+  // ── Pipeline baru: Generation panel state ─────────────────────────────────
+  // Menggantikan aiModalOpen + semua AI state lama.
+  // Panel ditampilkan sebagai kolom sidebar tambahan (bukan modal overlay)
+  // saat tombol ✨ di toolbar diklik.
+  const [genPanelOpen,  setGenPanelOpen]  = useState(false)
+  const [genNewsType,   setGenNewsType]   = useState<NewsType>("hasil")
+
+  // Dengarkan custom event dari badge widget di editor
   useEffect(() => {
     function handleWidgetRequestEdit(e: Event) {
       const { widgetId, widgetType } = (e as CustomEvent<{ widgetId: string; widgetType: WidgetType }>).detail
@@ -593,26 +487,21 @@ export function CreateArticleView({ onBack, articleId }: CreateArticleViewProps)
           "prose-ul:text-foreground/90 prose-ol:text-foreground/90",
           "prose-hr:border-border",
           "prose-img:rounded-lg",
-          // Widget shortcode badge styles
           "[&_.widget-shortcode-badge]:my-4 [&_.widget-shortcode-badge]:select-none",
-          // Section label styling di dalam editor
           "[&_p.section-label]:text-[#39FF14] [&_p.section-label]:text-[0.68rem] [&_p.section-label]:font-bold [&_p.section-label]:uppercase [&_p.section-label]:tracking-[0.14em] [&_p.section-label]:mt-6 [&_p.section-label]:mb-0",
-          // Pull quote styling di dalam editor
           "[&_blockquote.pull-quote]:border-l-[3px] [&_blockquote.pull-quote]:border-[#39FF14] [&_blockquote.pull-quote]:bg-[rgba(57,255,20,0.04)] [&_blockquote.pull-quote]:rounded-r-md [&_blockquote.pull-quote]:px-6 [&_blockquote.pull-quote]:py-3 [&_blockquote.pull-quote]:my-4 [&_blockquote.pull-quote]:not-italic",
           "[&_blockquote.pull-quote_p]:font-bold [&_blockquote.pull-quote_p]:italic [&_blockquote.pull-quote_p]:text-foreground [&_blockquote.pull-quote_p]:text-[1.1rem] [&_blockquote.pull-quote_p]:not-italic",
         ].join(" "),
       },
-      // Klik badge di editor → masuk mode edit widget di sidebar
       handleClick(view, _pos, event) {
         const target = event.target as HTMLElement
-        const badge = target.closest<HTMLElement>(".widget-shortcode-badge")
+        const badge  = target.closest<HTMLElement>(".widget-shortcode-badge")
         if (!badge) return false
         const wId   = badge.dataset.widgetId
         const wType = badge.dataset.widgetType as WidgetType | undefined
         if (!wId || !wType) return false
         setEditWidgetId(wId)
         setEditWidgetType(wType)
-        // Scroll ke widget inserter di sidebar
         document.getElementById("widget-inserter-anchor")?.scrollIntoView({ behavior: "smooth", block: "start" })
         return true
       },
@@ -625,15 +514,14 @@ export function CreateArticleView({ onBack, articleId }: CreateArticleViewProps)
     if (editorTab !== "preview" || !editor) return
     const update = () => {
       const raw = editor.getHTML()
-      const withSpacing = raw.replace(/<p><\/p>/g, "<p>&nbsp;</p>")
-      setPreviewContent(resolveShortcodesForSave(withSpacing))
+      setPreviewContent(resolveShortcodesForSave(raw.replace(/<p><\/p>/g, "<p>&nbsp;</p>")))
     }
     update()
     editor.on("update", update)
     return () => { editor.off("update", update) }
   }, [editorTab, editor])
 
-  // ── Fetch meta (categories, tags) ────────────────────────────────────────
+  // ── Fetch meta ────────────────────────────────────────────────────────────
   useEffect(() => {
     async function fetchMeta() {
       const [catRes, tagRes] = await Promise.all([
@@ -641,12 +529,12 @@ export function CreateArticleView({ onBack, articleId }: CreateArticleViewProps)
         supabase.from("tags").select("*").order("name"),
       ])
       if (catRes.data) setCategories(catRes.data)
-      if (tagRes.data)  setAllTags(tagRes.data)
+      if (tagRes.data) setAllTags(tagRes.data)
     }
     fetchMeta()
   }, [])
 
-  // ── Load article in edit mode ─────────────────────────────────────────────
+  // ── Load article (edit mode) ──────────────────────────────────────────────
   useEffect(() => {
     if (!articleId || !editor) return
     async function fetchArticle() {
@@ -663,74 +551,57 @@ export function CreateArticleView({ onBack, articleId }: CreateArticleViewProps)
         setFeaturedImagePreview(data.featured_image_url || null)
         setMetaTitle(data.meta_title || "")
         setMetaDescription(data.meta_description || "")
-        setIsEditorChoice(data.is_editor_choice || false)
-
-        // Load scheduled publish time if exists
+        setIsEditorChoice(data.is_editor_choice ?? false)
         if (data.scheduled_at) {
-          // Convert ISO string to local datetime-local format: "YYYY-MM-DDTHH:mm"
           const d = new Date(data.scheduled_at)
           const pad = (n: number) => String(n).padStart(2, "0")
-          const local = `${d.getFullYear()}-${pad(d.getMonth()+1)}-${pad(d.getDate())}T${pad(d.getHours())}:${pad(d.getMinutes())}`
-          setScheduledAt(local)
+          setScheduledAt(`${d.getFullYear()}-${pad(d.getMonth()+1)}-${pad(d.getDate())}T${pad(d.getHours())}:${pad(d.getMinutes())}`)
         }
 
-        // Konten sudah berupa shortcode teks: [match_data id="..."] dll
-        // Kita konversi ke badge placeholder agar tampil visual di editor.
-        // Bersihkan dulu jika ada badge HTML lama yang terlanjur tersimpan di DB
         let editorContent = cleanLegacyBadgeContent(data.content || "")
 
-        // Helper: map shortcode type → WidgetType
         function rawToWidgetType(raw: string): WidgetType {
-          if (raw === "match_data")              return "jadwal"
-          if (raw === "klasemen_data")           return "klasemen"
-          if (raw === "transfer_data")           return "transfer"
-          if (raw === "analisa_taktis_data")     return "analisa_taktis"
-          if (raw === "perbandingan_tim_data")   return "perbandingan_tim"
+          if (raw === "match_data")               return "jadwal"
+          if (raw === "klasemen_data")            return "klasemen"
+          if (raw === "transfer_data")            return "transfer"
+          if (raw === "analisa_taktis_data")      return "analisa_taktis"
+          if (raw === "perbandingan_tim_data")    return "perbandingan_tim"
           if (raw === "timeline_pertandingan_data") return "timeline_pertandingan"
+          if (raw === "profil_stadion_data")      return "profil_stadion"
+          if (raw === "daftar_pemain_data")       return "daftar_pemain"
+          if (raw === "pemain_andalan_data")      return "pemain_andalan"
+          if (raw === "hub_data")                 return "hub"
           return "peluang"
         }
 
-        const ALL_SC = "(match_data|klasemen_data|transfer_data|peluang_data|analisa_taktis_data|perbandingan_tim_data|timeline_pertandingan_data)"
+        const ALL_SC = "(match_data|klasemen_data|transfer_data|peluang_data|analisa_taktis_data|perbandingan_tim_data|timeline_pertandingan_data|profil_stadion_data|daftar_pemain_data|pemain_andalan_data|hub_data)"
 
-        // Ganti shortcode teks yang ada di dalam <p> dengan badge placeholder
         editorContent = editorContent.replace(
           new RegExp(`<p[^>]*>\\s*\\[${ALL_SC}\\s+id="([a-fA-F0-9-]{36})"\\]\\s*<\\/p>`, "g"),
-          (_match, rawType: string, wId: string) => {
-            const wType: WidgetType = rawToWidgetType(rawType)
-            return buildShortcodePlaceholder(wId, wType)
-          }
+          (_match, rawType: string, wId: string) => buildShortcodePlaceholder(wId, rawToWidgetType(rawType))
         )
-        // Fallback: shortcode tanpa <p> wrapper
         editorContent = editorContent.replace(
           new RegExp(`\\[${ALL_SC}\\s+id="([a-fA-F0-9-]{36})"\\]`, "g"),
-          (_match, rawType: string, wId: string) => {
-            const wType: WidgetType = rawToWidgetType(rawType)
-            return buildShortcodePlaceholder(wId, wType)
-          }
+          (_match, rawType: string, wId: string) => buildShortcodePlaceholder(wId, rawToWidgetType(rawType))
         )
 
         editor.commands.setContent(editorContent || "")
 
-        // Kumpulkan semua widget yang ada di artikel untuk panel Widget di Artikel
         const foundWidgets: { widgetId: string; widgetType: WidgetType }[] = []
-        const widgetRegex = /\[(match_data|klasemen_data|transfer_data|peluang_data|analisa_taktis_data|perbandingan_tim_data|timeline_pertandingan_data)\s+id="([a-fA-F0-9-]{36})"\]/g
+        const widgetRegex = /\[(match_data|klasemen_data|transfer_data|peluang_data|analisa_taktis_data|perbandingan_tim_data|timeline_pertandingan_data|profil_stadion_data|daftar_pemain_data|pemain_andalan_data|hub_data)\s+id="([a-fA-F0-9-]{36})"\]/g
         let m
-        // Gunakan konten yang sudah dibersihkan untuk ekstrak widget IDs
         const rawContent = cleanLegacyBadgeContent(data.content || "")
         while ((m = widgetRegex.exec(rawContent)) !== null) {
-          foundWidgets.push({
-            widgetId: m[2],
-            widgetType: rawToWidgetType(m[1]),
-          })
+          foundWidgets.push({ widgetId: m[2], widgetType: rawToWidgetType(m[1]) })
         }
         setPreloadedWidgets(foundWidgets)
 
-        // Setelah load, refresh preview
         setTimeout(() => {
           const raw = editor.getHTML()
           setPreviewContent(resolveShortcodesForSave(raw))
         }, 150)
       }
+
       const { data: articleTags } = await supabase
         .from("article_tags").select("tags(name)").eq("article_id", articleId)
       if (articleTags) {
@@ -745,8 +616,8 @@ export function CreateArticleView({ onBack, articleId }: CreateArticleViewProps)
   useEffect(() => {
     if (!tagInput.trim()) { setTagSuggestions([]); setShowSuggestions(false); return }
     const filtered = allTags
-      .map((t) => t.name)
-      .filter((name) => name.toLowerCase().includes(tagInput.toLowerCase()) && !tags.includes(name))
+      .map(t => t.name)
+      .filter(name => name.toLowerCase().includes(tagInput.toLowerCase()) && !tags.includes(name))
     setTagSuggestions(filtered)
     setShowSuggestions(true)
   }, [tagInput, allTags, tags])
@@ -754,11 +625,11 @@ export function CreateArticleView({ onBack, articleId }: CreateArticleViewProps)
   const addTag    = (name: string) => {
     const trimmed = name.trim()
     if (!trimmed || tags.includes(trimmed)) return
-    setTags((prev) => [...prev, trimmed])
+    setTags(prev => [...prev, trimmed])
     setTagInput(""); setShowSuggestions(false)
     tagInputRef.current?.focus()
   }
-  const removeTag = (name: string) => setTags((prev) => prev.filter((t) => t !== name))
+  const removeTag = (name: string) => setTags(prev => prev.filter(t => t !== name))
   const handleTagKeyDown = (e: React.KeyboardEvent<HTMLInputElement>) => {
     if (e.key === "Enter" || e.key === ",") { e.preventDefault(); addTag(tagInput) }
     else if (e.key === "Backspace" && tagInput === "" && tags.length > 0) removeTag(tags[tags.length - 1])
@@ -790,8 +661,7 @@ export function CreateArticleView({ onBack, articleId }: CreateArticleViewProps)
   const handleInsertLink = useCallback(() => {
     if (!editor) return
     const selectedText = editor.state.doc.cut(
-      editor.state.selection.from,
-      editor.state.selection.to,
+      editor.state.selection.from, editor.state.selection.to,
     ).textContent
     setLinkText(selectedText || "")
     setLinkUrl("https://")
@@ -809,8 +679,7 @@ export function CreateArticleView({ onBack, articleId }: CreateArticleViewProps)
       editor.chain().focus().setLink({ href: url, target: "_blank" }).run()
     }
     setLinkDialogOpen(false)
-    setLinkText("")
-    setLinkUrl("https://")
+    setLinkText(""); setLinkUrl("https://")
   }, [editor, linkUrl, linkText])
 
   const handleInsertSectionLabel = useCallback(() => {
@@ -827,116 +696,36 @@ export function CreateArticleView({ onBack, articleId }: CreateArticleViewProps)
     ).run()
   }, [editor])
 
-  // ── AI Generate handler ────────────────────────────────────────────────────────────
-  async function handleAiGenerate() {
-    if (!aiTopic.trim()) {
-      setAiError("Topik wajib diisi.")
-      return
+  // ── GenerationPanel callbacks ─────────────────────────────────────────────
+  // Dipanggil oleh GenerationPanel setelah STEP 2 (Llama draft) selesai
+  const handleDraftReady = useCallback((draftTitle: string, draftContent: string) => {
+    setTitle(draftTitle)
+    if (editor) {
+      const contentWithLabels = injectSectionLabels(draftContent, genNewsType)
+      editor.commands.setContent(contentWithLabels)
     }
-    if (NEWS_TYPE_REQUIRES_MANUAL_CONTEXT[aiNewsType] && !aiContext.trim()) {
-      setAiError("Tipe berita ini tidak punya sumber data otomatis — konteks wajib diisi manual.")
-      return
+  }, [editor, genNewsType])
+
+  // Dipanggil oleh GenerationPanel setelah STEP 3 (GPT Editor) selesai
+  const handleFinalReady = useCallback((finalTitle: string, finalContent: string) => {
+    setTitle(finalTitle)
+    if (editor) {
+      const contentWithLabels = injectSectionLabels(finalContent, genNewsType)
+      editor.commands.setContent(contentWithLabels)
     }
-    setAiGenerating(true)
-    setAiError(null)
-    setAiSourceUsed(null)
-    setAiProgress({ step: 1, label: `Mengambil Data dari ${NEWS_TYPE_SOURCE[aiNewsType]}`, source: NEWS_TYPE_SOURCE[aiNewsType] })
-
-    try {
-      const res = await fetch("/api/generate-article", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({
-          newsType: aiNewsType,
-          topic:    aiTopic,
-          context:  aiContext,
-        }),
-      })
-
-      if (!res.ok) {
-        // Non-SSE error (auth, config, etc.)
-        const data = await res.json().catch(() => ({})) as { error?: string }
-        throw new Error(data.error ?? `Error ${res.status}`)
-      }
-
-      // Parse SSE stream
-      const reader  = res.body?.getReader()
-      const decoder = new TextDecoder()
-      if (!reader) throw new Error("Gagal membaca stream dari server.")
-
-      let buffer = ""
-      let receivedDone = false
-      while (true) {
-        const { done, value } = await reader.read()
-        if (done) break
-        buffer += decoder.decode(value, { stream: true })
-
-        // Process complete SSE messages
-        const messages = buffer.split("\n\n")
-        buffer = messages.pop() ?? ""
-
-        for (const msg of messages) {
-          const lines = msg.split("\n")
-          let event = "message"
-          let dataStr = ""
-          for (const line of lines) {
-            if (line.startsWith("event: ")) event = line.slice(7).trim()
-            if (line.startsWith("data: "))  dataStr = line.slice(6).trim()
-          }
-          if (!dataStr) continue
-
-          const payload = JSON.parse(dataStr)
-
-          if (event === "progress") {
-            setAiProgress({ step: payload.step, label: payload.label, source: payload.source, warning: payload.warning })
-            if (payload.source) setAiSourceUsed(payload.source)
-          } else if (event === "done") {
-            receivedDone = true
-            setTitle(payload.title)
-            if (editor) {
-              const contentWithLabels = injectSectionLabels(payload.content, aiNewsType)
-              editor.commands.setContent(contentWithLabels)
-            }
-            if (payload.sourceUsed) setAiSourceUsed(payload.sourceUsed)
-            setAiProgress({ step: 4, label: "Draft Selesai" })
-            // Small delay to show "Draft Selesai" before closing
-            await new Promise(r => setTimeout(r, 900))
-            setAiModalOpen(false)
-            setAiTopic("")
-            setAiContext("")
-            setAiError(null)
-          } else if (event === "error") {
-            throw new Error(payload.error ?? "Gagal generate artikel. Coba lagi.")
-          }
-        }
-      }
-
-      // Stream selesai tanpa event "done" — koneksi putus prematur
-      // (timeout Vercel, Llama 4 Scout tidak merespons, dll) tanpa error message dari server.
-      if (!receivedDone) {
-        throw new Error(`Koneksi ke server terputus sebelum selesai. Kemungkinan ${AI_MODEL_LABEL} timeout, tidak merespons, atau kuota Cloudflare Workers AI habis. Coba lagi.`)
-      }
-    } catch (err: any) {
-      setAiError(err.message ?? "Gagal generate artikel. Coba lagi.")
-    } finally {
-      setAiGenerating(false)
-      setAiProgress(null)
-    }
-  }
+  }, [editor, genNewsType])
 
   // ── Widget insert callback ────────────────────────────────────────────────
-  // Dipanggil oleh WidgetInserter setelah data tersimpan ke Supabase
   function handleWidgetInsert(shortcode: string, widgetId: string, widgetType: WidgetType) {
     if (!editor) return
     const badge = buildShortcodePlaceholder(widgetId, widgetType)
     if (editWidgetId === widgetId) {
-      // Mode edit: update badge yang sudah ada di editor
       const currentHtml = editor.getHTML()
       const parser = new DOMParser()
-      const doc = parser.parseFromString(currentHtml, "text/html")
+      const doc    = parser.parseFromString(currentHtml, "text/html")
       const existing = doc.querySelector(`[data-widget-id="${widgetId}"]`)
       if (existing) {
-        const newDoc = new DOMParser().parseFromString(badge, "text/html")
+        const newDoc  = new DOMParser().parseFromString(badge, "text/html")
         const newNode = newDoc.body.firstChild
         if (newNode) {
           const parentP = existing.closest("p")
@@ -946,10 +735,8 @@ export function CreateArticleView({ onBack, articleId }: CreateArticleViewProps)
         }
       }
     } else {
-      // Mode insert baru: tambahkan ke posisi kursor
       editor.chain().focus().insertContent(badge + "<p></p>").run()
     }
-    // Reset edit state
     setEditWidgetId(null)
     setEditWidgetType(null)
   }
@@ -961,45 +748,32 @@ export function CreateArticleView({ onBack, articleId }: CreateArticleViewProps)
   // ── Sync tags ─────────────────────────────────────────────────────────────
   const syncTags = async (artId: string) => {
     if (tags.length === 0) {
-      // Tidak ada tag — hapus semua relasi lama lalu selesai
       await supabase.from("article_tags").delete().eq("article_id", artId)
       return
     }
-
-    // Cek semua tag secara paralel — 1 round-trip per tag, bukan sequential
     const slugs = tags.map(generateSlug)
     const existingResults = await Promise.all(
-      slugs.map((slug) =>
-        supabase.from("tags").select("id").eq("slug", slug).maybeSingle()
-      )
+      slugs.map(slug => supabase.from("tags").select("id").eq("slug", slug).maybeSingle())
     )
-
-    // Tag yang belum ada di DB → insert sekaligus (batch)
     const toInsert = tags
       .map((name, i) => ({ name, slug: slugs[i] }))
       .filter((_, i) => !existingResults[i].data)
 
     let insertedTags: { id: string; slug: string }[] = []
     if (toInsert.length > 0) {
-      const { data } = await supabase
-        .from("tags")
-        .insert(toInsert)
-        .select("id, slug")
+      const { data } = await supabase.from("tags").insert(toInsert).select("id, slug")
       insertedTags = (data as { id: string; slug: string }[]) ?? []
     }
 
-    // Gabungkan: existing + baru
     const tagIds: string[] = slugs.map((slug, i) => {
       if (existingResults[i].data) return existingResults[i].data!.id as string
-      return insertedTags.find((t) => t.slug === slug)?.id ?? ""
+      return insertedTags.find(t => t.slug === slug)?.id ?? ""
     }).filter(Boolean)
 
-    // Update relasi: hapus lama + insert baru dalam 1 batch
     await supabase.from("article_tags").delete().eq("article_id", artId)
     if (tagIds.length > 0) {
-      await supabase
-        .from("article_tags")
-        .insert(tagIds.map((tag_id) => ({ article_id: artId, tag_id })))
+      await supabase.from("article_tags")
+        .insert(tagIds.map(tag_id => ({ article_id: artId, tag_id })))
     }
   }
 
@@ -1007,82 +781,56 @@ export function CreateArticleView({ onBack, articleId }: CreateArticleViewProps)
   const handleSave = async (publish: boolean, schedule = false) => {
     if (!title) { setMessage({ type: "error", text: "Judul artikel wajib diisi!" }); return }
     if (!editor) return
-
-    // Validasi scheduled publish
     if (schedule) {
-      if (!scheduledAt) { setMessage({ type: "error", text: "Pilih tanggal & waktu jadwal terlebih dahulu!" }); return }
-      const schedDate = new Date(scheduledAt)
-      if (schedDate <= new Date()) { setMessage({ type: "error", text: "Waktu jadwal harus di masa depan!" }); return }
+      if (!scheduledAt) { setMessage({ type: "error", text: "Pilih tanggal & waktu jadwal!" }); return }
+      if (new Date(scheduledAt) <= new Date()) { setMessage({ type: "error", text: "Waktu jadwal harus di masa depan!" }); return }
     }
 
     setIsLoading(true); setMessage(null)
 
-    const rawHtml = editor.getHTML()
-
-    // 1. Konversi badge placeholder → shortcode teks
+    const rawHtml      = editor.getHTML()
     const resolvedHtml = resolveShortcodesForSave(rawHtml)
-    // 2. Sanitasi whitelist — blokir script/iframe/on* event, izinkan tag artikel
-    let htmlContent = sanitizeArticleHtml(resolvedHtml)
+    let   htmlContent  = sanitizeArticleHtml(resolvedHtml)
 
-    // 3. Internal Link Building otomatis — sisipkan link ke artikel lain yang
-    //    sudah publish berdasarkan kecocokan kategori/tag DAN semantic
-    //    similarity (Gemini Embedding), langsung di sini saat artikel
-    //    disimpan (baik draft, publish, maupun scheduled).
-    //    Gagal silent (best-effort) — jangan sampai proses save gagal karena ini.
+    // Internal Link Building
     let pendingEmbedding: number[] | null = null
     try {
       const linkCandidates = await fetchLinkCandidates(supabase, isEditMode ? articleId : null)
-
-      // Generate embedding semantik artikel ini lewat server route — supaya
-      // GEMINI_API_KEY tidak pernah dipanggil langsung dari browser.
       try {
         const plainText = htmlContent.replace(/<[^>]+>/g, " ").replace(/\s+/g, " ").trim()
-        const embedRes = await fetch("/api/internal-linking/embed-source", {
+        const embedRes  = await fetch("/api/internal-linking/embed-source", {
           method: "POST",
           headers: { "Content-Type": "application/json" },
           body: JSON.stringify({ title, text: plainText }),
         })
         if (embedRes.ok) {
-          const embedData = await embedRes.json()
+          const embedData  = await embedRes.json()
           pendingEmbedding = embedData.embedding ?? null
         }
       } catch (embedErr) {
-        console.error("Gagal generate embedding semantik, lanjut tanpa semantic scoring:", embedErr)
+        console.error("Gagal generate embedding:", embedErr)
       }
-
       const sourceContext = { categoryId: category || null, tags, embedding: pendingEmbedding }
       const { html: linkedHtml } = applyInternalLinks(htmlContent, articleId ?? null, linkCandidates, {}, sourceContext)
       htmlContent = linkedHtml
     } catch (e) {
-      console.error("Internal link building gagal, lanjut tanpa internal link:", e)
+      console.error("Internal link building gagal:", e)
     }
 
     const now = new Date().toISOString()
     const articleSlug = isEditMode && savedSlug ? savedSlug : generateSlug(title)
 
-    // Tentukan status & published_at berdasarkan mode simpan
-    let status: string
-    let published_at: string | null
-    let scheduled_at: string | null = null
-
+    let status: string, published_at: string | null, scheduled_at: string | null = null
     if (schedule) {
-      status = "scheduled"
-      published_at = null
-      scheduled_at = new Date(scheduledAt).toISOString()
+      status = "scheduled"; published_at = null; scheduled_at = new Date(scheduledAt).toISOString()
     } else if (publish) {
-      status = "published"
-      published_at = now
-      scheduled_at = null
+      status = "published"; published_at = now
     } else {
-      status = "draft"
-      published_at = null
-      scheduled_at = null
+      status = "draft"; published_at = null
     }
 
     const payload = {
-      title,
-      slug: articleSlug,
-      excerpt,
+      title, slug: articleSlug, excerpt,
       content_type: contentType || null,
       content: htmlContent,
       category_id: category || null,
@@ -1090,9 +838,7 @@ export function CreateArticleView({ onBack, articleId }: CreateArticleViewProps)
       featured_image_caption: serializeCaption(),
       meta_title: metaTitle || null,
       meta_description: metaDescription || null,
-      status,
-      published_at,
-      scheduled_at,
+      status, published_at, scheduled_at,
       updated_at: now,
       is_editor_choice: isEditorChoice,
     }
@@ -1105,22 +851,15 @@ export function CreateArticleView({ onBack, articleId }: CreateArticleViewProps)
       const { data: inserted, error } = await supabase.from("articles").insert(payload).select("id").single()
       if (error || !inserted) { setIsLoading(false); setMessage({ type: "error", text: error?.message || "Gagal menyimpan" }); return }
       savedArticleId = inserted.id
-      setSavedSlug(articleSlug)  // simpan slug agar save berikutnya tidak regenerate
+      setSavedSlug(articleSlug)
     }
 
     if (savedArticleId) await syncTags(savedArticleId)
 
-    // Simpan embedding semantik yang sudah di-generate di atas ke kolom DB —
-    // dipisah dari payload utama karena savedArticleId baru pasti ada di
-    // sini (insert butuh .select("id") dulu). Best-effort, tidak mem-block UI.
     if (savedArticleId && pendingEmbedding) {
       const { error: embedSaveError } = await supabase
-        .from("articles")
-        .update({ embedding: pendingEmbedding })
-        .eq("id", savedArticleId)
-      if (embedSaveError) {
-        console.error("Gagal menyimpan embedding semantik artikel:", embedSaveError.message)
-      }
+        .from("articles").update({ embedding: pendingEmbedding }).eq("id", savedArticleId)
+      if (embedSaveError) console.error("Gagal simpan embedding:", embedSaveError.message)
     }
 
     setIsLoading(false)
@@ -1184,10 +923,14 @@ export function CreateArticleView({ onBack, articleId }: CreateArticleViewProps)
         </div>
       )}
 
-      <div className="grid gap-6 lg:grid-cols-3">
+      {/* Layout: editor + sidebar + generation panel (kondisional) */}
+      <div className={[
+        "grid gap-6",
+        genPanelOpen ? "lg:grid-cols-[1fr_280px_320px]" : "lg:grid-cols-[1fr_280px]",
+      ].join(" ")}>
 
         {/* ── Kolom utama: editor ── */}
-        <div className="lg:col-span-2 space-y-5">
+        <div className="space-y-5">
 
           {/* Title & Excerpt */}
           <div className="rounded-xl border border-border bg-card p-6 space-y-5">
@@ -1223,10 +966,10 @@ export function CreateArticleView({ onBack, articleId }: CreateArticleViewProps)
               />
             </div>
 
-            {/* Tipe Konten — badge standfirst */}
+            {/* Tipe Konten */}
             <div>
               <label className="mb-1.5 block text-xs font-semibold uppercase tracking-wider text-muted-foreground">
-                Tipe Konten <span className="normal-case font-normal text-muted-foreground/60">(opsional — tampil sebagai badge di atas standfirst)</span>
+                Tipe Konten <span className="normal-case font-normal text-muted-foreground/60">(opsional)</span>
               </label>
               <input
                 type="text"
@@ -1242,9 +985,7 @@ export function CreateArticleView({ onBack, articleId }: CreateArticleViewProps)
               {contentType && (
                 <p className="mt-2 text-xs text-primary/70">
                   Preview badge:{" "}
-                  <span
-                    className="inline-block rounded px-2 py-0.5 text-[10px] font-bold uppercase tracking-wider bg-primary/15 text-primary ring-1 ring-primary/40"
-                  >
+                  <span className="inline-block rounded px-2 py-0.5 text-[10px] font-bold uppercase tracking-wider bg-primary/15 text-primary ring-1 ring-primary/40">
                     {contentType}
                   </span>
                 </p>
@@ -1263,9 +1004,7 @@ export function CreateArticleView({ onBack, articleId }: CreateArticleViewProps)
                   onClick={() => setEditorTab("write")}
                   className={[
                     "rounded px-3 py-1.5 font-medium transition-colors",
-                    editorTab === "write"
-                      ? "bg-card text-foreground shadow-sm"
-                      : "text-muted-foreground hover:text-foreground",
+                    editorTab === "write" ? "bg-card text-foreground shadow-sm" : "text-muted-foreground hover:text-foreground",
                   ].join(" ")}
                 >
                   ✏️ Tulis
@@ -1275,9 +1014,7 @@ export function CreateArticleView({ onBack, articleId }: CreateArticleViewProps)
                   onClick={() => setEditorTab("preview")}
                   className={[
                     "flex items-center gap-1.5 rounded px-3 py-1.5 font-medium transition-colors",
-                    editorTab === "preview"
-                      ? "bg-card text-foreground shadow-sm"
-                      : "text-muted-foreground hover:text-foreground",
+                    editorTab === "preview" ? "bg-card text-foreground shadow-sm" : "text-muted-foreground hover:text-foreground",
                   ].join(" ")}
                 >
                   <Eye className="h-3.5 w-3.5" />
@@ -1318,10 +1055,10 @@ export function CreateArticleView({ onBack, articleId }: CreateArticleViewProps)
                     <ListOrdered className="h-4 w-4" />
                   </ToolbarButton>
                   <ToolbarSeparator />
-                  <ToolbarButton onClick={handleInsertSectionLabel} active={false} title="Section Label — label fase/babak di atas heading">
+                  <ToolbarButton onClick={handleInsertSectionLabel} active={false} title="Section Label">
                     <Pilcrow className="h-4 w-4" />
                   </ToolbarButton>
-                  <ToolbarButton onClick={handleInsertPullQuote} active={editor?.isActive("blockquote", { class: "pull-quote" })} title="Pull Quote — kutipan menonjol Neon Green">
+                  <ToolbarButton onClick={handleInsertPullQuote} active={editor?.isActive("blockquote", { class: "pull-quote" })} title="Pull Quote">
                     <MessageSquareQuote className="h-4 w-4" />
                   </ToolbarButton>
                   <ToolbarButton onClick={() => editor?.chain().focus().setHorizontalRule().run()} title="Garis Pemisah">
@@ -1342,7 +1079,12 @@ export function CreateArticleView({ onBack, articleId }: CreateArticleViewProps)
                     <Redo2 className="h-4 w-4" />
                   </ToolbarButton>
                   <ToolbarSeparator />
-                  <ToolbarButton onClick={() => { if (!aiGenerating) { setAiModalOpen(true); setAiError(null); setAiSourceUsed(null) } }} title="Generate Breaking News dengan AI" active={aiModalOpen} disabled={aiGenerating}>
+                  {/* Tombol AI Generate — sekarang toggle panel samping, bukan modal */}
+                  <ToolbarButton
+                    onClick={() => setGenPanelOpen(v => !v)}
+                    title={genPanelOpen ? "Tutup Panel Generate" : "Generate Artikel dengan AI (Pipeline Baru)"}
+                    active={genPanelOpen}
+                  >
                     <Sparkles className="h-4 w-4" />
                   </ToolbarButton>
                 </div>
@@ -1360,11 +1102,7 @@ export function CreateArticleView({ onBack, articleId }: CreateArticleViewProps)
                   </div>
                 ) : (
                   <div className="px-10 py-8">
-                    <ArticleBody
-                      content={previewContent}
-                      isAdmin={true}
-                      className="prose-lg"
-                    />
+                    <ArticleBody content={previewContent} isAdmin={true} className="prose-lg" />
                   </div>
                 )}
               </div>
@@ -1373,10 +1111,10 @@ export function CreateArticleView({ onBack, articleId }: CreateArticleViewProps)
 
         </div>
 
-        {/* ── Sidebar ── */}
+        {/* ── Sidebar kiri ── */}
         <div className="space-y-5">
 
-          {/* ── Widget Inserter (Jadwal + Klasemen) ── */}
+          {/* Widget Inserter */}
           <div id="widget-inserter-anchor">
             <div className="mb-2 flex items-center gap-2">
               <span className="text-xs font-bold uppercase tracking-widest text-muted-foreground">
@@ -1408,18 +1146,16 @@ export function CreateArticleView({ onBack, articleId }: CreateArticleViewProps)
                 type="button"
                 role="switch"
                 aria-checked={isEditorChoice}
-                onClick={() => setIsEditorChoice((v) => !v)}
+                onClick={() => setIsEditorChoice(v => !v)}
                 className={[
                   "relative inline-flex h-6 w-11 items-center rounded-full transition-colors focus:outline-none focus:ring-2 focus:ring-primary/50",
                   isEditorChoice ? "bg-primary" : "bg-secondary",
                 ].join(" ")}
               >
-                <span
-                  className={[
-                    "inline-block h-4 w-4 rounded-full bg-white shadow transition-transform",
-                    isEditorChoice ? "translate-x-6" : "translate-x-1",
-                  ].join(" ")}
-                />
+                <span className={[
+                  "inline-block h-4 w-4 rounded-full bg-white shadow transition-transform",
+                  isEditorChoice ? "translate-x-6" : "translate-x-1",
+                ].join(" ")} />
               </button>
             </div>
             <p className="mt-2 text-xs text-muted-foreground leading-relaxed">
@@ -1443,7 +1179,7 @@ export function CreateArticleView({ onBack, articleId }: CreateArticleViewProps)
               className="w-full rounded-md border border-border bg-secondary/50 px-3 py-2 text-sm text-foreground focus:border-primary focus:outline-none"
             >
               <option value="">Pilih kategori...</option>
-              {categories.map((cat) => (
+              {categories.map(cat => (
                 <option key={cat.id} value={cat.id}>{cat.name}</option>
               ))}
             </select>
@@ -1454,7 +1190,7 @@ export function CreateArticleView({ onBack, articleId }: CreateArticleViewProps)
             <h3 className="mb-0.5 text-sm font-semibold text-foreground">Tags</h3>
             <p className="mb-3 text-xs text-muted-foreground">Enter atau koma untuk menambah</p>
             <div className="mb-3 flex flex-wrap gap-1.5">
-              {tags.map((tag) => (
+              {tags.map(tag => (
                 <span key={tag} className="flex items-center gap-1 rounded-full bg-primary/10 px-2.5 py-0.5 text-xs font-medium text-primary">
                   #{tag}
                   <button onClick={() => removeTag(tag)} className="text-primary/60 hover:text-primary">
@@ -1475,7 +1211,7 @@ export function CreateArticleView({ onBack, articleId }: CreateArticleViewProps)
               />
               {showSuggestions && tagSuggestions.length > 0 && (
                 <div className="absolute z-10 mt-1 w-full overflow-hidden rounded-md border border-border bg-card shadow-lg">
-                  {tagSuggestions.slice(0, 6).map((s) => (
+                  {tagSuggestions.slice(0, 6).map(s => (
                     <button key={s} onMouseDown={() => addTag(s)} className="flex w-full items-center gap-2 px-3 py-2 text-sm text-foreground hover:bg-secondary/60">
                       <span className="text-primary">#</span>{s}
                     </button>
@@ -1483,11 +1219,11 @@ export function CreateArticleView({ onBack, articleId }: CreateArticleViewProps)
                 </div>
               )}
             </div>
-            {allTags.filter((t) => !tags.includes(t.name)).length > 0 && (
+            {allTags.filter(t => !tags.includes(t.name)).length > 0 && (
               <div className="mt-3">
                 <p className="mb-1.5 text-xs text-muted-foreground">Tag tersedia:</p>
                 <div className="flex flex-wrap gap-1">
-                  {allTags.filter((t) => !tags.includes(t.name)).slice(0, 10).map((t) => (
+                  {allTags.filter(t => !tags.includes(t.name)).slice(0, 10).map(t => (
                     <button key={t.id} onClick={() => addTag(t.name)}
                       className="flex items-center gap-0.5 rounded-full border border-border px-2 py-0.5 text-xs text-muted-foreground hover:border-primary hover:text-primary transition-colors">
                       <Plus className="h-2.5 w-2.5" />{t.name}
@@ -1516,201 +1252,232 @@ export function CreateArticleView({ onBack, articleId }: CreateArticleViewProps)
               )}
             </div>
             {featuredImagePreview && (
-              <button onClick={() => { setFeaturedImagePreview(null); setFeaturedImageUrl(null) }} className="mt-2 text-xs text-destructive hover:underline">
+              <button onClick={() => { setFeaturedImagePreview(null); setFeaturedImageUrl(null) }}
+                className="mt-2 text-xs text-destructive hover:underline">
                 Hapus gambar
               </button>
             )}
 
-            {/* Keterangan Gambar — Structured */}
+            {/* Keterangan Gambar Structured */}
             <div className="mt-4 rounded-lg border border-border bg-secondary/20 p-4 space-y-3">
               <p className="text-xs font-semibold uppercase tracking-wider text-muted-foreground">
                 Keterangan Gambar{" "}
-                <span className="normal-case font-normal text-muted-foreground/60">(opsional — kredit / sumber foto)</span>
+                <span className="normal-case font-normal text-muted-foreground/60">(opsional)</span>
               </p>
-
-              {/* Row helper */}
               {([
-                {
-                  label: "Judul / Deskripsi Foto",
-                  placeholder: "Contoh: FC Barcelona vs Real Madrid, Camp Nou 2024",
-                  val: captionPhotoTitle, setVal: setCaptionPhotoTitle,
-                  urlVal: null, setUrlVal: null,
-                  urlPlaceholder: null,
-                },
-                {
-                  label: "Fotografer",
-                  placeholder: "Contoh: Joan Martínez",
-                  val: captionPhotographer, setVal: setCaptionPhotographer,
-                  urlVal: captionPhotographerUrl, setUrlVal: setCaptionPhotographerUrl,
-                  urlPlaceholder: "Link profil fotografer (opsional)",
-                },
-                {
-                  label: "Sumber / Platform",
-                  placeholder: "Contoh: Wikimedia Commons",
-                  val: captionSource, setVal: setCaptionSource,
-                  urlVal: captionSourceUrl, setUrlVal: setCaptionSourceUrl,
-                  urlPlaceholder: "Link sumber foto (opsional)",
-                },
-                {
-                  label: "Lisensi",
-                  placeholder: "Contoh: CC BY-SA 4.0",
-                  val: captionLicense, setVal: setCaptionLicense,
-                  urlVal: captionLicenseUrl, setUrlVal: setCaptionLicenseUrl,
-                  urlPlaceholder: "Link halaman lisensi (opsional)",
-                },
+                { label: "Judul / Deskripsi Foto", placeholder: "Contoh: FC Barcelona vs Real Madrid, Camp Nou 2024", val: captionPhotoTitle, setVal: setCaptionPhotoTitle, urlVal: null, setUrlVal: null, urlPlaceholder: null },
+                { label: "Fotografer", placeholder: "Contoh: Joan Martínez", val: captionPhotographer, setVal: setCaptionPhotographer, urlVal: captionPhotographerUrl, setUrlVal: setCaptionPhotographerUrl, urlPlaceholder: "Link profil fotografer (opsional)" },
+                { label: "Sumber / Platform", placeholder: "Contoh: Wikimedia Commons", val: captionSource, setVal: setCaptionSource, urlVal: captionSourceUrl, setUrlVal: setCaptionSourceUrl, urlPlaceholder: "Link sumber foto (opsional)" },
+                { label: "Lisensi", placeholder: "Contoh: CC BY-SA 4.0", val: captionLicense, setVal: setCaptionLicense, urlVal: captionLicenseUrl, setUrlVal: setCaptionLicenseUrl, urlPlaceholder: "Link halaman lisensi (opsional)" },
               ] as const).map(({ label, placeholder, val, setVal, urlVal, setUrlVal, urlPlaceholder }) => (
                 <div key={label} className="space-y-1.5">
                   <p className="text-[10px] font-semibold uppercase tracking-wider text-primary/70">{label}</p>
                   <div className="flex flex-col gap-2">
-                    <input
-                      type="text"
-                      placeholder={placeholder}
-                      value={val}
-                      onChange={(e) => setVal(e.target.value)}
-                      className={[
-                        "w-full rounded-md border border-border bg-secondary/50 px-3 py-2",
-                        "text-sm text-foreground placeholder:text-muted-foreground/40",
-                        "focus:border-primary focus:outline-none focus:ring-1 focus:ring-primary/30 transition-colors",
-                      ].join(" ")}
-                    />
+                    <input type="text" placeholder={placeholder} value={val} onChange={(e) => setVal(e.target.value)}
+                      className="w-full rounded-md border border-border bg-secondary/50 px-3 py-2 text-sm text-foreground placeholder:text-muted-foreground/40 focus:border-primary focus:outline-none focus:ring-1 focus:ring-primary/30 transition-colors" />
                     {urlVal !== null && setUrlVal !== null && urlPlaceholder !== null && (
-                      <input
-                        type="url"
-                        placeholder={urlPlaceholder}
-                        value={urlVal}
-                        onChange={(e) => setUrlVal(e.target.value)}
-                        className={[
-                          "w-full rounded-md border border-border bg-secondary/50 px-3 py-2",
-                          "text-sm text-foreground placeholder:text-muted-foreground/40",
-                          "focus:border-primary/60 focus:outline-none focus:ring-1 focus:ring-primary/20 transition-colors",
-                        ].join(" ")}
-                      />
+                      <input type="url" placeholder={urlPlaceholder} value={urlVal} onChange={(e) => setUrlVal(e.target.value)}
+                        className="w-full rounded-md border border-border bg-secondary/50 px-3 py-2 text-sm text-foreground placeholder:text-muted-foreground/40 focus:border-primary/60 focus:outline-none focus:ring-1 focus:ring-primary/20 transition-colors" />
                     )}
                   </div>
                 </div>
               ))}
 
-              {/* Live preview */}
+              {/* Live preview caption */}
               {(captionPhotoTitle || captionPhotographer || captionSource || captionLicense) && (
                 <div className="mt-3 flex items-start gap-2 rounded-md border border-primary/20 bg-black/40 px-3 py-2.5 text-xs text-muted-foreground">
                   <svg className="mt-0.5 h-3.5 w-3.5 flex-shrink-0 text-primary/60" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
-                    <path strokeLinecap="round" strokeLinejoin="round" d="M3 9a2 2 0 012-2h.93a2 2 0 001.664-.89l.812-1.22A2 2 0 0110.07 4h3.86a2 2 0 011.664.89l.812 1.22A2 2 0 0018.07 7H19a2 2 0 012 2v9a2 2 0 01-2 2H5a2 2 0 01-2-2V9z" />
-                    <path strokeLinecap="round" strokeLinejoin="round" d="M15 13a3 3 0 11-6 0 3 3 0 016 0z" />
+                    <path strokeLinecap="round" strokeLinejoin="round" d="M13 16h-1v-4h-1m1-4h.01M21 12a9 9 0 11-18 0 9 9 0 0118 0z" />
                   </svg>
-                  <span className="leading-relaxed">
-                    <span className="font-semibold text-muted-foreground/80">Foto: </span>
-                    {captionPhotoTitle && (
-                      <span>{captionPhotoTitle}</span>
-                    )}
+                  <div className="space-y-0.5">
+                    {captionPhotoTitle && <p>{captionPhotoTitle}</p>}
                     {captionPhotographer && (
-                      <>{captionPhotoTitle ? " oleh " : ""}{captionPhotographerUrl
-                        ? <span className="text-primary/80 underline underline-offset-2">{captionPhotographer}</span>
-                        : <span>{captionPhotographer}</span>
-                      }</>
+                      <p>Foto: {captionPhotographerUrl
+                        ? <a href={captionPhotographerUrl} className="text-primary/70 hover:underline" target="_blank" rel="noopener noreferrer">{captionPhotographer}</a>
+                        : captionPhotographer}
+                      </p>
                     )}
                     {captionSource && (
-                      <>{(captionPhotoTitle || captionPhotographer) ? " / " : ""}{captionSourceUrl
-                        ? <span className="text-primary/80 underline underline-offset-2">{captionSource}</span>
-                        : <span>{captionSource}</span>
-                      }</>
+                      <p>Sumber: {captionSourceUrl
+                        ? <a href={captionSourceUrl} className="text-primary/70 hover:underline" target="_blank" rel="noopener noreferrer">{captionSource}</a>
+                        : captionSource}
+                      </p>
                     )}
                     {captionLicense && (
-                      <>{" — "}{captionLicenseUrl
-                        ? <span className="inline-block rounded px-1.5 py-0.5 text-[10px] font-bold tracking-wider bg-primary/15 text-primary ring-1 ring-primary/40">{captionLicense}</span>
-                        : <span className="inline-block rounded px-1.5 py-0.5 text-[10px] font-bold tracking-wider bg-secondary text-muted-foreground ring-1 ring-border">{captionLicense}</span>
-                      }</>
+                      <p>Lisensi: {captionLicenseUrl
+                        ? <a href={captionLicenseUrl} className="text-primary/70 hover:underline" target="_blank" rel="noopener noreferrer">{captionLicense}</a>
+                        : captionLicense}
+                      </p>
                     )}
-                  </span>
+                  </div>
                 </div>
               )}
             </div>
           </div>
 
-          {/* Schedule Publish */}
+          {/* Meta SEO */}
           <div className="rounded-xl border border-border bg-card p-5">
-            <div className="flex items-center gap-2 mb-3">
-              <svg className="h-4 w-4 text-primary" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
-                <path strokeLinecap="round" strokeLinejoin="round" d="M8 7V3m8 4V3m-9 8h10M5 21h14a2 2 0 002-2V7a2 2 0 00-2-2H5a2 2 0 00-2 2v12a2 2 0 002 2z" />
-              </svg>
-              <h3 className="text-sm font-semibold text-foreground">Jadwal Terbit</h3>
+            <h3 className="mb-3 text-sm font-semibold text-foreground">Meta SEO</h3>
+            <div className="space-y-3">
+              <div>
+                <label className="mb-1 block text-xs text-muted-foreground">Meta Title</label>
+                <input
+                  type="text"
+                  value={metaTitle}
+                  onChange={(e) => setMetaTitle(e.target.value)}
+                  placeholder="Judul untuk mesin pencari (opsional)"
+                  className="w-full rounded-md border border-border bg-secondary/50 px-3 py-2 text-sm text-foreground placeholder:text-muted-foreground/40 focus:border-primary focus:outline-none"
+                />
+                <p className="mt-1 text-xs text-muted-foreground">{metaTitle.length}/60 karakter</p>
+              </div>
+              <div>
+                <label className="mb-1 block text-xs text-muted-foreground">Meta Description</label>
+                <textarea
+                  value={metaDescription}
+                  onChange={(e) => setMetaDescription(e.target.value)}
+                  placeholder="Deskripsi untuk mesin pencari (opsional)"
+                  rows={3}
+                  className="w-full resize-none rounded-md border border-border bg-secondary/50 px-3 py-2 text-sm text-foreground placeholder:text-muted-foreground/40 focus:border-primary focus:outline-none"
+                />
+                <p className="mt-1 text-xs text-muted-foreground">{metaDescription.length}/160 karakter</p>
+              </div>
             </div>
-            <p className="mb-3 text-xs text-muted-foreground leading-relaxed">
-              Atur waktu artikel terbit otomatis. Kosongkan jika ingin publish langsung.
-            </p>
+          </div>
+
+          {/* Scheduled Publish */}
+          <div className="rounded-xl border border-border bg-card p-5">
+            <h3 className="mb-3 text-sm font-semibold text-foreground">Jadwal Terbit</h3>
             <input
               type="datetime-local"
               value={scheduledAt}
               onChange={(e) => setScheduledAt(e.target.value)}
-              min={(() => {
-                const now = new Date(Date.now() + 60_000)
-                const pad = (n: number) => String(n).padStart(2, "0")
-                return `${now.getFullYear()}-${pad(now.getMonth()+1)}-${pad(now.getDate())}T${pad(now.getHours())}:${pad(now.getMinutes())}`
-              })()}
-              className={[
-                "w-full rounded-md border px-3 py-2 text-sm bg-secondary/50 text-foreground",
-                "focus:border-primary focus:outline-none focus:ring-1 focus:ring-primary/30 transition-colors",
-                scheduledAt ? "border-primary/50" : "border-border",
-              ].join(" ")}
+              className="w-full rounded-md border border-border bg-secondary/50 px-3 py-2 text-sm text-foreground focus:border-primary focus:outline-none"
             />
             {scheduledAt && (
-              <div className="mt-3 space-y-2">
-                <p className="text-xs text-primary/80">
-                  🕐 Terjadwal: {new Date(scheduledAt).toLocaleString("id-ID", { dateStyle: "long", timeStyle: "short" })}
-                </p>
-                <div className="flex gap-2">
-                  <button
-                    type="button"
-                    onClick={() => handleSave(false, true)}
-                    disabled={isLoading}
-                    className="flex-1 rounded-lg border border-primary/50 bg-primary/10 px-3 py-2 text-xs font-semibold text-primary hover:bg-primary/20 transition-colors disabled:opacity-40"
-                  >
-                    {isLoading ? "Menyimpan..." : "Simpan Jadwal"}
-                  </button>
-                  <button
-                    type="button"
-                    onClick={() => setScheduledAt("")}
-                    className="rounded-lg border border-border px-3 py-2 text-xs text-muted-foreground hover:text-foreground transition-colors"
-                  >
-                    Batal
-                  </button>
-                </div>
-              </div>
+              <Button
+                variant="outline"
+                className="mt-3 w-full border-border text-foreground hover:border-primary hover:text-primary"
+                onClick={() => handleSave(false, true)}
+                disabled={isLoading}
+              >
+                {isLoading ? "Menjadwalkan..." : "Jadwalkan Terbit"}
+              </Button>
             )}
           </div>
+        </div>
 
-          {/* SEO */}
-          <div className="rounded-xl border border-border bg-card p-5">
-            <h3 className="mb-0.5 text-sm font-semibold text-foreground">SEO</h3>
-            <p className="mb-4 text-xs text-muted-foreground">Kosongkan untuk pakai judul & excerpt</p>
-            <div className="space-y-4">
-              <div>
-                <label className="mb-1.5 block text-xs font-medium text-muted-foreground">Meta Title</label>
-                <Input placeholder={title || "SEO title"} value={metaTitle} onChange={(e) => setMetaTitle(e.target.value)} className="border-border bg-secondary/50 text-sm" />
-                <p className="mt-1 text-right text-xs text-muted-foreground">{metaTitle.length}/60</p>
+        {/* ── Generation Panel (pipeline baru) — muncul sebagai kolom ke-3 ── */}
+        {genPanelOpen && (
+          <div className="space-y-4">
+            {/* Header panel */}
+            <div className="rounded-xl border border-border bg-card overflow-hidden">
+              <div className="flex items-center justify-between border-b border-border bg-secondary/30 px-4 py-3">
+                <div className="flex items-center gap-2">
+                  <Sparkles className="h-4 w-4 text-primary" />
+                  <span className="text-sm font-bold text-foreground" style={{ fontFamily: "var(--font-oswald)" }}>
+                    Generate Artikel
+                  </span>
+                  <span className="rounded-full bg-primary/15 px-2 py-0.5 text-[10px] font-bold text-primary">
+                    PIPELINE v2
+                  </span>
+                </div>
+                <button
+                  onClick={() => setGenPanelOpen(false)}
+                  className="text-muted-foreground hover:text-foreground transition-colors"
+                >
+                  <X className="h-4 w-4" />
+                </button>
               </div>
-              <div>
-                <label className="mb-1.5 block text-xs font-medium text-muted-foreground">Meta Description</label>
-                <textarea
-                  placeholder={excerpt || "SEO description"}
-                  value={metaDescription}
-                  onChange={(e) => setMetaDescription(e.target.value)}
-                  rows={3}
-                  className="w-full resize-none rounded-md border border-border bg-secondary/50 px-3 py-2 text-sm text-foreground focus:border-primary focus:outline-none"
+
+              {/* Pilih tipe berita */}
+              <div className="px-4 pt-4 pb-2">
+                <p className="mb-2 text-xs font-semibold uppercase tracking-wide text-muted-foreground">
+                  Tipe Berita
+                </p>
+                <div className="grid grid-cols-3 gap-1.5">
+                  {([
+                    { value: "hasil",    label: "📊 Hasil",    desc: "Laporan laga" },
+                    { value: "preview",  label: "🔍 Preview",  desc: "Pra-tanding" },
+                    { value: "transfer", label: "🔄 Transfer", desc: "Rumor & deal" },
+                    { value: "cedera",   label: "🩹 Cedera",   desc: "Update kondisi" },
+                    { value: "konpers",  label: "🎙️ Konpers",  desc: "Press conf." },
+                    { value: "trivia",   label: "🧠 Trivia",   desc: "Fakta unik" },
+                  ] as const).map(t => (
+                    <button
+                      key={t.value}
+                      type="button"
+                      onClick={() => setGenNewsType(t.value)}
+                      className={[
+                        "rounded-lg border px-2 py-2 text-left transition-all",
+                        genNewsType === t.value
+                          ? "border-primary bg-primary/10 ring-1 ring-primary"
+                          : "border-border bg-secondary/30 hover:bg-secondary/60",
+                      ].join(" ")}
+                    >
+                      <p className="text-[11px] font-bold text-foreground leading-tight">{t.label}</p>
+                      <p className="mt-0.5 text-[9px] text-muted-foreground">{t.desc}</p>
+                    </button>
+                  ))}
+                </div>
+              </div>
+
+              {/* Topik input — dipakai oleh GenerationPanel sebagai prop "topic" */}
+              <div className="px-4 pb-2">
+                <p className="mb-1.5 text-xs font-semibold uppercase tracking-wide text-muted-foreground">
+                  Topik <span className="text-destructive">*</span>
+                </p>
+                <input
+                  type="text"
+                  value={title}
+                  onChange={(e) => setTitle(e.target.value)}
+                  placeholder={
+                    genNewsType === "hasil"    ? "Contoh: Barcelona vs Atletico, La Liga" :
+                    genNewsType === "preview"  ? "Contoh: Man City vs Real Madrid, UCL" :
+                    genNewsType === "transfer" ? "Contoh: Marcus Rashford ke Barcelona" :
+                    genNewsType === "cedera"   ? "Contoh: Victor Osimhen cedera paha" :
+                    genNewsType === "konpers"  ? "Contoh: Konpers Ancelotti setelah El Clasico" :
+                                                "Contoh: Hat-trick tercepat sejarah Premier League"
+                  }
+                  className="w-full rounded-lg border border-border bg-secondary/50 px-3 py-2 text-sm text-foreground placeholder:text-muted-foreground/40 focus:border-primary focus:outline-none focus:ring-1 focus:ring-primary/30"
                 />
-                <p className="mt-1 text-right text-xs text-muted-foreground">{metaDescription.length}/160</p>
+                <p className="mt-1 text-[10px] text-muted-foreground">
+                  Topik ini juga mengisi field Judul — bisa diedit setelah generate selesai.
+                </p>
+              </div>
+
+              {/* GenerationPanel — 3-step pipeline */}
+              <div className="px-4 pb-4">
+                <GenerationPanel
+                  newsType={genNewsType}
+                  topic={title}
+                  onDraftReady={handleDraftReady}
+                  onFinalReady={handleFinalReady}
+                />
+              </div>
+
+              {/* Footer info */}
+              <div className="border-t border-border px-4 py-3">
+                <p className="text-[10px] text-muted-foreground leading-relaxed">
+                  Step 1: Brief Generator (no AI) · Step 2: Llama 4 Scout (Cloudflare) · Step 3: GPT OSS 120B (Groq, opsional)
+                </p>
               </div>
             </div>
           </div>
+        )}
 
-        </div>
       </div>
     </div>
 
     {/* ── Link Dialog ── */}
     {linkDialogOpen && (
-      <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/60">
+      <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/70 px-4">
         <div className="w-full max-w-md rounded-xl border border-border bg-card p-6 shadow-2xl">
-          <h3 className="mb-4 text-lg font-semibold text-foreground">Sisipkan Link</h3>
+          <div className="mb-4 flex items-center justify-between">
+            <h3 className="text-base font-bold text-foreground">Sisipkan Link</h3>
+            <button onClick={() => setLinkDialogOpen(false)} className="text-muted-foreground hover:text-foreground">
+              <X className="h-4 w-4" />
+            </button>
+          </div>
           <div className="space-y-4">
             <div>
               <label className="mb-1.5 block text-sm font-medium text-foreground">
@@ -1751,252 +1518,6 @@ export function CreateArticleView({ onBack, articleId }: CreateArticleViewProps)
             >
               Sisipkan
             </button>
-          </div>
-        </div>
-      </div>
-    )}
-
-    {/* ── AI Generate Modal ── */}
-    {aiModalOpen && (
-      <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/70 px-4">
-        <div className="w-full max-w-lg rounded-xl border border-border bg-card shadow-2xl flex flex-col max-h-[90vh]">
-          {/* Header */}
-          <div className="flex items-center justify-between border-b border-border px-6 py-4">
-            <div className="flex items-center gap-2">
-              <Sparkles className="h-5 w-5 text-primary" />
-              <h3 className="text-base font-bold text-foreground" style={{ fontFamily: "var(--font-oswald)" }}>
-                Generate Breaking News
-              </h3>
-            </div>
-            <button
-              onClick={() => { setAiModalOpen(false); setAiError(null); setAiSourceUsed(null) }}
-              className="text-muted-foreground hover:text-foreground"
-            >
-              <X className="h-4 w-4" />
-            </button>
-          </div>
-
-          {/* Body */}
-          <div className="space-y-4 px-6 py-5 overflow-y-auto flex-1">
-            {/* Tipe Berita */}
-            <div>
-              <label className="mb-2 block text-xs font-semibold text-muted-foreground uppercase tracking-wide">
-                Tipe Berita
-              </label>
-              <div className="grid grid-cols-3 gap-2">
-                {([
-                  { value: "transfer", label: "🔄 Transfer",  desc: "Rumor & konfirmasi" },
-                  { value: "konpers",  label: "🎙️ Konpers",   desc: "Konferensi pers" },
-                  { value: "cedera",   label: "🩹 Cedera",    desc: "Update kondisi pemain" },
-                  { value: "preview",  label: "🔍 Preview",   desc: "Pratinjau pertandingan" },
-                  { value: "hasil",    label: "📊 Hasil",     desc: "Laporan hasil laga" },
-                  { value: "trivia",   label: "🧠 Trivia",    desc: "Fakta unik sepak bola" },
-                ] as const).map((t) => (
-                  <button
-                    key={t.value}
-                    type="button"
-                    onClick={() => setAiNewsType(t.value)}
-                    className={[
-                      "rounded-lg border px-3 py-2.5 text-left transition-all",
-                      aiNewsType === t.value
-                        ? "border-primary bg-primary/10 ring-1 ring-primary"
-                        : "border-border bg-secondary/30 hover:bg-secondary/60",
-                    ].join(" ")}
-                  >
-                    <p className="text-xs font-bold text-foreground">{t.label}</p>
-                    <p className="mt-0.5 text-[10px] text-muted-foreground">{t.desc}</p>
-                  </button>
-                ))}
-              </div>
-            </div>
-
-            {/* Sumber Data Otomatis (per tipe berita) */}
-            <div>
-              <label className="mb-1.5 block text-xs font-semibold text-muted-foreground uppercase tracking-wide">
-                Sumber Data Otomatis
-              </label>
-              <div className="rounded-lg border border-border bg-secondary/50 px-3 py-2 text-sm text-foreground">
-                {NEWS_TYPE_SOURCE[aiNewsType]}
-              </div>
-              <p className="mt-1 text-[11px] text-muted-foreground">
-                {aiNewsType === "hasil" || aiNewsType === "preview" || aiNewsType === "cedera" ? (
-                  <>Server otomatis mengambil data faktual dari Bzzoiro Sports Data API berdasarkan Topik di bawah sebelum draft ditulis oleh {AI_MODEL_LABEL}{aiNewsType === "cedera" && " — Bzzoiro tidak punya endpoint cedera resmi, jadi pastikan isi fakta cedera sebenarnya di kolom Konteks"}.</>
-                ) : aiNewsType === "konpers" || aiNewsType === "transfer" ? (
-                  <>Server otomatis mencari berita terbaru (Tavily, window 2 hari terakhir) berdasarkan Topik di bawah sebelum draft ditulis oleh {AI_MODEL_LABEL}.</>
-                ) : (
-                  <>Tidak ada sumber data otomatis untuk Trivia — draft ditulis oleh {AI_MODEL_LABEL} murni dari Konteks & Fakta yang kamu isi manual.</>
-                )}
-              </p>
-            </div>
-
-            {/* Topik */}
-            <div>
-              <label className="mb-1.5 block text-xs font-semibold text-muted-foreground uppercase tracking-wide">
-                Topik <span className="text-destructive">*</span>
-              </label>
-              <input
-                type="text"
-                value={aiTopic}
-                onChange={(e) => setAiTopic(e.target.value)}
-                placeholder={
-                  aiNewsType === "transfer" ? "Contoh: Marcus Rashford ke Barcelona" :
-                  aiNewsType === "konpers"  ? "Contoh: Konpers Pep Guardiola setelah kekalahan dari Arsenal" :
-                  aiNewsType === "cedera"   ? "Contoh: Victor Osimhen cedera paha" :
-                  aiNewsType === "preview"  ? "Contoh: Manchester City vs Real Madrid, UCL Semifinal" :
-                  aiNewsType === "hasil"    ? "Contoh: Barcelona vs Atletico Madrid, La Liga pekan 34" :
-                                             "Contoh: Fakta unik hat-trick tercepat di sejarah Premier League"
-                }
-                className="w-full rounded-lg border border-border bg-secondary/50 px-3 py-2 text-sm text-foreground placeholder-muted-foreground focus:outline-none focus:ring-1 focus:ring-primary"
-                autoFocus
-              />
-              <p className="mt-1 text-[11px] text-muted-foreground">
-                {aiNewsType === "hasil"
-                  ? "Sebutkan kedua nama tim — dipakai untuk mencari data di Bzzoiro & laporan post-match terbaru di Tavily."
-                  : aiNewsType === "preview"
-                  ? "Sebutkan kedua nama tim & kompetisi — dipakai untuk mencari jadwal/prediksi di Bzzoiro & analisis pra-laga terbaru di Tavily."
-                  : aiNewsType === "cedera"
-                  ? "Sebutkan nama pemain & timnya — dipakai untuk mencari sinyal kehadiran di Bzzoiro & berita cedera di Tavily."
-                  : aiNewsType === "konpers" || aiNewsType === "transfer"
-                  ? "Dipakai sebagai query pencarian berita di Tavily (2 hari terakhir)."
-                  : undefined}
-              </p>
-            </div>
-
-            {/* Konteks */}
-            <div>
-              <label className="mb-1.5 block text-xs font-semibold text-muted-foreground uppercase tracking-wide">
-                Konteks & Fakta {NEWS_TYPE_REQUIRES_MANUAL_CONTEXT[aiNewsType] ? (
-                  <span className="text-destructive">*</span>
-                ) : (
-                  <span className="font-normal text-muted-foreground">(opsional — melengkapi data otomatis)</span>
-                )}
-              </label>
-              <textarea
-                value={aiContext}
-                onChange={(e) => setAiContext(e.target.value)}
-                placeholder={
-                  aiNewsType === "transfer"
-                    ? "Opsional. Tambahkan detail yang belum tertangkap Tavily, mis. sumber internal atau nuansa tambahan."
-                    : aiNewsType === "konpers"
-                    ? "Opsional. Tambahkan kutipan atau detail tambahan yang belum tertangkap Tavily."
-                    : aiNewsType === "cedera"
-                    ? "WAJIB diisi: jenis cedera, prognosis, dan sumber resmi (klub/dokter tim) — Bzzoiro hanya menyediakan sinyal kehadiran, bukan data cedera resmi."
-                    : aiNewsType === "preview"
-                    ? "Opsional. Tambahkan detail yang belum tertangkap Bzzoiro/Tavily, mis. insider info atau nuansa tambahan."
-                    : aiNewsType === "hasil"
-                    ? "Opsional. Tambahkan detail yang belum tertangkap Bzzoiro/Tavily, mis. kontroversi atau cerita di balik laga."
-                    : "Contoh: Sadio Mane mencetak hat-trick dalam 2 menit 56 detik lawan Aston Villa (2015). Rekor ini masih bertahan hingga hari ini di Premier League."
-                }
-                rows={4}
-                className="w-full rounded-lg border border-border bg-secondary/50 px-3 py-2 text-sm text-foreground placeholder-muted-foreground focus:outline-none focus:ring-1 focus:ring-primary resize-none"
-              />
-              <p className="mt-1 text-[11px] text-muted-foreground">
-                {NEWS_TYPE_REQUIRES_MANUAL_CONTEXT[aiNewsType]
-                  ? "Tipe berita ini tidak punya sumber data otomatis — isi konteks selengkap mungkin."
-                  : "Konteks ini akan digabung dengan data otomatis sebagai catatan tambahan, bukan menggantikannya."}
-              </p>
-            </div>
-
-            {/* Model generate fix Llama 4 Scout via Cloudflare Workers AI —
-                dropdown pemilihan model sudah dihapus karena cuma 1 model yang dipakai. */}
-
-            {/* Error */}
-            {aiError && (
-              <p className="rounded-lg bg-destructive/10 px-3 py-2 text-xs text-destructive">
-                ⚠ {aiError}
-              </p>
-            )}
-
-            {/* Progress Steps */}
-            {aiGenerating && aiProgress && (
-              <div className="rounded-xl border border-primary/30 bg-primary/5 px-4 py-3">
-                <div className="mb-2.5 flex items-center gap-2">
-                  <svg className="h-3.5 w-3.5 animate-spin text-primary" viewBox="0 0 24 24" fill="none">
-                    <circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4"/>
-                    <path className="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8v8z"/>
-                  </svg>
-                  <span className="text-xs font-semibold text-primary">Memproses artikel…</span>
-                </div>
-                <div className="flex flex-col gap-1.5">
-                  {[
-                    { step: 1, label: `Mengambil Data dari ${NEWS_TYPE_SOURCE[aiNewsType]}` },
-                    { step: 2, label: "Menyusun Prompt Editorial" },
-                    { step: 3, label: `Menulis Artikel · ${AI_MODEL_LABEL}` },
-                    { step: 4, label: "Draft Selesai" },
-                  ].map(({ step, label }) => {
-                    const isDone    = aiProgress.step > step
-                    const isActive  = aiProgress.step === step
-                    // Saat step aktif punya label realtime dari server (mis. nama sumber
-                    // data spesifik atau pesan warning), tampilkan itu — bukan label default.
-                    const displayLabel = isActive && aiProgress.label ? aiProgress.label : label
-                    return (
-                      <div key={step} className="flex items-center gap-2">
-                        <div className={[
-                          "flex h-4 w-4 items-center justify-center rounded-full text-[10px] font-bold flex-shrink-0",
-                          isDone   ? "bg-primary text-black" :
-                          isActive ? "bg-primary/30 text-primary ring-1 ring-primary animate-pulse" :
-                                     "bg-secondary text-muted-foreground",
-                        ].join(" ")}>
-                          {isDone ? "✓" : step}
-                        </div>
-                        <span className={[
-                          "text-xs",
-                          isActive && aiProgress.warning ? "text-amber-500 font-semibold" :
-                          isDone   ? "text-primary/70 line-through" :
-                          isActive ? "text-foreground font-semibold" :
-                                     "text-muted-foreground",
-                        ].join(" ")}>
-                          {displayLabel}
-                        </span>
-                      </div>
-                    )
-                  })}
-                </div>
-              </div>
-            )}
-
-            {/* Konfirmasi sumber data yang akhirnya dipakai (setelah selesai/saat error fallback) */}
-            {!aiGenerating && aiSourceUsed && (
-              <p className="rounded-lg bg-primary/10 px-3 py-2 text-xs text-primary">
-                ✓ Data diambil dari: {aiSourceUsed}
-              </p>
-            )}
-          </div>
-
-          {/* Footer */}
-          <div className="flex items-center justify-between border-t border-border px-6 py-4">
-            <p className="text-[11px] text-muted-foreground">
-              Draft Stage — Powered by {AI_MODEL_LABEL} (Cloudflare Workers AI)
-            </p>
-            <div className="flex gap-3">
-              <button
-                onClick={() => { setAiModalOpen(false); setAiError(null); setAiSourceUsed(null) }}
-                disabled={aiGenerating}
-                className="rounded-lg border border-border px-4 py-2 text-sm text-foreground hover:bg-secondary disabled:opacity-40 disabled:pointer-events-none"
-              >
-                Batal
-              </button>
-              <button
-                onClick={handleAiGenerate}
-                disabled={aiGenerating || !aiTopic.trim() || (NEWS_TYPE_REQUIRES_MANUAL_CONTEXT[aiNewsType] && !aiContext.trim())}
-                className="flex items-center gap-2 rounded-lg bg-primary px-4 py-2 text-sm font-bold text-black hover:bg-primary/90 disabled:opacity-40 disabled:pointer-events-none"
-              >
-                {aiGenerating ? (
-                  <>
-                    <svg className="h-3.5 w-3.5 animate-spin" viewBox="0 0 24 24" fill="none">
-                      <circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4"/>
-                      <path className="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8v8z"/>
-                    </svg>
-                    Generating…
-                  </>
-                ) : (
-                  <>
-                    <Sparkles className="h-3.5 w-3.5" />
-                    Generate Artikel
-                  </>
-                )}
-              </button>
-            </div>
           </div>
         </div>
       </div>
