@@ -36,7 +36,8 @@ import {
   extractTavilyData,
 } from "./extractors/media-extractor"
 import { selectAngle } from "./angle-selector"
-import type { ArticleAngle, AngleResult } from "./angle-selector"
+import type { AngleResult } from "./angle-selector"
+import type { ArticleAngle } from "./types"
 
 interface BuildBriefInput {
   newsType: NewsType
