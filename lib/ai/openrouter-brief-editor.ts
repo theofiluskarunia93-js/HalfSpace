@@ -23,7 +23,7 @@
 
 import type { ArticleAngle, EditorialBrief, NewsType } from "@/lib/editorial/types"
 
-export const OPENROUTER_BRIEF_MODEL_DEFAULT = "nvidia/nemotron-3-ultra-550b-a55b:free"
+export const OPENROUTER_BRIEF_MODEL_DEFAULT = "nvidia/nemotron-3-super-120b-a12b:free"
 
 const ALLOWED_ANGLES: ArticleAngle[] = [
   "upset_result",
@@ -258,7 +258,7 @@ export async function callBriefEditor(
         // effort "low" supaya reasoning tidak berlebihan & hemat token,
         // exclude:true supaya teks reasoning tidak ikut numpuk di response
         // body (kita memang tidak butuh reasoning trace-nya, cuma JSON final).
-        reasoning: { effort: "low", exclude: true },
+        reasoning: { enabled: false },
       }),
       // Dinaikkan dari 50s -> 270s (4.5 menit). Per dokumentasi resmi Vercel
       // (terakhir update Mei 2026, sejak Fluid Compute jadi default), Hobby
