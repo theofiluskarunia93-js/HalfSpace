@@ -21,6 +21,8 @@ import { TimelinePertandinganCard } from "@/components/widgets/TimelinePertandin
 import { ProfilStadionCard }        from "@/components/widgets/ProfilStadionCard"
 import { DaftarPemainCard }         from "@/components/widgets/DaftarPemainCard"
 import { PemainAndalanCard }        from "@/components/widgets/PemainAndalanCard"
+import { StatistikPertandinganCard } from "@/components/widgets/StatistikPertandinganCard"
+import { StartingLineupCard }       from "@/components/widgets/StartingLineupCard"
 import type { WidgetType } from "@/components/widgets/WidgetInserter"
 
 // ─── Types ────────────────────────────────────────────────────────────────────
@@ -59,6 +61,8 @@ const SLOT_ICONS: Record<WidgetType, string> = {
   daftar_pemain:         "👥",
   pemain_andalan:        "🌟",
   hub:                   "🗂️",
+  statistik_pertandingan: "📊",
+  starting_lineup:        "🧩",
 }
 
 function renderSlotCard(slot: HubSlot, refreshKey: number) {
@@ -74,6 +78,8 @@ function renderSlotCard(slot: HubSlot, refreshKey: number) {
     case "profil_stadion":        return <ProfilStadionCard        key={slot.widget_id} {...props} />
     case "daftar_pemain":         return <DaftarPemainCard         key={slot.widget_id} {...props} />
     case "pemain_andalan":        return <PemainAndalanCard        key={slot.widget_id} {...props} />
+    case "statistik_pertandingan": return <StatistikPertandinganCard key={slot.widget_id} {...props} />
+    case "starting_lineup":        return <StartingLineupCard       key={slot.widget_id} {...props} />
     default: return null
   }
 }

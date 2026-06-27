@@ -1,12 +1,37 @@
 // lib/news-context/tavily.ts
 //
-// Peran BARU dalam pipeline: BACKUP & berita tambahan — bukan sumber utama lagi.
+// Peran dalam pipeline: KONTEKS NARATIF & ANALISIS MENDALAM.
 // Urutan pipeline: Bzzoiro (data & statistik) → Serper (media: ESPN/Sky Sports/dll) →
-// Tavily (backup + berita tambahan yang belum tertangkap Serper) → LLM.
+// Tavily (konteks naratif, analisis mendalam, latar belakang historis) → LLM.
 //
-// Karena Serper sudah menangani kutipan & narasi dari media spesifik, Tavily HANYA
-// dipakai untuk menambah informasi yang terlewat (cedera kecil, info latihan, validasi
-// tambahan, dll) — bukan sumber informasi utama. max_results diturunkan 4 → 2.
+// Tavily BUKAN sumber berita terkini (itu tugas Serper). Tavily dipakai untuk menambahkan
+// lapisan konteks yang tidak dimiliki Serper: rivalitas historis, analisis taktis mendalam,
+// rekam jejak transfer, konteks finansial klub, riwayat cedera, dan narasi di balik angka.
+//
+// PERAN PER TIPE BERITA (sesuai PDF Bzzoiro Data Mapping):
+//
+//   PREVIEW  → konteks rivalitas historis kedua tim, analisis taktis mendalam dari sumber
+//              spesialis, rekor pertemuan di kompetisi yang sama
+//
+//   HASIL    → konteks dampak hasil pada klasemen & persaingan, analisis keputusan taktis
+//              pelatih selama pertandingan, perbandingan performa dengan pertandingan sebelumnya
+//
+//   TRANSFER → kebutuhan posisi spesifik klub target musim ini, rekam jejak transfer historis
+//              pemain & klub, konteks finansial & FFP kedua klub,
+//              pemain lain yang dikaitkan dengan slot posisi sama
+//
+//   KONPERS  → latar belakang & konteks pernyataan pelatih, pernyataan sebelumnya yang
+//              relevan (konsistensi/kontradiksi), analisis implikasi taktis dari pernyataan
+//
+//   CEDERA   → riwayat cedera pemain sebelumnya, analisis dampak taktis ketidakhadiran
+//              pemain, opsi pengganti yang mungkin dimainkan pelatih
+//
+//   TRIVIA   → narasi & konteks mendalam di balik angka statistik, cerita latar belakang
+//              pemain atau klub, perspektif editorial yang memperkaya trivia
+//
+// max_results dijaga di 2 — Serper sudah menangani media utama, Tavily hanya menambah
+// kedalaman konteks. Days window disesuaikan per tipe: berita historis lebih longgar,
+// preview/hasil tetap ketat karena butuh informasi relevan pertandingan berjalan.
 
 export interface TavilyContextResult {
   contextText: string
@@ -28,32 +53,47 @@ interface TavilyRawResponse {
   results: TavilyRawResult[]
 }
 
-export type TavilyNewsType = "konpers" | "transfer" | "cedera" | "preview" | "hasil" | "trivia"
+export type TavilyNewsType = "preview" | "hasil" | "transfer" | "konpers" | "cedera" | "trivia"
 
 const TAVILY_ENDPOINT = "https://api.tavily.com/search"
 
 // Window waktu pencarian per tipe berita.
+// - preview/hasil: 3 hari — rivalitas & analisis taktis masih relevan di window pendek
+// - transfer/konpers/cedera: 7 hari — konteks finansial & latar belakang butuh window lebih luas
+// - trivia: 30 hari — konten historis & rekam jejak tidak dibatasi recency ketat
 const TAVILY_DAYS_WINDOW: Record<TavilyNewsType, number> = {
-  konpers:  2,
-  transfer: 2,
-  cedera:   2,
-  preview:  1,
-  hasil:    1,
-  trivia:   2,
+  preview:  3,
+  hasil:    3,
+  transfer: 7,
+  konpers:  7,
+  cedera:   7,
+  trivia:   30,
 }
 
-// Data yang dicari Tavily per tipe — SUPLEMEN, bukan sumber utama (lihat serper.ts utk sumber utama).
+// Deskripsi konteks yang dicari Tavily per tipe.
+// Sesuai PDF Bzzoiro Data Mapping — kolom "Tavily" per jenis artikel.
 export const TAVILY_BACKUP_DATA: Record<TavilyNewsType, string> = {
-  preview:  "cedera terbaru, update latihan, berita minor",
-  hasil:    "reaksi pemain, reaksi media, statistik tambahan",
-  transfer: "validasi tambahan atas rumor yang sudah didapat dari Serper",
-  konpers:  "informasi pelengkap di luar yang sudah didapat dari Serper",
-  cedera:   "informasi tambahan yang tidak ada di Serper",
-  trivia:   "sejarah, rekor, milestone, fakta unik",
+  preview:
+    "konteks rivalitas historis kedua tim, analisis taktis mendalam dari sumber spesialis, " +
+    "rekor pertemuan di kompetisi yang sama",
+  hasil:
+    "konteks dampak hasil pada klasemen & persaingan, analisis keputusan taktis pelatih " +
+    "selama pertandingan, perbandingan performa dengan pertandingan sebelumnya",
+  transfer:
+    "kebutuhan posisi spesifik klub target musim ini, rekam jejak transfer historis pemain " +
+    "& klub, konteks finansial & FFP kedua klub, pemain lain yang dikaitkan dengan slot posisi sama",
+  konpers:
+    "latar belakang & konteks pernyataan pelatih, pernyataan sebelumnya yang relevan " +
+    "(konsistensi/kontradiksi), analisis implikasi taktis dari pernyataan",
+  cedera:
+    "riwayat cedera pemain sebelumnya, analisis dampak taktis ketidakhadiran pemain, " +
+    "opsi pengganti yang mungkin dimainkan pelatih",
+  trivia:
+    "narasi & konteks mendalam di balik angka statistik, cerita latar belakang pemain " +
+    "atau klub, perspektif editorial yang memperkaya trivia",
 }
 
-// OPTIMASI: max_results diturunkan 4 → 2. Serper sudah jadi sumber media utama,
-// Tavily hanya menambahkan informasi — bukan sumber informasi.
+// max_results tetap 2 — Tavily hanya lapisan konteks, bukan sumber berita utama.
 const TAVILY_MAX_RESULTS = 2
 
 async function tavilySearch(apiKey: string, query: string, daysWindow: number): Promise<TavilyRawResponse> {
@@ -83,17 +123,26 @@ async function tavilySearch(apiKey: string, query: string, daysWindow: number): 
   return res.json()
 }
 
-// ─── Bangun query pencarian — fokus ke gap yang BELUM ditangani Serper ──────
+// ─── Bangun query pencarian — fokus ke konteks naratif & analisis mendalam ──────
+// Bukan berita terkini (itu tugas Serper), tapi latar belakang, historis, dan analisis taktis.
 function buildQuery(newsType: TavilyNewsType, topic: string): string {
-  if (newsType === "preview")  return `${topic} cedera terbaru update latihan berita minor`
-  if (newsType === "hasil")    return `${topic} reaksi pemain reaksi media setelah pertandingan`
-  if (newsType === "transfer") return `${topic} konfirmasi validasi transfer terbaru`
-  if (newsType === "konpers")  return `${topic} konferensi pers informasi tambahan`
-  if (newsType === "cedera")   return `${topic} update cedera informasi tambahan`
-  return `${topic} sejarah rekor milestone fakta unik` // trivia
+  switch (newsType) {
+    case "preview":
+      return `${topic} rivalitas historis analisis taktis rekor pertemuan head-to-head`
+    case "hasil":
+      return `${topic} dampak klasemen analisis taktis perbandingan performa keputusan pelatih`
+    case "transfer":
+      return `${topic} kebutuhan posisi rekam jejak transfer konteks finansial FFP`
+    case "konpers":
+      return `${topic} latar belakang pernyataan pelatih implikasi taktis konsistensi`
+    case "cedera":
+      return `${topic} riwayat cedera dampak taktis opsi pengganti absensi`
+    case "trivia":
+      return `${topic} sejarah rekor milestone narasi latar belakang fakta unik statistik`
+  }
 }
 
-// ─── Format sumber — ringkas, 3 kalimat per sumber (Tavily kini hanya suplemen) ─
+// ─── Format sumber — ringkas, 3 kalimat per sumber ───────────────────────────
 function formatSource(r: TavilyRawResult, index: number, maxSentences = 3): string {
   const sentences = r.content
     .split(/(?<=[.!?])\s+/)
@@ -103,7 +152,7 @@ function formatSource(r: TavilyRawResult, index: number, maxSentences = 3): stri
 
   const bulletPoints = sentences.map((s) => `* ${s}`).join("\n")
 
-  return `[Sumber Tambahan ${index + 1}]
+  return `[Konteks ${index + 1}]
 Judul: ${r.title}
 
 Poin Penting:
@@ -126,7 +175,7 @@ export async function fetchTavilyContext(
 
   if (results.length === 0) {
     throw new Error(
-      `Tavily tidak menemukan berita tambahan dalam ${daysWindow} hari terakhir untuk topik ini.`
+      `Tavily tidak menemukan konteks naratif dalam ${daysWindow} hari terakhir untuk topik ini.`
     )
   }
 

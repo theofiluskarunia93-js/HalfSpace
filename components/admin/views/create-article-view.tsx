@@ -26,11 +26,14 @@ import { applyInternalLinks, fetchLinkCandidates } from "@/lib/internal-linking"
 // ── INTEGRASI PIPELINE BARU ───────────────────────────────────────────────────
 // GenerationPanel menggantikan modal AI Generate lama (handleAiGenerate + aiModalOpen).
 // Pipeline baru:
-//   STEP 1: /api/generate-brief  → Editorial Brief JSON (tanpa AI)
-//   STEP 2: /api/generate-draft  → Llama 4 Scout via Cloudflare Workers AI
-//   STEP 3: /api/polish-article  → GPT OSS 120B via Groq (manual, opsional)
+//   STEP 1: /api/generate-brief    → OpenRouter Nemotron 3 Ultra + Validator (Editorial Brief)
+//   STEP 2: /api/generate-draft    → OpenRouter Gemma 4 31B
+//   Revisi: highlight paragraf di editor → /api/rewrite-selection (Groq GPT OSS 120B)
 // Tombol ✨ di toolbar sekarang membuka panel samping (bukan modal overlay).
+// Step "Polish dengan Editor" lama sudah dihapus — diganti popup AI-native
+// langsung di TipTap (AIRewritePopup), karena revisi sekarang per-paragraf.
 import { GenerationPanel } from "@/components/cms/generation-panel"
+import { AIRewritePopup } from "@/components/editor/AIRewritePopup"
 import type { NewsType } from "@/lib/editorial/types"
 
 // ─── Types ───────────────────────────────────────────────────────────────────
@@ -93,11 +96,14 @@ function buildShortcodePlaceholder(widgetId: string, widgetType: WidgetType): st
     daftar_pemain:           `[daftar_pemain_data id="${widgetId}"]`,
     pemain_andalan:          `[pemain_andalan_data id="${widgetId}"]`,
     hub:                     `[hub_data id="${widgetId}"]`,
+    statistik_pertandingan:  `[statistik_pertandingan_data id="${widgetId}"]`,
+    starting_lineup:         `[starting_lineup_data id="${widgetId}"]`,
   }
   const iconMap: Record<WidgetType, string> = {
     jadwal: "📅", klasemen: "🏆", transfer: "🔄", peluang: "⭐", analisa_taktis: "🧠",
     perbandingan_tim: "⚔️", timeline_pertandingan: "📋",
     profil_stadion: "🏟️", daftar_pemain: "👥", pemain_andalan: "⭐", hub: "🗂️",
+    statistik_pertandingan: "📊", starting_lineup: "🧩",
   }
   const labelMap: Record<WidgetType, string> = {
     jadwal: "Jadwal Pertandingan", klasemen: "Klasemen Grup",
@@ -105,6 +111,7 @@ function buildShortcodePlaceholder(widgetId: string, widgetType: WidgetType): st
     perbandingan_tim: "Perbandingan Tim", timeline_pertandingan: "Timeline Pertandingan",
     profil_stadion: "Profil Stadion", daftar_pemain: "Daftar Pemain Tim", pemain_andalan: "Pemain Andalan",
     hub: "Widget Hub",
+    statistik_pertandingan: "Statistik Pertandingan", starting_lineup: "Starting Lineup",
   }
   const shortcode = shortcodeMap[widgetType] ?? shortcodeMap.jadwal
   const icon      = iconMap[widgetType] ?? "📦"
@@ -571,10 +578,12 @@ export function CreateArticleView({ onBack, articleId }: CreateArticleViewProps)
           if (raw === "daftar_pemain_data")       return "daftar_pemain"
           if (raw === "pemain_andalan_data")      return "pemain_andalan"
           if (raw === "hub_data")                 return "hub"
+          if (raw === "statistik_pertandingan_data") return "statistik_pertandingan"
+          if (raw === "starting_lineup_data")     return "starting_lineup"
           return "peluang"
         }
 
-        const ALL_SC = "(match_data|klasemen_data|transfer_data|peluang_data|analisa_taktis_data|perbandingan_tim_data|timeline_pertandingan_data|profil_stadion_data|daftar_pemain_data|pemain_andalan_data|hub_data)"
+        const ALL_SC = "(match_data|klasemen_data|transfer_data|peluang_data|analisa_taktis_data|perbandingan_tim_data|timeline_pertandingan_data|profil_stadion_data|daftar_pemain_data|pemain_andalan_data|hub_data|statistik_pertandingan_data|starting_lineup_data)"
 
         editorContent = editorContent.replace(
           new RegExp(`<p[^>]*>\\s*\\[${ALL_SC}\\s+id="([a-fA-F0-9-]{36})"\\]\\s*<\\/p>`, "g"),
@@ -588,7 +597,7 @@ export function CreateArticleView({ onBack, articleId }: CreateArticleViewProps)
         editor.commands.setContent(editorContent || "")
 
         const foundWidgets: { widgetId: string; widgetType: WidgetType }[] = []
-        const widgetRegex = /\[(match_data|klasemen_data|transfer_data|peluang_data|analisa_taktis_data|perbandingan_tim_data|timeline_pertandingan_data|profil_stadion_data|daftar_pemain_data|pemain_andalan_data|hub_data)\s+id="([a-fA-F0-9-]{36})"\]/g
+        const widgetRegex = /\[(match_data|klasemen_data|transfer_data|peluang_data|analisa_taktis_data|perbandingan_tim_data|timeline_pertandingan_data|profil_stadion_data|daftar_pemain_data|pemain_andalan_data|hub_data|statistik_pertandingan_data|starting_lineup_data)\s+id="([a-fA-F0-9-]{36})"\]/g
         let m
         const rawContent = cleanLegacyBadgeContent(data.content || "")
         while ((m = widgetRegex.exec(rawContent)) !== null) {
@@ -696,21 +705,14 @@ export function CreateArticleView({ onBack, articleId }: CreateArticleViewProps)
     ).run()
   }, [editor])
 
-  // ── GenerationPanel callbacks ─────────────────────────────────────────────
-  // Dipanggil oleh GenerationPanel setelah STEP 2 (Llama draft) selesai
+  // ── GenerationPanel callback ──────────────────────────────────────────────
+  // Dipanggil oleh GenerationPanel setelah STEP 2 (Gemma 4 31B draft) selesai.
+  // Tidak ada lagi handleFinalReady — revisi lanjutan terjadi inline di
+  // editor lewat AIRewritePopup (highlight paragraf → Tulis Ulang dengan AI).
   const handleDraftReady = useCallback((draftTitle: string, draftContent: string) => {
     setTitle(draftTitle)
     if (editor) {
       const contentWithLabels = injectSectionLabels(draftContent, genNewsType)
-      editor.commands.setContent(contentWithLabels)
-    }
-  }, [editor, genNewsType])
-
-  // Dipanggil oleh GenerationPanel setelah STEP 3 (GPT Editor) selesai
-  const handleFinalReady = useCallback((finalTitle: string, finalContent: string) => {
-    setTitle(finalTitle)
-    if (editor) {
-      const contentWithLabels = injectSectionLabels(finalContent, genNewsType)
       editor.commands.setContent(contentWithLabels)
     }
   }, [editor, genNewsType])
@@ -1090,8 +1092,9 @@ export function CreateArticleView({ onBack, articleId }: CreateArticleViewProps)
                 </div>
 
                 {/* Area tulis */}
-                <div className="h-[640px] overflow-y-auto bg-card px-10 py-8 scroll-smooth">
+                <div className="relative h-[640px] overflow-y-auto bg-card px-10 py-8 scroll-smooth">
                   <EditorContent editor={editor} />
+                  <AIRewritePopup editor={editor} articleContext={title} />
                 </div>
               </>
             ) : (
@@ -1445,20 +1448,19 @@ export function CreateArticleView({ onBack, articleId }: CreateArticleViewProps)
                 </p>
               </div>
 
-              {/* GenerationPanel — 3-step pipeline */}
+              {/* GenerationPanel — pipeline baru: Brief (OpenRouter Nemotron 3 Ultra + Validator) + Draft (OpenRouter Gemma 4 31B) */}
               <div className="px-4 pb-4">
                 <GenerationPanel
                   newsType={genNewsType}
                   topic={title}
                   onDraftReady={handleDraftReady}
-                  onFinalReady={handleFinalReady}
                 />
               </div>
 
               {/* Footer info */}
               <div className="border-t border-border px-4 py-3">
                 <p className="text-[10px] text-muted-foreground leading-relaxed">
-                  Step 1: Brief Generator (no AI) · Step 2: Llama 4 Scout (Cloudflare) · Step 3: GPT OSS 120B (Groq, opsional)
+                  Step 1: Editorial Brief — OpenRouter Nemotron 3 Ultra + Validator · Step 2: OpenRouter Gemma 4 31B · Revisi: highlight paragraf di editor → ✨ Tulis Ulang dengan AI (Groq GPT OSS 120B)
                 </p>
               </div>
             </div>

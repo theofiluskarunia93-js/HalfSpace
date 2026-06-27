@@ -10,6 +10,7 @@ import type {
   BzzoiroExtractedHasil,
   BzzoiroExtractedPreview,
   BzzoiroExtractedPlayer,
+  BzzoiroExtractedTrivia,
 } from "./extractors/bzzoiro-extractor"
 import type { SerperExtracted, TavilyExtracted } from "./extractors/media-extractor"
 
@@ -416,6 +417,12 @@ export function selectAngleTransfer(
 
 // ─────────────────────────────────────────────────────────────────────────────
 // SELECTOR: CEDERA
+// Per PDF: untuk artikel Cedera, Serper adalah sumber UTAMA untuk diagnosa
+// resmi/return date/pernyataan klub, dan Tavily adalah sumber UTAMA untuk
+// riwayat cedera sebelumnya + opsi pengganti yang taktis. v1 menerima kedua
+// parameter ini tapi tidak pernah memakainya — diperbaiki di sini supaya
+// angle benar-benar bereaksi terhadap apa yang dilaporkan Serper/Tavily,
+// bukan selalu jatuh ke template "injury_impact" generik yang sama.
 // ─────────────────────────────────────────────────────────────────────────────
 export function selectAngleCedera(
   player: BzzoiroExtractedPlayer,
@@ -423,9 +430,51 @@ export function selectAngleCedera(
   tavily: TavilyExtracted,
 ): AngleResult {
   const hasStats = !!player.recentStats.summary
+
+  // Priority 1: ada pernyataan resmi/diagnosa dari Serper — ini fakta paling
+  // dicari pembaca untuk artikel cedera (per PDF: "Laporan cedera terbaru &
+  // diagnosa resmi", "Estimasi waktu kembali bermain (return date)",
+  // "Pernyataan resmi klub/pelatih" adalah poin utama Serper untuk Cedera).
+  if (serper.injuryStatement) {
+    return {
+      angle: "injury_impact",
+      rationale: `Ada pernyataan resmi/diagnosa dari Serper soal cedera ${player.name} — dijadikan dasar angle, bukan sekadar dampak statistik`,
+      headlineDirection: `Judul menonjolkan kepastian (atau ketidakpastian) waktu kembali ${player.name} — bukan hanya "[Nama] cedera"`,
+      narrativeFocus: `Apa yang pernyataan resmi ungkapkan tentang cedera ${player.name}, dan bagaimana itu mengubah rencana tim dalam jangka pendek`,
+      subStorylines: [
+        hasStats
+          ? `${player.recentStats.summary} — angka yang menjelaskan betapa sulitnya mengisi posisi ini selama ${player.name} absen`
+          : `Peran taktis ${player.name} yang tidak bisa digantikan begitu saja`,
+        tavily.injuryDetails
+          ? `Konteks cedera dari riwayat sebelumnya — pola yang relevan untuk proyeksi waktu kembali`
+          : `Laga-laga krusial yang akan dilewati dan implikasinya ke target musim tim`,
+      ],
+    }
+  }
+
+  // Priority 2: Tavily punya riwayat cedera sebelumnya — angle bisa diarahkan
+  // ke pola/rekam jejak cedera, bukan cuma dampak satu insiden tunggal.
+  // (Per PDF Tavily: "Riwayat cedera pemain sebelumnya".)
+  if (tavily.injuryDetails) {
+    return {
+      angle: "injury_impact",
+      rationale: `Tavily menyediakan konteks riwayat cedera ${player.name} — angle diarahkan ke pola, bukan hanya insiden tunggal`,
+      headlineDirection: `Judul mengisyaratkan ini bukan cedera pertama atau bukan kejadian terisolasi — pola yang lebih besar dari satu insiden`,
+      narrativeFocus: `Riwayat cedera ${player.name} sebagai konteks: apa yang membuat absen kali ini berbeda (atau berulang) dan dampaknya ke tim`,
+      subStorylines: [
+        hasStats
+          ? `${player.recentStats.summary} — angka yang menjelaskan betapa sulitnya mengisi posisi ini`
+          : `Peran taktis ${player.name} yang tidak bisa digantikan begitu saja`,
+        `Opsi pengganti yang mungkin dimainkan pelatih, dan seberapa berbeda dampaknya dibanding ${player.name}`,
+      ],
+    }
+  }
+
+  // Default — fallback rule-based murni kalau Serper/Tavily tidak memberi
+  // detail tambahan apapun (tetap berbasis statistik Bzzoiro).
   return {
     angle: "injury_impact",
-    rationale: `Cedera ${player.name} — dampak ke tim sebagai angle utama`,
+    rationale: `Cedera ${player.name} — dampak ke tim sebagai angle utama (tidak ada detail tambahan dari Serper/Tavily)`,
     headlineDirection: `Judul mengukur kehilangan, bukan mengumumkan cedera. "Bukan hanya satu nama di daftar absen" bukan "[Nama] cedera"`,
     narrativeFocus: `Ukuran kehilangan ${player.name}: dari angka statistik ke dampak taktis nyata`,
     subStorylines: [
@@ -439,15 +488,43 @@ export function selectAngleCedera(
 
 // ─────────────────────────────────────────────────────────────────────────────
 // SELECTOR: KONPERS
+// Per PDF: untuk Konpers, Bzzoiro cuma konteks pendukung — sumber utama
+// adalah Serper (transkrip/kutipan) DAN Tavily ("pernyataan sebelumnya yang
+// relevan — konsistensi/kontradiksi", "latar belakang & konteks pernyataan").
+// v1 menerima `tavily` tapi tidak pernah memakainya — diperbaiki supaya
+// kontradiksi/konsistensi dari Tavily ikut menentukan angle & narrativeFocus.
 // ─────────────────────────────────────────────────────────────────────────────
 export function selectAngleKonpers(
   serper: SerperExtracted,
   tavily: TavilyExtracted,
 ): AngleResult {
+  // Tavily mungkin menyimpan konteks "pernyataan sebelumnya" yang berlawanan
+  // atau konsisten dengan kutipan terbaru — cek dulu sebelum menentukan angle.
+  const contradictionNote = tavily.additionalFacts.find((f) =>
+    /kontradiksi|berbeda dari sebelumnya|sebelumnya (?:bilang|mengatakan)|berubah sikap|inkonsisten/i.test(f)
+  )
+  const backgroundNote = tavily.additionalFacts.find((f) => f !== contradictionNote)
+
   if (serper.quotes.length > 0) {
     // Pilih kutipan terkuat untuk tentukan angle
     const strongestQuote = serper.quotes[0]
     const isSurprising   = /tidak|bukan|jangan|selesai|pergi|kontrak|mundur|keluar|resign/i.test(strongestQuote.text)
+
+    // Jika Tavily menandai kontradiksi dengan pernyataan sebelumnya, ini jauh
+    // lebih kuat sebagai angle daripada sekadar "pernyataan mengejutkan" —
+    // langsung tonjolkan inkonsistensi tersebut.
+    if (contradictionNote) {
+      return {
+        angle: "press_conference_reveal",
+        rationale: `Kutipan terbaru dari ${strongestQuote.speaker} berkontradiksi dengan pernyataan sebelumnya (konteks Tavily) — angle diarahkan ke pergeseran sikap, bukan hanya isi pernyataan`,
+        headlineDirection: `Judul menyiratkan adanya perubahan sikap atau kontradiksi dari ${strongestQuote.speaker} — bukan sekadar melaporkan apa yang dikatakan`,
+        narrativeFocus: `Apa yang berubah dari pernyataan ${strongestQuote.speaker} dibanding sebelumnya, dan mengapa pergeseran itu signifikan`,
+        subStorylines: [
+          `Pernyataan sebelumnya sebagai pembanding — apa yang konsisten dan apa yang berubah`,
+          `Analisis pernyataan terbaru: diplomasi, koreksi sikap, atau kepastian baru`,
+        ],
+      }
+    }
 
     return {
       angle: "press_conference_reveal",
@@ -457,7 +534,7 @@ export function selectAngleKonpers(
         : `Judul mengambil esensi dari apa yang ${strongestQuote.speaker} katakan — bukan nama + tanggal konpers`,
       narrativeFocus: `Apa yang dikatakan, apa yang tidak dikatakan, dan apa yang berubah setelah konpers ini`,
       subStorylines: [
-        `Konteks mengapa konpers ini lebih dari rutinitas — situasi tim sebelumnya`,
+        backgroundNote ?? `Konteks mengapa konpers ini lebih dari rutinitas — situasi tim sebelumnya`,
         `Analisis pernyataan: antara diplomasi, frustrasi, atau kepastian yang baru`,
       ],
     }
@@ -469,7 +546,7 @@ export function selectAngleKonpers(
     headlineDirection: "Judul mengangkat fakta atau pernyataan paling signifikan dari konpers, bukan format 'Pelatih X Bicara Soal Y'",
     narrativeFocus: "Apa yang konpers ini ungkapkan tentang kondisi, rencana, atau arah tim ke depan",
     subStorylines: [
-      "Situasi tim sebelum konpers sebagai konteks",
+      backgroundNote ?? "Situasi tim sebelum konpers sebagai konteks",
       "Implikasi pernyataan untuk laga atau keputusan selanjutnya",
     ],
   }
@@ -477,8 +554,43 @@ export function selectAngleKonpers(
 
 // ─────────────────────────────────────────────────────────────────────────────
 // SELECTOR: TRIVIA
+// NEWv3: Jika triviaData dari Bzzoiro tersedia (shotmap xG + historical stats),
+// gunakan fakta spesifik itu sebagai angle. Per PDF: "xG per shot misalnya bisa
+// menghasilkan: 'Peluang 0.94 xG yang terbuang menit ke-89 — terbesar musim ini'"
 // ─────────────────────────────────────────────────────────────────────────────
-export function selectAngleTrivia(): AngleResult {
+export function selectAngleTrivia(triviaData?: BzzoiroExtractedTrivia): AngleResult {
+  // Jika ada shotmap fact dengan xG tinggi (≥ 0.70) — angle xG paradox/individual
+  if (triviaData?.topShotmapFacts && triviaData.topShotmapFacts.length > 0) {
+    const topFact = triviaData.topShotmapFacts[0]
+    if (topFact.xg >= 0.70) {
+      return {
+        angle: "historical_fact",
+        rationale: `Shotmap Bzzoiro: peluang ${topFact.xg.toFixed(2)} xG (menit ${topFact.minute}) — fakta xG per shot unik sebagai kail trivia`,
+        headlineDirection: `Judul menggunakan angka xG yang mengejutkan sebagai titik masuk — bukan klise "fakta menarik"`,
+        narrativeFocus: `${topFact.description} — dan apa yang angka itu ungkapkan tentang momen tersebut`,
+        subStorylines: [
+          `Konteks pertandingan: mengapa momen ini begitu signifikan`,
+          triviaData.historicalStatFacts[0] ?? `Perbandingan dengan rekor serupa di 66 liga database Bzzoiro`,
+        ],
+      }
+    }
+  }
+
+  // Jika ada historical stat facts dari database 139k+ records
+  if (triviaData?.historicalStatFacts && triviaData.historicalStatFacts.length > 0) {
+    return {
+      angle: "historical_fact",
+      rationale: `Data historis Bzzoiro (139k+ records): ${triviaData.historicalStatFacts[0]}`,
+      headlineDirection: `Judul membuat pembaca merasa HARUS tahu ini — fokus pada aspek kontraintuitif dari fakta historis ini`,
+      narrativeFocus: `Fakta dari database Bzzoiro sebagai kail → konteks historis yang memberi makna → relevansi ke masa kini`,
+      subStorylines: [
+        `Konteks era dan kondisi ketika fakta ini pertama terjadi`,
+        triviaData.h2hCrossSeasonSummary ?? `Relevansi atau perbandingan ke sepak bola modern`,
+      ],
+    }
+  }
+
+  // Fallback default — manualContext atau tidak ada data Bzzoiro
   return {
     angle: "historical_fact",
     rationale: "Trivia: fakta historis sebagai angle default",
@@ -503,6 +615,7 @@ export function selectAngle(
     hasilData?:   BzzoiroExtractedHasil
     previewData?: BzzoiroExtractedPreview
     playerData?:  BzzoiroExtractedPlayer
+    triviaData?:  BzzoiroExtractedTrivia  // NEWv3
   } = {},
   winProb?: BzzoiroExtractedPreview["winProbability"],
 ): AngleResult {
@@ -539,7 +652,8 @@ export function selectAngle(
       return selectAngleKonpers(serper, tavily)
 
     case "trivia":
-      return selectAngleTrivia()
+      // NEWv3: pass triviaData agar selector bisa manfaatkan shotmap xG Bzzoiro
+      return selectAngleTrivia(meta.triviaData)
 
     default:
       return fallback("default", `NewsType tidak dikenali: ${newsType}`)

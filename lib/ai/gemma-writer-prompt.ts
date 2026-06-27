@@ -1,12 +1,8 @@
-// lib/ai/llama-writer-prompt.ts — v2
+// lib/ai/gemma-writer-prompt.ts — v1
 //
-// PERUBAHAN DARI v1 (berdasarkan audit):
-// ✓ [FIX #4] Tambah 3 few-shot lead examples per tipe artikel
-// ✓ [FIX #5] Daftar kata terlarang → substitution table dengan konteks
-// ✓ [FIX #9] SEO keyword wajib masuk judul dan 100 kata pertama
-// ✓ [FIX #2] paragraphGuide tidak lagi menyebut ulang fakta
-// ✓ [FIX #3] transitionHints masuk ke user prompt
-// ✓ [FIX #1] leadExample konkret (bukan instruksi abstrak) masuk ke user prompt
+// DIUBAH DARI: llama-writer-prompt.ts (v2)
+// Konten prompt identik — hanya nama file & fungsi disesuaikan untuk Gemma 4 31B IT
+// yang dipanggil lewat OpenRouter (google/gemma-4-31b-it:free)
 
 import type { EditorialBrief } from "../editorial/types"
 
@@ -16,7 +12,7 @@ import type { EditorialBrief } from "../editorial/types"
 // substitution table, dan format output.
 // Estimasi token: ~1100 token
 // ─────────────────────────────────────────────────────────────────────────────
-export function buildLlamaWriterSystem(): string {
+export function buildGemmaWriterSystem(): string {
   return `Kamu adalah jurnalis sepak bola senior dengan gaya The Athletic Indonesia.
 Tugasmu HANYA menulis artikel berdasarkan Editorial Brief yang diberikan.
 Kamu TIDAK meneliti, TIDAK menilai data — semua sudah ada di brief.
@@ -79,7 +75,15 @@ CONTOH LEAD BERKUALITAS — The Athletic Indonesia
 ══════════════════════════════════════════════════
 FORMAT OUTPUT — JSON murni, tanpa backtick, tanpa komentar:
 ══════════════════════════════════════════════════
-{"title":"<judul: [SEO keyword]: [hook editorial], max 85 karakter, tanpa tanda tanya, tanpa angka di karakter pertama>","content":"<HTML: hanya <h2> <p> <blockquote>. Tidak ada tag lain. Semua tanda kutip dalam content wajib di-escape sebagai \\\">"}
+{"title":"<judul: [SEO keyword]: [hook editorial], max 85 karakter, tanpa tanda tanya, tanpa angka di karakter pertama>","content":"<HTML: hanya <h2> <p> <blockquote>. Tidak ada tag lain. Semua tanda kutip dalam content wajib di-escape sebagai \\">"}
+
+CONTOH BENAR menulis kutipan langsung di dalam <blockquote> (perhatikan
+SETIAP tanda kutip ditulis sebagai \\" — bukan " biasa):
+...<blockquote>\\"Kami harus tampil maksimal dan tidak boleh lengah,\\" kata pelatih.</blockquote>...
+
+CONTOH SALAH (JANGAN seperti ini — tanda kutip lurus biasa akan merusak
+seluruh JSON dan membuat draft GAGAL TOTAL diparse):
+...<blockquote>"Kami harus tampil maksimal dan tidak boleh lengah," kata pelatih.</blockquote>...
 
 PENTING — content HARUS satu baris tunggal (single-line), TANPA newline mentah
 di antara paragraf/tag HTML. Pemisah antar elemen HANYA <h2>...</h2> dan
@@ -93,11 +97,9 @@ asli — newline mentah akan merusak JSON dan membuat seluruh draft gagal dipars
 // Dibangun dari EditorialBrief — berbeda tiap artikel.
 // Estimasi token: ~900–1200 token tergantung jumlah fakta
 // ─────────────────────────────────────────────────────────────────────────────
-export function buildLlamaWriterUser(brief: EditorialBrief): string {
+export function buildGemmaWriterUser(brief: EditorialBrief): string {
   const wt = brief.wordTarget
 
-  // ── Format mustUse dengan nomor urut (bukan bullet) ─────────────────────
-  // Nomor urut memudahkan suggestedH2s merujuk fakta tanpa duplikasi
   const mustUseLines = brief.keyFacts.mustUse
     .map((f, i) => `[F${i + 1}] ${f}`)
     .join("\n")
@@ -106,7 +108,6 @@ export function buildLlamaWriterUser(brief: EditorialBrief): string {
     ? brief.keyFacts.canUse.map((f, i) => `[C${i + 1}] ${f}`).join("\n")
     : "(tidak ada)"
 
-  // ── Format quotes ────────────────────────────────────────────────────────
   const quotesBlock = brief.quotes.length > 0
     ? brief.quotes.map((q, i) => {
         const pos = q.placement === "lead" ? "dalam 2 paragraf pertama"
@@ -116,7 +117,6 @@ export function buildLlamaWriterUser(brief: EditorialBrief): string {
       }).join("\n")
     : "(tidak ada kutipan — jangan buat kutipan sendiri)"
 
-  // ── Format H2 dengan focus dan fakta wajib ──────────────────────────────
   const h2Block = brief.structureHints.suggestedH2s.map((h, i) => {
     const facts = h.mustMentionFacts.length > 0
       ? `\n     Fakta yang WAJIB ada di sini: ${h.mustMentionFacts.join(" | ")}`
@@ -124,12 +124,10 @@ export function buildLlamaWriterUser(brief: EditorialBrief): string {
     return `[H${i + 1}] "${h.text}"\n     Bahas: ${h.focus}${facts}`
   }).join("\n\n")
 
-  // ── Format transition hints ──────────────────────────────────────────────
   const transitionBlock = brief.storylines.transitionHints.length > 0
     ? brief.storylines.transitionHints.map((t, i) => `• ${t}`).join("\n")
     : "(ikuti alur paragraphGuide)"
 
-  // ── Format data quality warnings ────────────────────────────────────────
   const warningBlock = brief.meta.dataQualityWarnings.length > 0
     ? "⚠️ PERINGATAN DATA:\n" + brief.meta.dataQualityWarnings
         .map((w) => `• [${w.field}] ${w.status.toUpperCase()}: ${w.instruction}`)
@@ -191,8 +189,8 @@ export function estimatePromptTokens(brief: EditorialBrief): {
   userTokens: number
   totalTokens: number
 } {
-  const system = buildLlamaWriterSystem()
-  const user   = buildLlamaWriterUser(brief)
+  const system = buildGemmaWriterSystem()
+  const user   = buildGemmaWriterUser(brief)
   const systemTokens = Math.ceil(system.length / 4)
   const userTokens   = Math.ceil(user.length / 4)
   return { systemTokens, userTokens, totalTokens: systemTokens + userTokens }

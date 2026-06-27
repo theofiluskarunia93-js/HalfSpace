@@ -14,6 +14,8 @@ export type WidgetType =
   | "daftar_pemain"
   | "pemain_andalan"
   | "hub"
+  | "statistik_pertandingan"
+  | "starting_lineup"
 
 export function useWidgetModal() {
   const [modalWidgetId, setModalWidgetId]     = useState<string | null>(null)

@@ -1,31 +1,41 @@
 // lib/news-context/serper.ts
 //
-// Sumber MEDIA dalam pipeline: Bzzoiro (data & statistik) → Serper (media) → Tavily (backup).
+// Sumber MEDIA dalam pipeline: Bzzoiro (data & statistik) → Serper (media) → Tavily (konteks naratif).
 // Serper.dev = wrapper Google Search — dipakai untuk ambil narasi, kutipan, dan analisis
 // dari media spesifik per tipe berita lewat operator site: (atau keyword untuk sumber
 // tanpa domain tunggal, mis. nama jurnalis).
 //
-// PERAN PER TIPE BERITA:
+// PERAN PER TIPE BERITA (sesuai PDF Bzzoiro Data Mapping):
 //
-//   PREVIEW  (bobot 25%) → espn.com, skysports.com, sport.detik.com, cnnindonesia.com
-//            Ambil: prediksi media, kondisi skuad, quote pelatih, pemain kunci, narasi pertandingan
+//   PREVIEW  → espn.com, skysports.com, sport.detik.com, cnnindonesia.com
+//            Ambil: berita terkini kedua tim (7 hari terakhir), injury news & status pemain
+//                   kunci, pernyataan pelatih pre-match, prediksi & opini media besar
 //
 //   HASIL    → espn.com, skysports.com, sport.detik.com, cnnindonesia.com
-//            Ambil: player ratings, man of the match, analisis pertandingan, komentar pelatih
+//            Ambil: reaksi & kutipan pelatih post-match, highlight dan momen kunci dari
+//                   media, reaksi pemain & kapten tim
 //
-//   TRANSFER → Sky Sports, The Athletic, BBC Sport, ESPN, Fabrizio Romano
-//            Ambil: status negosiasi, nilai transfer, sumber rumor, komentar agen, komentar pelatih
+//   TRANSFER → skysports.com, theathletic.com, bbc.co.uk/sport, espn.com,
+//              transfermarkt.com, Fabrizio Romano
+//            Ambil: laporan jurnalis terpercaya, klaim & counter-klaim resmi kedua klub,
+//                   harga transfer & struktur kontrak, reaksi fans & komunitas
 //
 //   KONPERS  → espn.com, skysports.com, fifa.com
-//            Ambil: quote pelatih, quote pemain, pernyataan penting
+//            Ambil: transkrip lengkap / kutipan langsung preskon, liputan media,
+//                   isu yang dibahas (cedera/suspensi/formasi), tanya-jawab jurnalis signifikan
 //
-//   CEDERA   → ESPN, BBC, Sky Sports, situs resmi klub
-//            Ambil: injury update, official statement
+//   CEDERA   → espn.com, bbc.co.uk/sport, skysports.com, situs resmi klub
+//            Ambil: laporan cedera terbaru & diagnosa resmi, estimasi waktu kembali bermain,
+//                   pernyataan resmi klub / pelatih, konteks kapan & mekanisme cedera terjadi
+//
+//   TRIVIA   → en.wikipedia.org, transfermarkt.com, soccerway.com, espn.com
+//            Ambil: verifikasi fakta historis, rekor resmi (Guinness/UEFA/FIFA),
+//                   kutipan & konteks dari ensiklopedi, data statistik milestone
 //
 // Satu kali request per tipe — seluruh sumber digabung dalam satu query dengan operator OR
 // agar hemat kuota Serper & token LLM, hasil organic diringkas jadi poin pendek per media.
 
-export type SerperNewsType = "preview" | "hasil" | "transfer" | "konpers" | "cedera"
+export type SerperNewsType = "preview" | "hasil" | "transfer" | "konpers" | "cedera" | "trivia"
 
 export interface SerperContextResult {
   contextText: string
@@ -70,6 +80,7 @@ const SERPER_SOURCES: Record<SerperNewsType, SourceSpec[]> = {
     { site: "theathletic.com" },
     { site: "bbc.co.uk/sport" },
     { site: "espn.com" },
+    { site: "transfermarkt.com" },
     { keyword: "Fabrizio Romano" },
   ],
   konpers: [
@@ -81,26 +92,50 @@ const SERPER_SOURCES: Record<SerperNewsType, SourceSpec[]> = {
     { site: "espn.com" },
     { site: "bbc.co.uk/sport" },
     { site: "skysports.com" },
-    { keyword: "situs resmi klub pernyataan resmi" },
+    { keyword: "pernyataan resmi klub" },
+  ],
+  trivia: [
+    { site: "en.wikipedia.org" },
+    { site: "transfermarkt.com" },
+    { site: "soccerway.com" },
+    { site: "espn.com" },
   ],
 }
 
 // Data yang WAJIB diekstrak per tipe — dipakai sebagai instruksi di context block utk LLM.
+// Sesuai PDF Bzzoiro Data Mapping — kolom "Serper" per jenis artikel.
 export const SERPER_DATA_NEEDED: Record<SerperNewsType, string> = {
-  preview:  "prediksi media, kondisi skuad, quote pelatih, pemain kunci, narasi pertandingan",
-  hasil:    "player ratings, man of the match, analisis pertandingan, komentar pelatih",
-  transfer: "status negosiasi, nilai transfer, sumber rumor, komentar agen, komentar pelatih",
-  konpers:  "quote pelatih, quote pemain, pernyataan penting",
-  cedera:   "injury update, official statement dari klub",
+  preview:
+    "berita terkini kedua tim (7 hari terakhir), injury news & status pemain kunci, " +
+    "pernyataan pelatih pre-match (press conference), prediksi & opini media besar",
+  hasil:
+    "reaksi & kutipan pelatih post-match, highlight dan momen kunci dari media, " +
+    "reaksi pemain & kapten tim",
+  transfer:
+    "laporan transfer terbaru dari jurnalis terpercaya (Fabrizio Romano, dll), " +
+    "klaim & counter-klaim resmi dari kedua klub, harga transfer yang dilaporkan & " +
+    "struktur kontrak, reaksi fans & komunitas terhadap rumor",
+  konpers:
+    "transkrip lengkap atau kutipan langsung preskon, liputan media terhadap pernyataan " +
+    "pelatih, isu terkini yang dibahas (cedera/suspensi/formasi), " +
+    "tanya-jawab jurnalis yang signifikan",
+  cedera:
+    "laporan cedera terbaru & diagnosa resmi, estimasi waktu kembali bermain (return date), " +
+    "pernyataan resmi klub / pelatih tentang cedera, " +
+    "konteks cedera: kapan terjadi & mekanisme",
+  trivia:
+    "verifikasi fakta historis dari sumber ensiklopedi, kutipan & konteks dari artikel " +
+    "Wikipedia / Transfermarkt, fakta rekor resmi (Guinness/UEFA/FIFA)",
 }
 
 // Kata kunci tambahan per tipe agar pencarian lebih terarah (selain nama tim/pemain).
 const SERPER_EXTRA_KEYWORDS: Record<SerperNewsType, string> = {
-  preview:  "preview prediksi pertandingan",
-  hasil:    "player rating analisis pertandingan",
-  transfer: "transfer rumor negosiasi",
-  konpers:  "konferensi pers quote",
-  cedera:   "injury update cedera",
+  preview:  "preview prediksi pertandingan berita terkini",
+  hasil:    "analisis pertandingan reaksi pelatih highlight",
+  transfer: "transfer rumor negosiasi nilai kontrak",
+  konpers:  "konferensi pers kutipan pernyataan",
+  cedera:   "cedera injury update diagnosa return date",
+  trivia:   "sejarah rekor statistik milestone fakta",
 }
 
 // Jumlah hasil organic yang diambil & diformat per tipe — dijaga ringkas demi hemat token.
@@ -110,6 +145,7 @@ const SERPER_MAX_RESULTS: Record<SerperNewsType, number> = {
   transfer: 5,
   konpers:  4,
   cedera:   4,
+  trivia:   4,
 }
 
 function buildSiteFilter(specs: SourceSpec[]): string {

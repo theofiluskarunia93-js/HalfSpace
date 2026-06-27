@@ -1,13 +1,29 @@
-// lib/editorial/brief-builder.ts — v2
+// lib/editorial/brief-builder.ts — v3
 //
-// PERUBAHAN DARI v1 (berdasarkan audit):
-// ✓ [FIX #1]  leadExample: kalimat pembuka KONKRET berdasarkan data nyata, bukan instruksi abstrak
+// PERUBAHAN DARI v2 (disesuaikan dengan PDF Data Mapping HalfSpace):
+// ✓ [PDF Preview]   parseBzzoiroPreview: tambah predicted_lineup, oddsComparison
+//                   (14 bookmaker), averagePositions, aiPreview (Haiku 4.5, referensi awal)
+// ✓ [PDF Preview]   mustUse: predicted XI home & away, odds pasar sebagai canUse
+//                   aiPreview masuk canUse + doNotUse warning (bukan fakta primer)
+// ✓ [PDF Cedera]    parseBzzoiroCedera: pisah dari parseBzzoiroPlayer —
+//                   tambah predicted_lineup tanpa pemain, odds impact, upcoming matches
+// ✓ [PDF Cedera]    buildH2s cedera: H2 kedua kini fokus projected lineup + pengganti
+//                   H2 ketiga kini berisi laga terdampak dari upcoming matches
+// ✓ [PDF Cedera]    buildDataWarnings: warning baru jika predicted_lineup kosong
+// ✓ [PDF Trivia]    parseBzzoiroTrivia: memanfaatkan shotmap xG per shot,
+//                   historical stats 139k+ records, H2H lintas musim 66 liga
+//                   (bukan hanya manualContext seperti v2)
+// ✓ [PDF Trivia]    buildDataWarnings: warning baru jika shotmap + stats kosong
+// ✓ [PDF Trivia]    mustUse trivia: shotmap facts + historical facts dari Bzzoiro,
+//                   manualContext sebagai pelengkap
+// TIDAK BERUBAH dari v2:
+// ✓ [FIX #1]  leadExample: kalimat pembuka KONKRET berdasarkan data nyata
 // ✓ [FIX #2]  paragraphGuide tidak menyebut ulang fakta — hanya instruksi alur
-// ✓ [FIX #3]  transitionHints: instruksi eksplisit kalimat jembatan antar subheading
-// ✓ [FIX #6]  suggestedH2s: setiap H2 punya focus dan mustMentionFacts — tidak ada placeholder
+// ✓ [FIX #3]  transitionHints: instruksi eksplisit kalimat jembatan
+// ✓ [FIX #6]  suggestedH2s: setiap H2 punya focus dan mustMentionFacts
 // ✓ [FIX #7]  dataQualityWarnings: blokir hallucination saat data tidak lengkap
 // ✓ [FIX #9]  seoKeywords: keyword wajib masuk judul & 100 kata pertama
-// ✓ [FIX #11] isComeback() diperbaiki — harus ada kronologi tim tertinggal lalu unggul
+// ✓ [FIX #11] isComeback() diperbaiki di angle-selector
 
 import {
   type EditorialBrief,
@@ -23,11 +39,21 @@ import {
   type BzzoiroExtractedHasil,
   type BzzoiroExtractedPreview,
   type BzzoiroExtractedPlayer,
+  type BzzoiroExtractedCedera,
+  type BzzoiroExtractedTrivia,
+  type BzzoiroPredictedLineup,
   summarizeMomentum,
   extractKeyIncidents,
   extractStats,
   formatWinProbability,
   summarizeH2H,
+  extractPredictedLineup,
+  extractAveragePositions,
+  extractOddsComparison,
+  extractShotmap,
+  extractTriviaFacts,
+  extractAiPreview,
+  extractUpcomingMatches,
 } from "./extractors/bzzoiro-extractor"
 import {
   type SerperExtracted,
@@ -46,6 +72,15 @@ interface BuildBriefInput {
   serperText: string
   tavilyText: string
   manualContext: string
+}
+
+// Tipe internal untuk membawa parsed data antar fungsi build
+interface ParsedBzzoiroData {
+  hasilData?:   BzzoiroExtractedHasil
+  previewData?: BzzoiroExtractedPreview
+  playerData?:  BzzoiroExtractedPlayer
+  cederaData?:  BzzoiroExtractedCedera
+  triviaData?:  BzzoiroExtractedTrivia
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -87,6 +122,11 @@ function parseBzzoiroPreview(bzzoiroText: string, home: string, away: string): B
     formAway:    bzzoiroText.match(new RegExp(`FORM 5 LAGA — ${away}:\\n([\\s\\S]+?)(?:\\n\\n|\\nKLASEMEN|$)`))?.[1]?.trim() ?? "",
     standingsHome: bzzoiroText.match(new RegExp(`${home}:[^\\n]+poin[^\\n]+`, "i"))?.[0],
     standingsAway: bzzoiroText.match(new RegExp(`${away}:[^\\n]+poin[^\\n]+`, "i"))?.[0],
+    // NEWv3: data tambahan per PDF — predicted_lineup, odds/comparison, average_positions, ai_preview
+    predictedLineup:  extractPredictedLineup(bzzoiroText, home, away),
+    averagePositions: extractAveragePositions(bzzoiroText),
+    oddsComparison:   extractOddsComparison(bzzoiroText, home, away),
+    aiPreview:        extractAiPreview(bzzoiroText),
   }
 }
 
@@ -116,6 +156,42 @@ function parseBzzoiroPlayer(bzzoiroText: string, topic: string): BzzoiroExtracte
       details,
     },
   }
+}
+
+// NEWv3: Parser untuk Cedera — includes predicted_lineup (proyeksi tanpa pemain),
+// odds impact, dan upcoming matches. Per PDF: Bzzoiro adalah sumber untuk
+// player stats SEBELUM cedera + projected lineup + dampak odds.
+function parseBzzoiroCedera(bzzoiroText: string, topic: string): BzzoiroExtractedCedera {
+  const player = parseBzzoiroPlayer(bzzoiroText, topic)
+  const teamName = player.team
+
+  // Proyeksi lineup TANPA pemain yang cedera
+  const withoutSection = bzzoiroText.match(
+    /LINEUP WITHOUT[^:]*:\s*\n([\s\S]+?)(?=\nODDS IMPACT|\nUPCOMING|\n\n|$)/i
+  )?.[1] ?? ""
+  const projFormation = withoutSection.match(/Formation[:\s]+([0-9-]+)/i)?.[1]?.trim() ?? ""
+  const replacementsRaw = withoutSection.match(/(?:Likely Replacement|Pengganti)[s]?[:\s]+(.+)/i)?.[1] ?? ""
+  const likelyReplacements = replacementsRaw.split(",").map((s) => s.trim()).filter(Boolean)
+
+  const withoutPlayer = (projFormation || likelyReplacements.length > 0)
+    ? { team: teamName, projectedFormation: projFormation, likelyReplacements }
+    : undefined
+
+  // Odds impact — pergeseran odds akibat absensi
+  const oddsImpact = bzzoiroText.match(/ODDS IMPACT[^:]*:\s*(.+)/i)?.[1]?.trim()
+
+  // Upcoming matches yang terdampak
+  const upcomingMatches = extractUpcomingMatches(bzzoiroText)
+
+  return { player, predictedLineupWithout: withoutPlayer, oddsImpact, upcomingMatches }
+}
+
+// NEWv3: Parser untuk Trivia — memanfaatkan database besar Bzzoiro.
+// Per PDF: 62k+ pemain, 139k+ stats records, shotmap 15.5k pertandingan,
+// per-shot xG unik, head-to-head 66 liga x 68k+ match, momentum historis.
+function parseBzzoiroTrivia(bzzoiroText: string, manualContext: string): BzzoiroExtractedTrivia {
+  const manualFacts = manualContext.split("\n").map((l) => l.trim()).filter((l) => l.length > 15)
+  return extractTriviaFacts(bzzoiroText, manualFacts)
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -165,6 +241,8 @@ function buildDataWarnings(
   newsType: NewsType,
   playerData?: BzzoiroExtractedPlayer,
   hasilData?: BzzoiroExtractedHasil,
+  cederaData?: BzzoiroExtractedCedera,
+  triviaData?: BzzoiroExtractedTrivia,
 ): DataQualityWarning[] {
   const warnings: DataQualityWarning[] = []
 
@@ -187,6 +265,22 @@ function buildDataWarnings(
       field: "match_incidents",
       status: "partial",
       instruction: "Data insiden pertandingan (gol, kartu) TIDAK TERSEDIA. Jangan menyebut gol di menit berapa atau siapa yang mencetak. Fokus ke statistik dan narasi umum yang ada di mustUse.",
+    })
+  }
+  // NEWv3: Warning untuk Cedera — jika tidak ada predicted_lineup
+  if (newsType === "cedera" && cederaData && !cederaData.predictedLineupWithout) {
+    warnings.push({
+      field: "predicted_lineup_without",
+      status: "missing",
+      instruction: "Proyeksi lineup tanpa pemain cedera TIDAK TERSEDIA dari Bzzoiro. DILARANG menyebut nama kandidat pengganti spesifik kecuali ada di canUse. Tulis dampak taktis secara umum.",
+    })
+  }
+  // NEWv3: Warning untuk Trivia — jika shotmap kosong (tidak ada xG per shot)
+  if (newsType === "trivia" && triviaData && triviaData.topShotmapFacts.length === 0 && triviaData.historicalStatFacts.length === 0) {
+    warnings.push({
+      field: "trivia_bzzoiro_data",
+      status: "missing",
+      instruction: "Data shotmap xG dan statistik historis dari Bzzoiro TIDAK TERSEDIA. Artikel trivia hanya boleh menggunakan fakta dari manualContext. DILARANG mengarang statistik historis.",
     })
   }
 
@@ -374,6 +468,7 @@ function buildH2s(
   previewData?: BzzoiroExtractedPreview,
   playerData?: BzzoiroExtractedPlayer,
   mustUseFacts?: string[],
+  cederaData?: BzzoiroExtractedCedera,
 ): EditorialBrief["structureHints"]["suggestedH2s"] {
   const facts = mustUseFacts ?? []
 
@@ -432,10 +527,14 @@ function buildH2s(
   }
 
   if (newsType === "cedera" && playerData) {
+    // NEWv3: H2 ketiga lebih konkret — laga terdampak dari upcoming events Bzzoiro
+    const upcomingFacts = cederaData?.upcomingMatches.slice(0, 2).map(
+      (m) => `Laga terdampak: ${m.opponent} (${m.competition})`
+    ) ?? []
     return [
       { text: `Angka yang Menjelaskan Ukuran Kehilangan`, focus: `Statistik ${playerData.name} dalam 5 laga terakhir sebagai bukti konkret dampaknya`, mustMentionFacts: facts.filter((f) => f.includes("menit") || f.includes("gol") || f.includes("assist")) },
-      { text: `Dampak ke Taktik dan Rencana Tim`, focus: `Bagaimana cedera ini mengubah opsi pelatih — formasi, rotasi, strategi`, mustMentionFacts: facts.filter((f) => f.includes("absen") || f.includes("laga") || f.includes("pernyataan")) },
-      { text: `Jalan Menuju Kembali`, focus: `Timeline pemulihan dan laga-laga penting yang akan dilewati`, mustMentionFacts: facts.filter((f) => f.includes("minggu") || f.includes("bulan") || f.includes("prognosis")) },
+      { text: `Dampak ke Taktik dan Rencana Tim`, focus: `Bagaimana cedera ini mengubah opsi pelatih — proyeksi formasi, kandidat pengganti dari predicted_lineup`, mustMentionFacts: facts.filter((f) => f.includes("Proyeksi") || f.includes("absen") || f.includes("pengganti") || f.includes("formasi")) },
+      { text: `Jalan Menuju Kembali`, focus: `Timeline pemulihan, laga-laga krusial yang akan dilewati, dan dampak odds`, mustMentionFacts: [...facts.filter((f) => f.includes("minggu") || f.includes("bulan") || f.includes("odds")), ...upcomingFacts] },
     ]
   }
 
@@ -447,10 +546,10 @@ function buildH2s(
     ]
   }
 
-  // TRIVIA
+  // TRIVIA — NEWv3: H2 sekarang lebih konkret berdasarkan jenis data Bzzoiro yang tersedia
   return [
     { text: `Konteks yang Membuat Ini Penting`, focus: `Era, kondisi, dan situasi ketika fakta ini pertama kali terjadi`, mustMentionFacts: facts.slice(0, 3) },
-    { text: `Detail yang Membuat Angka Ini Berbeda`, focus: `Nuansa dan fakta pendukung yang memperdalam pemahaman`, mustMentionFacts: facts.slice(3, 5) },
+    { text: `Detail yang Membuat Angka Ini Berbeda`, focus: `Nuansa dan fakta pendukung — termasuk xG per shot jika tersedia dari database Bzzoiro`, mustMentionFacts: facts.slice(3, 5) },
     { text: `Mengapa Ini Masih Relevan Hari Ini`, focus: `Hubungan ke sepak bola modern, pemain, atau tren saat ini`, mustMentionFacts: [] },
   ]
 }
@@ -484,9 +583,18 @@ export async function buildEditorialBrief(input: BuildBriefInput): Promise<Edito
 
   const hasilData   = newsType === "hasil"    ? parseBzzoiroHasil(bzzoiroText, home, away)   : undefined
   const previewData = newsType === "preview"  ? parseBzzoiroPreview(bzzoiroText, home, away) : undefined
-  const playerData  = (newsType === "cedera" || newsType === "transfer") ? parseBzzoiroPlayer(bzzoiroText, topic) : undefined
 
-  const angleResult = selectAngle(newsType, bzzoiroText, serper, tavily, { hasilData, previewData, playerData }, previewData?.winProbability)
+  // NEWv3: cedera sekarang pakai parseBzzoiroCedera (ada predicted_lineup + odds impact + upcoming)
+  // transfer tetap pakai parseBzzoiroPlayer (cukup player profile + stats saja)
+  const cederaData  = newsType === "cedera"   ? parseBzzoiroCedera(bzzoiroText, topic) : undefined
+  const playerData  = newsType === "transfer" ? parseBzzoiroPlayer(bzzoiroText, topic)
+                    : newsType === "cedera"   ? cederaData?.player
+                    : undefined
+
+  // NEWv3: trivia pakai parseBzzoiroTrivia (shotmap xG + historical stats dari database besar Bzzoiro)
+  const triviaData  = newsType === "trivia"   ? parseBzzoiroTrivia(bzzoiroText, manualContext) : undefined
+
+  const angleResult = selectAngle(newsType, bzzoiroText, serper, tavily, { hasilData, previewData, playerData, triviaData }, previewData?.winProbability)
   const angle = angleResult.angle
 
   // ── Bangun mustUse facts ──────────────────────────────────────────────────
@@ -518,6 +626,22 @@ export async function buildEditorialBrief(input: BuildBriefInput): Promise<Edito
     if (previewData.formAway)       mustUse.push(`Form ${previewData.away}: ${previewData.formAway.split("\n").slice(0, 3).join(" | ")}`)
     if (previewData.standingsHome)  canUse.push(previewData.standingsHome)
     if (previewData.standingsAway)  canUse.push(previewData.standingsAway)
+    // NEWv3: predicted_lineup (lineup prediksi) dan odds/comparison (14 bookmaker)
+    if (previewData.predictedLineup?.home) {
+      const pl = previewData.predictedLineup.home
+      mustUse.push(`Prediksi XI ${previewData.home}: ${pl.formation} — ${pl.startingXI.slice(0, 6).join(", ")}${pl.startingXI.length > 6 ? "..." : ""}`)
+    }
+    if (previewData.predictedLineup?.away) {
+      const pl = previewData.predictedLineup.away
+      mustUse.push(`Prediksi XI ${previewData.away}: ${pl.formation} — ${pl.startingXI.slice(0, 6).join(", ")}${pl.startingXI.length > 6 ? "..." : ""}`)
+    }
+    if (previewData.oddsComparison?.summary) canUse.push(`Odds pasar: ${previewData.oddsComparison.summary}`)
+    // AI Preview dari Haiku 4.5 hanya sebagai referensi awal — masuk canUse, BUKAN mustUse
+    // (per PDF: "referensi awal", bukan fakta primer)
+    if (previewData.aiPreview?.rawText) {
+      canUse.push(`[Referensi awal AI Preview Bzzoiro]: ${previewData.aiPreview.rawText.slice(0, 200)}...`)
+      doNotUse.push("Angka atau klaim spesifik dari AI Preview Bzzoiro — verifikasi dulu ke data struktural di atas")
+    }
   }
 
   if ((newsType === "transfer" || newsType === "cedera") && playerData) {
@@ -529,6 +653,30 @@ export async function buildEditorialBrief(input: BuildBriefInput): Promise<Edito
     playerData.recentStats.details.slice(0, 3).forEach((d) =>
       canUse.push(`${d.match}: ${d.minutes} menit${d.goals != null ? `, ${d.goals} gol` : ""}${d.assists != null ? `, ${d.assists} assist` : ""}${d.rating != null ? `, rating ${d.rating}` : ""}`)
     )
+    // NEWv3: Cedera — tambah predicted_lineup, odds impact, dan upcoming matches per PDF
+    if (newsType === "cedera" && cederaData) {
+      // Per PDF Serper (Cedera): "Laporan cedera terbaru & diagnosa resmi",
+      // "Estimasi waktu kembali bermain (return date)", "Pernyataan resmi
+      // klub/pelatih". Sebelumnya field ini hanya numpang lewat
+      // mediaHighlights/additionalFacts generik tanpa label eksplisit —
+      // sekarang dipush eksplisit sebagai mustUse karena ini fakta paling
+      // dicari pembaca artikel cedera.
+      if (serper.injuryStatement) mustUse.push(`Diagnosa/pernyataan resmi: ${serper.injuryStatement}`)
+      // Per PDF Tavily (Cedera): "Riwayat cedera pemain sebelumnya". Sebelumnya
+      // hanya lolos lewat tavily.additionalFacts tanpa label — sekarang masuk
+      // canUse eksplisit supaya angle/narrativeFocus bisa merujuknya langsung.
+      if (tavily.injuryDetails) canUse.push(`Riwayat/konteks cedera: ${tavily.injuryDetails}`)
+      if (cederaData.predictedLineupWithout) {
+        const wo = cederaData.predictedLineupWithout
+        mustUse.push(`Proyeksi lineup ${wo.team} tanpa ${playerData.name}: formasi ${wo.projectedFormation || "?"}`)
+        if (wo.likelyReplacements.length > 0)
+          canUse.push(`Kandidat pengganti: ${wo.likelyReplacements.join(", ")}`)
+      }
+      if (cederaData.oddsImpact) mustUse.push(`Dampak odds: ${cederaData.oddsImpact}`)
+      cederaData.upcomingMatches.slice(0, 3).forEach((m) =>
+        canUse.push(`Laga terdampak: vs ${m.opponent} (${m.competition})${m.date ? `, ${m.date}` : ""}`)
+      )
+    }
   }
 
   if (newsType === "konpers") {
@@ -537,8 +685,20 @@ export async function buildEditorialBrief(input: BuildBriefInput): Promise<Edito
   }
 
   if (newsType === "trivia") {
-    const manualFacts = manualContext.split("\n").map((l) => l.trim()).filter((l) => l.length > 15)
-    manualFacts.forEach((f) => mustUse.push(f))
+    // NEWv3: Trivia pakai data dari Bzzoiro (shotmap xG + historical stats)
+    // plus manualContext sebagai pelengkap — per PDF, Bzzoiro adalah use case
+    // terkuat untuk trivia karena kedalaman database (62k+ pemain, 139k+ stats)
+    if (triviaData) {
+      triviaData.topShotmapFacts.forEach((f) => mustUse.push(f.description))
+      triviaData.historicalStatFacts.forEach((f) => mustUse.push(f))
+      if (triviaData.h2hCrossSeasonSummary) canUse.push(triviaData.h2hCrossSeasonSummary)
+      if (triviaData.historicMomentumNote)  canUse.push(triviaData.historicMomentumNote)
+      triviaData.manualFacts.forEach((f) => mustUse.push(f))
+    } else {
+      // Fallback ke manualContext murni jika Bzzoiro tidak mengembalikan trivia data
+      const manualFacts = manualContext.split("\n").map((l) => l.trim()).filter((l) => l.length > 15)
+      manualFacts.forEach((f) => mustUse.push(f))
+    }
   }
 
   // Serper dan Tavily sebagai canUse (bukan mustUse) untuk semua tipe
@@ -582,10 +742,10 @@ export async function buildEditorialBrief(input: BuildBriefInput): Promise<Edito
     keyPlayers.push(`${serper.manOfMatch} — Man of the Match`)
 
   // ── Build H2s ─────────────────────────────────────────────────────────────
-  const suggestedH2s = buildH2s(newsType, angle, hasilData, previewData, playerData, mustUse)
+  const suggestedH2s = buildH2s(newsType, angle, hasilData, previewData, playerData, mustUse, cederaData)
 
   // ── Data quality warnings ─────────────────────────────────────────────────
-  const dataQualityWarnings = buildDataWarnings(newsType, playerData, hasilData)
+  const dataQualityWarnings = buildDataWarnings(newsType, playerData, hasilData, cederaData, triviaData)
 
   // ── Build brief ───────────────────────────────────────────────────────────
   const brief: EditorialBrief = {

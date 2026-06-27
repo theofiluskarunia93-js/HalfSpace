@@ -1127,22 +1127,39 @@ export function AnalisaTaktisCard({ widgetId, isAdmin, onEdit }: AnalisaTaktisCa
               <feMerge><feMergeNode in="coloredBlur" /><feMergeNode in="SourceGraphic" /></feMerge>
             </filter>
           </defs>
-          {/* Players */}
+          {/* Players — kaos jersey + label posisi jelas di bawahnya (bukan titik kecil) */}
           {lineConfigs.map((line, lineIdx) => {
             const y = 8 + (lineIdx + 1) * lineSpacing * 1.15
             const isGK = lineIdx === lineConfigs.length - 1
+            const jerseyColor = isGK ? "#22d3ee" : "#39FF14"
             return (
               <React.Fragment key={`line-${lineIdx}`}>
                 {line.labels.map((label, posIdx) => {
                   const x = line.count === 1 ? 50 : 10 + (posIdx / (line.count - 1)) * 80
                   return (
-                    <g key={`${lineIdx}-${posIdx}`}>
-                      <circle
-                        cx={x} cy={y} r="4"
-                        fill="#39FF14"
+                    <g key={`${lineIdx}-${posIdx}`} transform={`translate(${x}, ${y})`}>
+                      {/* Siluet kaos/jersey sederhana, ukuran dinormalisasi ke viewBox 100x130 */}
+                      <path
+                        d="M -3.4,-2.6 L -1.7,-3.7 L -0.8,-2.8 L 0,-3.2 L 0.8,-2.8 L 1.7,-3.7 L 3.4,-2.6
+                           L 2.3,-0.6 L 1.7,-1.1 L 1.7,3.2 L -1.7,3.2 L -1.7,-1.1 L -2.3,-0.6 Z"
+                        fill={jerseyColor}
+                        stroke="#0a1a0a"
+                        strokeWidth="0.25"
                         filter={isGK ? "url(#at-glow)" : undefined}
                       />
-                      <text x={x} y={y + 2.5} textAnchor="middle" fontSize="3.5" fontWeight="900" fill="#000">
+                      {/* Nomor kecil di dada (opsional, pakai inisial baris) */}
+                      <text x="0" y="0.6" textAnchor="middle" fontSize="2.6" fontWeight="800" fill="#0a1a0a">
+                        {posIdx + 1}
+                      </text>
+                      {/* Label posisi — ditaruh JELAS di bawah jersey, bukan di dalam bentuk kecil */}
+                      <text
+                        x="0" y="6.6"
+                        textAnchor="middle"
+                        fontSize="3.8"
+                        fontWeight="800"
+                        fill="#e8f5ea"
+                        style={{ textShadow: "0 0 4px rgba(0,0,0,0.9)" }}
+                      >
                         {label}
                       </text>
                     </g>

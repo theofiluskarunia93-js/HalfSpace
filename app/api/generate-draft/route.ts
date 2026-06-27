@@ -1,17 +1,14 @@
-// app/api/generate-draft/route.ts — v2
+// app/api/generate-draft/route.ts — v3
 //
-// PERUBAHAN DARI v1 (berdasarkan audit):
-// ✓ [FIX #10] Quality gate sebelum simpan ke Supabase:
-//             - checkQuality() dari types.ts menilai word count, H2 count,
-//               blockquote presence, dan forbidden phrases
-//             - status "draft_ready" hanya jika score ≥ 70
-//             - status "draft_below_quality" jika score 50-69 (bisa dipublish manual)
-//             - status "draft_failed" jika score < 50 (perlu generate ulang)
-//             - Retry logic diperbaiki: retry dengan instruksi berbeda berdasarkan kegagalan spesifik
+// PERUBAHAN DARI v2:
+// ✓ Ganti Cloudflare Workers AI (Llama 4 Scout) → OpenRouter (Google Gemma 4 31B IT)
+// ✓ Model: google/gemma-4-31b-it:free via api.openrouter.ai
+// ✓ Import prompt builder dari gemma-writer-prompt (rename dari llama-writer-prompt)
+// ✓ Semua referensi "Llama" di label progress & draft_model diupdate ke Gemma
 
 import { NextRequest } from "next/server"
 import { createClient } from "@/lib/supabase/server"
-import { buildLlamaWriterSystem, buildLlamaWriterUser, estimatePromptTokens } from "@/lib/ai/llama-writer-prompt"
+import { buildGemmaWriterSystem, buildGemmaWriterUser, estimatePromptTokens } from "@/lib/ai/gemma-writer-prompt"
 import { checkQuality } from "@/lib/editorial/types"
 import type { EditorialBrief } from "@/lib/editorial/types"
 
@@ -25,13 +22,7 @@ function countWordsFromHTML(html: string): number {
   return html.replace(/<[^>]+>/g, " ").split(/\s+/).filter(Boolean).length
 }
 
-// Llama (lewat Cloudflare Workers AI) tidak punya mode "JSON terjamin" seperti
-// response_format di Groq/OpenAI — model ini kadang menulis newline/tab MENTAH
-// di tengah paragraf (bukan \n yang di-escape), padahal JSON murni tidak boleh
-// ada karakter kontrol mentah di dalam string. Sanitizer ini menyusuri karakter
-// satu per satu, dan HANYA meng-escape newline/tab ketika posisinya di DALAM
-// string JSON (antara tanda kutip) — supaya struktur { } di luar string tidak
-// ikut rusak.
+// Sanitizer JSON: escape newline/tab mentah di dalam string JSON
 function sanitizeJsonControlChars(raw: string): string {
   let out = ""
   let inString = false
@@ -43,7 +34,7 @@ function sanitizeJsonControlChars(raw: string): string {
       if (ch === "\\") { out += ch; escaped = true; continue }
       if (ch === '"') { out += ch; inString = false; continue }
       if (ch === "\n") { out += "\\n"; continue }
-      if (ch === "\r") { continue } // buang CR, biasanya pasangan \r\n
+      if (ch === "\r") { continue }
       if (ch === "\t") { out += "\\t"; continue }
       out += ch
     } else {
@@ -54,26 +45,50 @@ function sanitizeJsonControlChars(raw: string): string {
   return out
 }
 
-function extractJsonFromLlama(raw: string): { title: string; content: string } {
+// Auto-repair JSON dengan tanda kutip mentah di dalam string
+function parseJsonWithAutoRepair(text: string): unknown {
+  let current = text
+  for (let attempt = 0; attempt < 40; attempt++) {
+    try {
+      return JSON.parse(current)
+    } catch (e) {
+      const msg = e instanceof Error ? e.message : String(e)
+      const m = msg.match(/position (\d+)/)
+      if (!m) throw e
+      const pos = Number(m[1])
+      let quoteIdx = -1
+      for (let k = pos; k >= 0; k--) {
+        if (current[k] === '"') { quoteIdx = k; break }
+      }
+      if (quoteIdx === -1) throw e
+      current = current.slice(0, quoteIdx) + "\\" + current.slice(quoteIdx)
+    }
+  }
+  throw new Error("Auto-repair JSON melebihi batas percobaan")
+}
+
+function extractJsonFromResponse(rawInput: string): { title: string; content: string } {
+  const raw = typeof rawInput === "string" ? rawInput : JSON.stringify(rawInput) ?? String(rawInput)
+
   const clean = sanitizeJsonControlChars(raw)
   let lastErr = ""
 
-  try { const p = JSON.parse(clean); if (p.title && p.content) return p } catch (e) { lastErr = e instanceof Error ? e.message : String(e) }
+  try { const p = parseJsonWithAutoRepair(clean) as any; if (p.title && p.content) return p } catch (e) { lastErr = e instanceof Error ? e.message : String(e) }
 
   const block = clean.match(/```(?:json)?\s*([\s\S]+?)```/)
-  if (block) { try { const p = JSON.parse(block[1].trim()); if (p.title && p.content) return p } catch (e) { lastErr = e instanceof Error ? e.message : lastErr } }
+  if (block) { try { const p = parseJsonWithAutoRepair(block[1].trim()) as any; if (p.title && p.content) return p } catch (e) { lastErr = e instanceof Error ? e.message : lastErr } }
 
   const i = clean.indexOf("{"), j = clean.lastIndexOf("}")
-  if (i !== -1 && j !== -1) { try { const p = JSON.parse(clean.slice(i, j + 1)); if (p.title && p.content) return p } catch (e) { lastErr = e instanceof Error ? e.message : lastErr } }
+  if (i !== -1 && j !== -1) { try { const p = parseJsonWithAutoRepair(clean.slice(i, j + 1)) as any; if (p.title && p.content) return p } catch (e) { lastErr = e instanceof Error ? e.message : lastErr } }
 
   throw new Error(
-    `Llama tidak mengembalikan JSON valid (panjang respons: ${raw.length} karakter). ` +
+    `Model tidak mengembalikan JSON valid (panjang respons: ${raw.length} karakter). ` +
     `Parse error: ${lastErr}. ` +
     `Awal: ${raw.slice(0, 150)} ||| Akhir: ${raw.slice(-150)}`
   )
 }
 
-// ── Bangun instruksi retry berdasarkan kegagalan spesifik ───────────────────
+// Bangun instruksi retry berdasarkan kegagalan spesifik
 function buildRetryInstruction(
   qc: ReturnType<typeof checkQuality>,
   brief: EditorialBrief,
@@ -97,32 +112,70 @@ function buildRetryInstruction(
   return issues.join("\n\n") + "\n\nKembalikan artikel LENGKAP dalam JSON yang sama. Jangan potong konten yang sudah bagus."
 }
 
-// ── Panggil Cloudflare Workers AI ────────────────────────────────────────────
-async function callCloudflareAI(
-  cfUrl: string,
-  cfToken: string,
+// Normalizer respons AI ke string
+function normalizeAiText(value: unknown): string {
+  if (typeof value === "string") return value
+
+  if (Array.isArray(value)) {
+    return value
+      .map((part) => {
+        if (typeof part === "string") return part
+        if (part && typeof part === "object") {
+          const p = part as Record<string, unknown>
+          if (typeof p.text === "string") return p.text
+        }
+        return ""
+      })
+      .join("")
+  }
+
+  if (value && typeof value === "object") {
+    const obj = value as Record<string, unknown>
+    if (typeof obj.text === "string") return obj.text
+    if (typeof obj.content === "string") return obj.content
+  }
+
+  return ""
+}
+
+// ── Panggil OpenRouter (Google Gemma 4 31B IT) ────────────────────────────────
+async function callOpenRouter(
+  apiKey: string,
   messages: Array<{ role: string; content: string }>,
 ): Promise<string> {
-  const res = await fetch(cfUrl, {
-    method:  "POST",
-    headers: { "Authorization": `Bearer ${cfToken}`, "Content-Type": "application/json" },
+  const res = await fetch("https://openrouter.ai/api/v1/chat/completions", {
+    method: "POST",
+    headers: {
+      "Authorization": `Bearer ${apiKey}`,
+      "Content-Type": "application/json",
+      "HTTP-Referer": process.env.NEXT_PUBLIC_BASE_URL ?? "https://halfspace.id",
+      "X-Title": "HalfSpace Draft Generator",
+    },
     body: JSON.stringify({
+      model: "google/gemma-4-31b-it:free",
       messages,
       max_tokens:  4096,
       temperature: 0.4,
-      stream:      false,
     }),
     signal: AbortSignal.timeout(120_000),
   })
 
   if (!res.ok) {
     const body = await res.text().catch(() => "")
-    throw new Error(`Cloudflare AI error ${res.status}: ${body.slice(0, 200)}`)
+    throw new Error(`OpenRouter error ${res.status}: ${body.slice(0, 200)}`)
   }
 
   const json = await res.json()
-  const raw  = json?.result?.response ?? json?.response ?? json?.choices?.[0]?.message?.content ?? ""
-  if (!raw) throw new Error("Cloudflare AI tidak mengembalikan response")
+  const rawValue = json?.choices?.[0]?.message?.content
+  const raw = normalizeAiText(rawValue)
+
+  if (!raw.trim()) {
+    throw new Error(
+      `OpenRouter tidak mengembalikan teks dari Gemma 4 31B. ` +
+      `Raw shape: ${JSON.stringify(rawValue)?.slice(0, 300)}`
+    )
+  }
+
   return raw
 }
 
@@ -163,29 +216,25 @@ export async function POST(req: NextRequest) {
         const tokenEst = estimatePromptTokens(brief)
         send("progress", {
           step: 2, total: 5,
-          label: `Brief siap (estimasi ${tokenEst.totalTokens} token). Mengirim ke Llama 4 Scout...`,
+          label: `Brief siap (estimasi ${tokenEst.totalTokens} token). Mengirim ke Gemma 4 31B...`,
           tokenEstimate: tokenEst,
         })
 
-        const cfToken = process.env.CF_API_TOKEN
-        const cfAccId = process.env.CF_ACCOUNT_ID
-        if (!cfToken || !cfAccId) throw new Error("CF_API_TOKEN atau CF_ACCOUNT_ID tidak ditemukan")
+        const openRouterKey = process.env.OPENROUTER_API_KEY
+        if (!openRouterKey) throw new Error("OPENROUTER_API_KEY tidak ditemukan di environment")
 
-        const cfUrl = process.env.CF_AI_GATEWAY_URL
-          ?? `https://api.cloudflare.com/client/v4/accounts/${cfAccId}/ai/run/@cf/meta/llama-4-scout-17b-16e-instruct`
-
-        const systemPrompt = buildLlamaWriterSystem()
-        const userPrompt   = buildLlamaWriterUser(brief)
+        const systemPrompt = buildGemmaWriterSystem()
+        const userPrompt   = buildGemmaWriterUser(brief)
 
         // ── 3. Generate pertama ──────────────────────────────────────────
-        send("progress", { step: 3, total: 5, label: "Llama 4 Scout menulis artikel..." })
+        send("progress", { step: 3, total: 5, label: "Gemma 4 31B menulis artikel..." })
 
-        const rawFirst = await callCloudflareAI(cfUrl, cfToken, [
+        const rawFirst = await callOpenRouter(openRouterKey, [
           { role: "system", content: systemPrompt },
           { role: "user",   content: userPrompt   },
         ])
 
-        let parsed = extractJsonFromLlama(rawFirst)
+        let parsed = extractJsonFromResponse(rawFirst)
 
         // ── 4. Quality check ─────────────────────────────────────────────
         let qc = checkQuality(
@@ -204,14 +253,14 @@ export async function POST(req: NextRequest) {
           })
 
           try {
-            const rawRetry = await callCloudflareAI(cfUrl, cfToken, [
+            const rawRetry = await callOpenRouter(openRouterKey, [
               { role: "system",    content: systemPrompt },
               { role: "user",      content: userPrompt   },
               { role: "assistant", content: rawFirst      },
               { role: "user",      content: retryInstruction },
             ])
 
-            const parsedRetry = extractJsonFromLlama(rawRetry)
+            const parsedRetry = extractJsonFromResponse(rawRetry)
             const qcRetry = checkQuality(parsedRetry.content, brief.qualityGate, brief.quotes.length > 0)
 
             // Ambil hasil terbaik antara percobaan pertama dan retry
@@ -227,8 +276,8 @@ export async function POST(req: NextRequest) {
         // ── 5. Tentukan status berdasarkan quality score ─────────────────
         let draftStatus: string
         if (qc.score >= 70)      draftStatus = "draft_ready"
-        else if (qc.score >= 50) draftStatus = "draft_below_quality"   // bisa publish manual
-        else                     draftStatus = "draft_failed"           // perlu generate ulang
+        else if (qc.score >= 50) draftStatus = "draft_below_quality"
+        else                     draftStatus = "draft_failed"
 
         send("progress", {
           step: 4, total: 5,
@@ -246,8 +295,8 @@ export async function POST(req: NextRequest) {
             draft_content:       parsed.content,
             draft_word_count:    qc.wordCount,
             draft_quality_score: qc.score,
-            draft_quality_data:  qc,              // kolom baru di v2
-            draft_model:         "llama-4-scout-17b-16e-instruct",
+            draft_quality_data:  qc,
+            draft_model:         "google/gemma-4-31b-it",
             draft_generated_at:  new Date().toISOString(),
             status:              draftStatus,
           })

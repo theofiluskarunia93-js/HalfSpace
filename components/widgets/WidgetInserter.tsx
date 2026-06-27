@@ -14,7 +14,73 @@
 
 import { useState, useEffect } from "react"
 import { createClient } from "@/lib/supabase/client"
-import { Plus, Trash2 } from "lucide-react"
+import { Plus, Trash2, Zap, Loader2 } from "lucide-react"
+
+// ─── Bzzoiro Autofill ─────────────────────────────────────────────────────────
+
+function useBzzAutofill(widgetType: string) {
+  const [query, setQuery] = useState("")
+  const [loading, setLoading] = useState(false)
+  const [error, setError] = useState<string | null>(null)
+
+  async function autofill(onData: (data: any) => void) {
+    if (!query.trim()) { setError("Masukkan nama tim, pemain, atau stadion."); return }
+    setLoading(true); setError(null)
+    try {
+      const res = await fetch("/api/widget-autofill", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ widget_type: widgetType, query: query.trim() }),
+      })
+      const json = await res.json()
+      if (!res.ok || json.error) throw new Error(json.error ?? "Gagal mengambil data.")
+      onData(json.data)
+    } catch (e: any) {
+      setError(e.message ?? "Bzzoiro tidak merespons.")
+    } finally {
+      setLoading(false)
+    }
+  }
+
+  return { query, setQuery, loading, error, autofill }
+}
+
+function BzzBar({
+  placeholder, loading, error, query, setQuery, onFill,
+}: {
+  placeholder: string
+  loading: boolean
+  error: string | null
+  query: string
+  setQuery: (v: string) => void
+  onFill: () => void
+}) {
+  return (
+    <div className="rounded-lg border border-primary/20 bg-primary/5 p-3 space-y-2">
+      <p className="text-[10px] font-bold uppercase tracking-widest text-primary/70">
+        Isi Otomatis dari Bzzoiro
+      </p>
+      <div className="flex gap-2">
+        <input
+          value={query}
+          onChange={e => setQuery(e.target.value)}
+          onKeyDown={e => e.key === "Enter" && onFill()}
+          placeholder={placeholder}
+          className="flex-1 rounded border border-border bg-secondary/50 px-2.5 py-1.5 text-sm text-foreground outline-none focus:border-primary/50 placeholder:text-muted-foreground/50"
+        />
+        <button
+          onClick={onFill}
+          disabled={loading}
+          className="flex items-center gap-1.5 rounded bg-primary px-3 py-1.5 text-xs font-bold text-black hover:opacity-90 disabled:opacity-50 shrink-0"
+        >
+          {loading ? <Loader2 size={12} className="animate-spin" /> : <Zap size={12} />}
+          Isi
+        </button>
+      </div>
+      {error && <p className="text-xs text-red-400">{error}</p>}
+    </div>
+  )
+}
 
 
 // ─── Type ─────────────────────────────────────────────────────────────────────
@@ -30,6 +96,8 @@ export type WidgetType =
   | "daftar_pemain"
   | "pemain_andalan"
   | "hub"
+  | "statistik_pertandingan"
+  | "starting_lineup"
 
 // ─── Shortcode map ────────────────────────────────────────────────────────────
 export const SHORTCODE_MAP: Record<WidgetType, string> = {
@@ -44,6 +112,8 @@ export const SHORTCODE_MAP: Record<WidgetType, string> = {
   daftar_pemain:           "daftar_pemain_data",
   pemain_andalan:          "pemain_andalan_data",
   hub:                     "hub_data",
+  statistik_pertandingan:  "statistik_pertandingan_data",
+  starting_lineup:         "starting_lineup_data",
 }
 
 export const TABLE_MAP: Record<WidgetType, string> = {
@@ -58,6 +128,8 @@ export const TABLE_MAP: Record<WidgetType, string> = {
   daftar_pemain:           "widget_daftar_pemain",
   pemain_andalan:          "widget_pemain_andalan",
   hub:                     "widget_hub",
+  statistik_pertandingan:  "widget_statistik_pertandingan",
+  starting_lineup:         "widget_starting_lineup",
 }
 
 export const WIDGET_META: Record<WidgetType, { icon: string; label: string }> = {
@@ -72,6 +144,8 @@ export const WIDGET_META: Record<WidgetType, { icon: string; label: string }> = 
   daftar_pemain:           { icon: "👥", label: "Daftar Pemain Tim" },
   pemain_andalan:          { icon: "⭐", label: "Pemain Andalan" },
   hub:                     { icon: "🗂️", label: "Widget Hub" },
+  statistik_pertandingan:  { icon: "📊", label: "Statistik Pertandingan" },
+  starting_lineup:         { icon: "🧩", label: "Starting Lineup" },
 }
 
 // ─── Props ────────────────────────────────────────────────────────────────────
@@ -95,6 +169,7 @@ function defaultFormResults(): FormResult[] {
 
 function PerbandinganTimForm({ widgetId, onSaved }: { widgetId: string; onSaved: () => void }) {
   const supabase = createClient()
+  const bzz = useBzzAutofill("perbandingan_tim")
   const [saving, setSaving] = useState(false)
   const [data, setData] = useState({
     home_team: "", away_team: "", competition: "FRIENDLY",
@@ -131,6 +206,28 @@ function PerbandinganTimForm({ widgetId, onSaved }: { widgetId: string; onSaved:
 
   return (
     <div className="space-y-3 text-sm">
+      <BzzBar
+        placeholder="Contoh: Spanyol vs Jerman"
+        query={bzz.query} setQuery={bzz.setQuery}
+        loading={bzz.loading} error={bzz.error}
+        onFill={() => bzz.autofill((d: any) => {
+          setData(p => ({ ...p,
+            home_team: d.home_team ?? p.home_team,
+            away_team: d.away_team ?? p.away_team,
+            competition: d.competition ?? p.competition,
+            home_rank: d.home_rank ?? p.home_rank,
+            away_rank: d.away_rank ?? p.away_rank,
+            home_coach: d.home_coach ?? p.home_coach,
+            away_coach: d.away_coach ?? p.away_coach,
+            total_matches: d.total_matches ?? p.total_matches,
+            home_wins: d.home_wins ?? p.home_wins,
+            draws: d.draws ?? p.draws,
+            away_wins: d.away_wins ?? p.away_wins,
+            home_form: d.home_form ?? p.home_form,
+            away_form: d.away_form ?? p.away_form,
+          }))
+        })}
+      />
       <div className="grid grid-cols-2 gap-2">
         {F("Tim Tuan Rumah", "home_team")}
         {F("Tim Tamu", "away_team")}
@@ -168,10 +265,40 @@ function PerbandinganTimForm({ widgetId, onSaved }: { widgetId: string; onSaved:
 type EventType = "goal" | "yellow_card" | "red_card" | "substitution" | "var" | "penalty"
 type MatchStatus = "upcoming" | "live" | "finished"
 
-interface TimelineEvent { minute: string; type: EventType; player: string; team: "home" | "away"; score_after: string }
+interface TimelineEvent {
+  minute: string
+  type: EventType
+  team: "home" | "away"
+  score_after: string
+  // Pemain utama event ini (gol / kartu / VAR)
+  player_name: string
+  player_number?: string
+  player_position?: string
+  player_photo?: string
+  // Khusus gol/penalti
+  assist_name?: string
+  // Khusus substitusi
+  sub_in_name?: string
+  sub_in_number?: string
+  sub_in_position?: string
+  sub_in_photo?: string
+  sub_out_name?: string
+  sub_out_number?: string
+  sub_out_position?: string
+  sub_out_photo?: string
+}
+
+const EMPTY_TIMELINE_EVENT: TimelineEvent = {
+  minute: "", type: "goal", team: "home", score_after: "",
+  player_name: "", player_number: "", player_position: "", player_photo: "",
+  assist_name: "",
+  sub_in_name: "", sub_in_number: "", sub_in_position: "", sub_in_photo: "",
+  sub_out_name: "", sub_out_number: "", sub_out_position: "", sub_out_photo: "",
+}
 
 function TimelineForm({ widgetId, onSaved }: { widgetId: string; onSaved: () => void }) {
   const supabase = createClient()
+  const bzz = useBzzAutofill("timeline_pertandingan")
   const [saving, setSaving] = useState(false)
   const [data, setData] = useState({
     home_team: "", away_team: "",
@@ -184,17 +311,22 @@ function TimelineForm({ widgetId, onSaved }: { widgetId: string; onSaved: () => 
     match_info: "",
     events: [] as TimelineEvent[],
   })
-  const [newEvent, setNewEvent] = useState<TimelineEvent>({ minute: "", type: "goal", player: "", team: "home", score_after: "" })
+  const [newEvent, setNewEvent] = useState<TimelineEvent>({ ...EMPTY_TIMELINE_EVENT })
 
   useEffect(() => {
     supabase.from("widget_timeline_pertandingan").select("*").eq("id", widgetId).maybeSingle()
       .then(({ data: row }) => { if (row) setData(row as any) })
   }, [widgetId])
 
+  const isSub = newEvent.type === "substitution"
+  const isGoal = newEvent.type === "goal" || newEvent.type === "penalty"
+
   const addEvent = () => {
-    if (!newEvent.minute || !newEvent.player) return
+    if (!newEvent.minute) return
+    if (isSub && !newEvent.sub_in_name && !newEvent.sub_out_name) return
+    if (!isSub && !newEvent.player_name) return
     setData(p => ({ ...p, events: [newEvent, ...p.events] }))
-    setNewEvent({ minute: "", type: "goal", player: "", team: "home", score_after: "" })
+    setNewEvent({ ...EMPTY_TIMELINE_EVENT, type: newEvent.type, team: newEvent.team })
   }
 
   const removeEvent = (i: number) => setData(p => ({ ...p, events: p.events.filter((_, j) => j !== i) }))
@@ -215,8 +347,37 @@ function TimelineForm({ widgetId, onSaved }: { widgetId: string; onSaved: () => 
     </div>
   )
 
+  // Helper input untuk field-field di dalam newEvent (form "Tambah Event")
+  const E = (label: string, key: keyof TimelineEvent, placeholder = "") => (
+    <div key={key}>
+      <label className="block text-xs text-muted-foreground mb-1">{label}</label>
+      <input value={(newEvent[key] as string) ?? ""} placeholder={placeholder}
+        onChange={e => setNewEvent(p => ({ ...p, [key]: e.target.value }))}
+        className="w-full rounded border border-border bg-secondary/50 px-2 py-1.5 text-sm" />
+    </div>
+  )
+
   return (
     <div className="space-y-3 text-sm">
+      <BzzBar
+        placeholder="Contoh: Brasil vs Argentina"
+        query={bzz.query} setQuery={bzz.setQuery}
+        loading={bzz.loading} error={bzz.error}
+        onFill={() => bzz.autofill((d: any) => {
+          setData(p => ({ ...p,
+            home_team: d.home_team ?? p.home_team,
+            away_team: d.away_team ?? p.away_team,
+            home_abbr: d.home_abbr ?? p.home_abbr,
+            away_abbr: d.away_abbr ?? p.away_abbr,
+            home_score: d.home_score ?? p.home_score,
+            away_score: d.away_score ?? p.away_score,
+            status: d.status ?? p.status,
+            competition: d.competition ?? p.competition,
+            match_info: d.match_info ?? p.match_info,
+          }))
+          if (d.events?.length) setData(p => ({ ...p, events: d.events }))
+        })}
+      />
       <div className="grid grid-cols-2 gap-2">
         {F("Tim Tuan Rumah", "home_team")}
         {F("Tim Tamu", "away_team")}
@@ -246,7 +407,7 @@ function TimelineForm({ widgetId, onSaved }: { widgetId: string; onSaved: () => 
       {F("Info Pertandingan", "match_info")}
       {F("Kompetisi", "competition")}
 
-      {/* Event input */}
+      {/* Event input — field menyesuaikan tipe event yang dipilih */}
       <div className="rounded border border-border p-3 space-y-2">
         <p className="text-xs font-semibold text-foreground">Tambah Event</p>
         <div className="grid grid-cols-2 gap-2">
@@ -258,31 +419,68 @@ function TimelineForm({ widgetId, onSaved }: { widgetId: string; onSaved: () => 
             <label className="block text-xs text-muted-foreground mb-1">Tipe</label>
             <select value={newEvent.type} onChange={e => setNewEvent(p => ({ ...p, type: e.target.value as EventType }))} className="w-full rounded border border-border bg-secondary/50 px-2 py-1.5 text-sm">
               <option value="goal">Gol ⚽</option>
+              <option value="penalty">Penalti ⚽</option>
               <option value="yellow_card">Kartu Kuning 🟨</option>
               <option value="red_card">Kartu Merah 🟥</option>
               <option value="substitution">Substitusi 🔄</option>
-              <option value="penalty">Penalti ⚽</option>
               <option value="var">VAR 📺</option>
             </select>
           </div>
         </div>
         <div>
-          <label className="block text-xs text-muted-foreground mb-1">Pemain</label>
-          <input value={newEvent.player} onChange={e => setNewEvent(p => ({ ...p, player: e.target.value }))} placeholder="Nama Pemain" className="w-full rounded border border-border bg-secondary/50 px-2 py-1.5 text-sm" />
+          <label className="block text-xs text-muted-foreground mb-1">Tim</label>
+          <select value={newEvent.team} onChange={e => setNewEvent(p => ({ ...p, team: e.target.value as "home" | "away" }))} className="w-full rounded border border-border bg-secondary/50 px-2 py-1.5 text-sm">
+            <option value="home">Tuan Rumah</option>
+            <option value="away">Tamu</option>
+          </select>
         </div>
-        <div className="grid grid-cols-2 gap-2">
-          <div>
-            <label className="block text-xs text-muted-foreground mb-1">Tim</label>
-            <select value={newEvent.team} onChange={e => setNewEvent(p => ({ ...p, team: e.target.value as "home" | "away" }))} className="w-full rounded border border-border bg-secondary/50 px-2 py-1.5 text-sm">
-              <option value="home">Tuan Rumah</option>
-              <option value="away">Tamu</option>
-            </select>
-          </div>
-          <div>
-            <label className="block text-xs text-muted-foreground mb-1">Skor setelah</label>
-            <input value={newEvent.score_after} onChange={e => setNewEvent(p => ({ ...p, score_after: e.target.value }))} placeholder="1–0" className="w-full rounded border border-border bg-secondary/50 px-2 py-1.5 text-sm" />
-          </div>
-        </div>
+
+        {isGoal && (
+          <>
+            <div className="grid grid-cols-3 gap-2">
+              {E("Nama Pencetak Gol", "player_name", "Arda Güler")}
+              {E("Nomor", "player_number", "8")}
+              {E("Posisi", "player_position", "Penyerang")}
+            </div>
+            {E("URL Foto Pemain (opsional)", "player_photo", "https://...")}
+            {E("Assist oleh (opsional)", "assist_name", "Barış Alper Yılmaz")}
+            <div>
+              <label className="block text-xs text-muted-foreground mb-1">Skor setelah gol ini</label>
+              <input value={newEvent.score_after} onChange={e => setNewEvent(p => ({ ...p, score_after: e.target.value }))} placeholder="1-0" className="w-full rounded border border-border bg-secondary/50 px-2 py-1.5 text-sm" />
+            </div>
+          </>
+        )}
+
+        {!isGoal && !isSub && (
+          <>
+            <div className="grid grid-cols-3 gap-2">
+              {E("Nama Pemain", "player_name", "Sebastian Berhalter")}
+              {E("Nomor", "player_number", "14")}
+              {E("Posisi", "player_position", "Gelandang")}
+            </div>
+            {E("URL Foto Pemain (opsional)", "player_photo", "https://...")}
+          </>
+        )}
+
+        {isSub && (
+          <>
+            <p className="text-[11px] font-semibold text-[#39FF14]/80 pt-1">Pemain Masuk</p>
+            <div className="grid grid-cols-3 gap-2">
+              {E("Nama Masuk", "sub_in_name", "Irfan Kahveci")}
+              {E("Nomor", "sub_in_number", "17")}
+              {E("Posisi", "sub_in_position", "Penyerang")}
+            </div>
+            {E("URL Foto Masuk (opsional)", "sub_in_photo", "https://...")}
+            <p className="text-[11px] font-semibold text-orange-400/80 pt-1">Pemain Keluar</p>
+            <div className="grid grid-cols-3 gap-2">
+              {E("Nama Keluar", "sub_out_name", "Barış Alper Yılmaz")}
+              {E("Nomor", "sub_out_number", "21")}
+              {E("Posisi", "sub_out_position", "Penyerang")}
+            </div>
+            {E("URL Foto Keluar (opsional)", "sub_out_photo", "https://...")}
+          </>
+        )}
+
         <button onClick={addEvent} className="w-full rounded border border-primary/50 text-primary text-xs py-1.5 hover:bg-primary/10 transition-colors">
           + Tambah Event
         </button>
@@ -295,7 +493,9 @@ function TimelineForm({ widgetId, onSaved }: { widgetId: string; onSaved: () => 
           {data.events.map((ev, i) => (
             <div key={i} className="flex items-center justify-between gap-2 rounded border border-border bg-secondary/30 px-2.5 py-1.5">
               <span className="text-xs text-muted-foreground">{ev.minute}</span>
-              <span className="text-xs font-medium text-foreground flex-1 truncate">{ev.player}</span>
+              <span className="text-xs font-medium text-foreground flex-1 truncate">
+                {ev.type === "substitution" ? `${ev.sub_in_name ?? "?"} ↗ ${ev.sub_out_name ?? "?"}` : ev.player_name}
+              </span>
               <span className="text-xs text-muted-foreground">{ev.score_after}</span>
               <button onClick={() => removeEvent(i)} className="text-destructive/60 hover:text-destructive text-xs">✕</button>
             </div>
@@ -345,6 +545,7 @@ function FSelect({ label, value, onChange, options }: {
 
 function JadwalForm({ widgetId, onSaved }: { widgetId: string; onSaved: () => void }) {
   const supabase = createClient()
+  const bzz = useBzzAutofill("jadwal")
   const [saving, setSaving] = useState(false)
   const [rows, setRows] = useState([{
     id: crypto.randomUUID(), group_label: "A", home_team: "", away_team: "",
@@ -387,6 +588,14 @@ function JadwalForm({ widgetId, onSaved }: { widgetId: string; onSaved: () => vo
 
   return (
     <div className="space-y-3">
+      <BzzBar
+        placeholder="Contoh: Inggris vs Prancis"
+        query={bzz.query} setQuery={bzz.setQuery}
+        loading={bzz.loading} error={bzz.error}
+        onFill={() => bzz.autofill((d: any[]) => {
+          setRows(d.map(m => ({ ...m, id: crypto.randomUUID(), score_home: m.score_home ?? "", score_away: m.score_away ?? "" })))
+        })}
+      />
       {rows.map((row, i) => (
         <div key={row.id} className="relative rounded-lg border border-border bg-secondary/20 p-3 space-y-2">
           <button onClick={() => removeRow(i)} className="absolute right-2 top-2 text-xs text-muted-foreground hover:text-destructive">✕</button>
@@ -424,6 +633,7 @@ function JadwalForm({ widgetId, onSaved }: { widgetId: string; onSaved: () => vo
 
 function KlasemenForm({ widgetId, onSaved }: { widgetId: string; onSaved: () => void }) {
   const supabase = createClient()
+  const bzz = useBzzAutofill("klasemen")
   const [saving, setSaving] = useState(false)
   const [rows, setRows] = useState([{
     id: crypto.randomUUID(), group_label: "A", rank: 1, team_name: "",
@@ -460,6 +670,14 @@ function KlasemenForm({ widgetId, onSaved }: { widgetId: string; onSaved: () => 
 
   return (
     <div className="space-y-3">
+      <BzzBar
+        placeholder="Contoh: Liga Champions atau nama liga"
+        query={bzz.query} setQuery={bzz.setQuery}
+        loading={bzz.loading} error={bzz.error}
+        onFill={() => bzz.autofill((d: any[]) => {
+          setRows(d.map(r => ({ ...r, id: crypto.randomUUID() })))
+        })}
+      />
       {rows.map((row, i) => (
         <div key={row.id} className="relative rounded-lg border border-border bg-secondary/20 p-3 space-y-2">
           <button onClick={() => removeRow(i)} className="absolute right-2 top-2 text-xs text-muted-foreground hover:text-destructive">✕</button>
@@ -491,6 +709,7 @@ function KlasemenForm({ widgetId, onSaved }: { widgetId: string; onSaved: () => 
 
 function TransferForm({ widgetId, onSaved }: { widgetId: string; onSaved: () => void }) {
   const supabase = createClient()
+  const bzz = useBzzAutofill("transfer")
   const [saving, setSaving] = useState(false)
   const [rows, setRows] = useState([{
     id: crypto.randomUUID(), league_label: "", player_name: "", player_initials: "",
@@ -535,6 +754,30 @@ function TransferForm({ widgetId, onSaved }: { widgetId: string; onSaved: () => 
 
   return (
     <div className="space-y-3">
+      <BzzBar
+        placeholder="Contoh: Erling Haaland"
+        query={bzz.query} setQuery={bzz.setQuery}
+        loading={bzz.loading} error={bzz.error}
+        onFill={() => bzz.autofill((d: any) => {
+          const initials = (d.nama_pemain ?? "").split(" ").map((w: string) => w[0] ?? "").join("").toUpperCase().slice(0, 3)
+          setRows([{
+            id: crypto.randomUUID(),
+            league_label: "",
+            league_dest: "",
+            player_name: d.nama_pemain ?? "",
+            player_initials: initials,
+            position: d.posisi ?? "",
+            age: d.usia ? String(d.usia) : "",
+            from_club: d.asal_klub ?? "",
+            from_club_color: "#1a1a2e",
+            to_club: "",
+            transfer_value: d.transfer_value ? String(d.transfer_value) : "",
+            is_free: d.is_free ?? false,
+            status: "rumor",
+            transfer_date: d.transfer_date ?? "",
+          }])
+        })}
+      />
       {rows.map((row, i) => (
         <div key={row.id} className="relative rounded-lg border border-border bg-secondary/20 p-3 space-y-2">
           <button onClick={() => removeRow(i)} className="absolute right-2 top-2 text-xs text-muted-foreground hover:text-destructive">✕</button>
@@ -572,6 +815,7 @@ function TransferForm({ widgetId, onSaved }: { widgetId: string; onSaved: () => 
 
 function PeluangForm({ widgetId, onSaved }: { widgetId: string; onSaved: () => void }) {
   const supabase = createClient()
+  const bzz = useBzzAutofill("peluang")
   const [saving, setSaving] = useState(false)
   const [rows, setRows] = useState([{
     id: crypto.randomUUID(), rank: 1, team_name: "", team_flag: "🏳️",
@@ -618,6 +862,23 @@ function PeluangForm({ widgetId, onSaved }: { widgetId: string; onSaved: () => v
 
   return (
     <div className="space-y-3">
+      <BzzBar
+        placeholder="Contoh: Spanyol vs Jerman"
+        query={bzz.query} setQuery={bzz.setQuery}
+        loading={bzz.loading} error={bzz.error}
+        onFill={() => bzz.autofill((d: any[]) => {
+          setRows(d.map((r, i) => ({
+            id: crypto.randomUUID(),
+            rank: r.rank ?? i + 1,
+            team_name: r.team_name ?? "",
+            team_flag: "",
+            category: i === 0 ? "FAVORIT UTAMA" : i === 1 ? "KANDIDAT KUAT" : "DARK HORSE",
+            win_pct: r.win_pct ?? 50,
+            reasons_win: r.pros?.length ? r.pros : [""],
+            reasons_lose: r.cons?.length ? r.cons : [""],
+          })))
+        })}
+      />
       {rows.map((row, i) => (
         <div key={row.id} className="relative rounded-lg border border-border bg-secondary/20 p-3 space-y-2">
           <button onClick={() => removeRow(i)} className="absolute right-2 top-2 text-xs text-muted-foreground hover:text-destructive">✕</button>
@@ -667,6 +928,7 @@ function PeluangForm({ widgetId, onSaved }: { widgetId: string; onSaved: () => v
 
 function AnalisaTaktisForm({ widgetId, onSaved }: { widgetId: string; onSaved: () => void }) {
   const supabase = createClient()
+  const bzz = useBzzAutofill("analisa_taktis")
   const [saving, setSaving] = useState(false)
   const [data, setData] = useState({
     team_name: "", coach_name: "", formation: "4-3-3",
@@ -697,6 +959,20 @@ function AnalisaTaktisForm({ widgetId, onSaved }: { widgetId: string; onSaved: (
 
   return (
     <div className="space-y-3">
+      <BzzBar
+        placeholder="Contoh: Brasil atau nama pelatih"
+        query={bzz.query} setQuery={bzz.setQuery}
+        loading={bzz.loading} error={bzz.error}
+        onFill={() => bzz.autofill((d: any) => {
+          setData({
+            team_name: d.team_name ?? "",
+            coach_name: d.coach_name ?? "",
+            formation: d.formation ?? "4-3-3",
+            play_style: d.play_style ?? "",
+            main_weapons: d.main_weapons?.length ? d.main_weapons : [""],
+          })
+        })}
+      />
       <div className="grid grid-cols-2 gap-2">
         <div className="col-span-2"><FInput label="Nama Tim" value={data.team_name} onChange={v => setData(p => ({ ...p, team_name: v }))} placeholder="Brasil" /></div>
         <FInput label="Pelatih" value={data.coach_name} onChange={v => setData(p => ({ ...p, coach_name: v }))} placeholder="Ancelotti" />
@@ -731,6 +1007,7 @@ function AnalisaTaktisForm({ widgetId, onSaved }: { widgetId: string; onSaved: (
 
 function ProfilStadionForm({ widgetId, onSaved }: { widgetId: string; onSaved: () => void }) {
   const supabase = createClient()
+  const bzz = useBzzAutofill("profil_stadion")
   const [saving, setSaving] = useState(false)
   const [data, setData] = useState({
     nama_stadion: "",
@@ -778,6 +1055,23 @@ function ProfilStadionForm({ widgetId, onSaved }: { widgetId: string; onSaved: (
 
   return (
     <div className="space-y-3">
+      <BzzBar
+        placeholder="Contoh: Gelora Bung Karno atau Allianz Arena"
+        query={bzz.query} setQuery={bzz.setQuery}
+        loading={bzz.loading} error={bzz.error}
+        onFill={() => bzz.autofill((d: any) => {
+          setData({
+            nama_stadion: d.nama_stadion ?? "",
+            kota: d.kota ?? "",
+            negara: d.negara ?? "",
+            kapasitas: d.kapasitas ?? 0,
+            jenis_rumput: d.jenis_rumput ?? "Natural",
+            jenis_atap: d.jenis_atap ?? "Terbuka",
+            tahun_berdiri: d.tahun_berdiri ? String(d.tahun_berdiri) : "",
+            foto_url: "",
+          })
+        })}
+      />
       <FInput label="Nama Stadion" value={data.nama_stadion}
         onChange={v => setData(p => ({ ...p, nama_stadion: v }))} placeholder="Gelora Bung Karno" />
       <div className="grid grid-cols-2 gap-2">
@@ -810,6 +1104,7 @@ function ProfilStadionForm({ widgetId, onSaved }: { widgetId: string; onSaved: (
 
 function DaftarPemainForm({ widgetId, onSaved }: { widgetId: string; onSaved: () => void }) {
   const supabase = createClient()
+  const bzz = useBzzAutofill("daftar_pemain")
   const [saving, setSaving] = useState(false)
   const [rows, setRows] = useState([{
     id: crypto.randomUUID(),
@@ -892,6 +1187,14 @@ function DaftarPemainForm({ widgetId, onSaved }: { widgetId: string; onSaved: ()
 
   return (
     <div className="space-y-3">
+      <BzzBar
+        placeholder="Contoh: Manchester City atau nama tim"
+        query={bzz.query} setQuery={bzz.setQuery}
+        loading={bzz.loading} error={bzz.error}
+        onFill={() => bzz.autofill((d: any[]) => {
+          setRows(d.map(p => ({ ...p, id: crypto.randomUUID() })))
+        })}
+      />
 
       {rows.map((row, i) => (
         <div key={row.id} className="relative rounded-lg border border-border bg-secondary/20 p-3 space-y-2">
@@ -930,6 +1233,7 @@ function DaftarPemainForm({ widgetId, onSaved }: { widgetId: string; onSaved: ()
 
 function PemainAndalanForm({ widgetId, onSaved }: { widgetId: string; onSaved: () => void }) {
   const supabase = createClient()
+  const bzz = useBzzAutofill("pemain_andalan")
   const [saving, setSaving] = useState(false)
   const [data, setData] = useState({
     nama_pemain: "",
@@ -1001,6 +1305,29 @@ function PemainAndalanForm({ widgetId, onSaved }: { widgetId: string; onSaved: (
 
   return (
     <div className="space-y-3">
+      <BzzBar
+        placeholder="Contoh: Erling Haaland atau nama pemain"
+        query={bzz.query} setQuery={bzz.setQuery}
+        loading={bzz.loading} error={bzz.error}
+        onFill={() => bzz.autofill((d: any) => {
+          setData({
+            nama_pemain: d.nama_pemain ?? "",
+            nomor_punggung: d.nomor_punggung ?? 10,
+            posisi: d.posisi ?? "ST",
+            usia: d.usia ?? 25,
+            tinggi_badan: d.tinggi_badan ?? 175,
+            berat_badan: d.berat_badan ?? 70,
+            kaki_dominan: d.kaki_dominan ?? "Kanan",
+            jumlah_pertandingan: d.jumlah_pertandingan ?? 0,
+            kontribusi_goal: d.kontribusi_goal ?? 0,
+            kontribusi_assist: d.kontribusi_assist ?? 0,
+            menit_bermain: d.menit_bermain ?? 0,
+            rating_performa: d.rating_performa ?? 7.0,
+            kebangsaan: d.kebangsaan ?? "",
+            foto_url: "",
+          })
+        })}
+      />
       <p className="text-[10px] font-bold uppercase tracking-widest text-muted-foreground pt-1">Identitas Pemain</p>
       <FInput label="Nama Pemain" value={data.nama_pemain}
         onChange={v => setData(p => ({ ...p, nama_pemain: v }))} placeholder="Erling Haaland" />
@@ -1048,6 +1375,327 @@ function PemainAndalanForm({ widgetId, onSaved }: { widgetId: string; onSaved: (
   )
 }
 
+// ─── Form: Statistik Pertandingan ─────────────────────────────────────────────
+
+type StatDirection = "higher_better" | "lower_better" | "neutral"
+
+interface StatRowDraft {
+  label: string
+  home_value: number
+  away_value: number
+  is_percent: boolean
+  direction: StatDirection
+}
+
+const DEFAULT_STAT_PRESETS: StatRowDraft[] = [
+  { label: "Tembakan",               home_value: 0, away_value: 0, is_percent: false, direction: "higher_better" },
+  { label: "Tembakan ke Arah Gawang", home_value: 0, away_value: 0, is_percent: false, direction: "higher_better" },
+  { label: "Operan",                 home_value: 0, away_value: 0, is_percent: false, direction: "higher_better" },
+  { label: "Akurasi Operan",         home_value: 0, away_value: 0, is_percent: true,  direction: "higher_better" },
+  { label: "Pelanggaran",            home_value: 0, away_value: 0, is_percent: false, direction: "lower_better" },
+  { label: "Kartu Kuning",           home_value: 0, away_value: 0, is_percent: false, direction: "lower_better" },
+  { label: "Kartu Merah",            home_value: 0, away_value: 0, is_percent: false, direction: "lower_better" },
+  { label: "Offside",                home_value: 0, away_value: 0, is_percent: false, direction: "lower_better" },
+  { label: "Tendangan Sudut",        home_value: 0, away_value: 0, is_percent: false, direction: "neutral" },
+]
+
+function StatistikPertandinganForm({ widgetId, onSaved }: { widgetId: string; onSaved: () => void }) {
+  const supabase = createClient()
+  const bzz = useBzzAutofill("statistik_pertandingan")
+  const [saving, setSaving] = useState(false)
+  const [data, setData] = useState({
+    home_team: "", away_team: "",
+    home_flag: "🏳️", away_flag: "🏳️",
+    competition: "",
+    home_score: null as number | null,
+    away_score: null as number | null,
+    possession_home: 50,
+    stats: [] as StatRowDraft[],
+  })
+
+  useEffect(() => {
+    supabase.from("widget_statistik_pertandingan").select("*").eq("id", widgetId).maybeSingle()
+      .then(({ data: row }) => { if (row) setData(row as any) })
+  }, [widgetId])
+
+  const loadPreset = () => setData(p => ({ ...p, stats: DEFAULT_STAT_PRESETS.map(s => ({ ...s })) }))
+  const addStatRow = () => setData(p => ({ ...p, stats: [...p.stats, { label: "", home_value: 0, away_value: 0, is_percent: false, direction: "higher_better" }] }))
+  const removeStatRow = (i: number) => setData(p => ({ ...p, stats: p.stats.filter((_, j) => j !== i) }))
+  const updateStatRow = (i: number, patch: Partial<StatRowDraft>) =>
+    setData(p => ({ ...p, stats: p.stats.map((s, j) => (j === i ? { ...s, ...patch } : s)) }))
+
+  const save = async () => {
+    setSaving(true)
+    await supabase.from("widget_statistik_pertandingan").upsert({ id: widgetId, ...data })
+    setSaving(false)
+    onSaved()
+  }
+
+  const F = (label: string, key: "home_team" | "away_team" | "home_flag" | "away_flag" | "competition") => (
+    <div key={key}>
+      <label className="block text-xs text-muted-foreground mb-1">{label}</label>
+      <input value={data[key]} onChange={e => setData(p => ({ ...p, [key]: e.target.value }))}
+        className="w-full rounded border border-border bg-secondary/50 px-2.5 py-1.5 text-sm text-foreground focus:outline-none focus:border-primary" />
+    </div>
+  )
+
+  return (
+    <div className="space-y-3 text-sm">
+      <BzzBar
+        placeholder="Contoh: Inggris vs Prancis"
+        query={bzz.query} setQuery={bzz.setQuery}
+        loading={bzz.loading} error={bzz.error}
+        onFill={() => bzz.autofill((d: any) => {
+          setData(p => ({ ...p,
+            home_team: d.home_team ?? p.home_team,
+            away_team: d.away_team ?? p.away_team,
+            competition: d.competition ?? p.competition,
+            home_score: d.home_score ?? p.home_score,
+            away_score: d.away_score ?? p.away_score,
+            possession_home: d.possession_home ?? p.possession_home,
+          }))
+          if (d.stats?.length) setData(p => ({ ...p, stats: d.stats }))
+        })}
+      />
+      <div className="grid grid-cols-2 gap-2">
+        {F("Tim Tuan Rumah", "home_team")}
+        {F("Tim Tamu", "away_team")}
+      </div>
+      <div className="grid grid-cols-2 gap-2">
+        {F("Bendera Home (emoji)", "home_flag")}
+        {F("Bendera Away (emoji)", "away_flag")}
+      </div>
+      {F("Kompetisi", "competition")}
+      <div className="grid grid-cols-2 gap-2">
+        <div>
+          <label className="block text-xs text-muted-foreground mb-1">Skor Home (opsional)</label>
+          <input type="number" value={data.home_score ?? ""} placeholder="-"
+            onChange={e => setData(p => ({ ...p, home_score: e.target.value === "" ? null : Number(e.target.value) }))}
+            className="w-full rounded border border-border bg-secondary/50 px-2.5 py-1.5 text-sm" />
+        </div>
+        <div>
+          <label className="block text-xs text-muted-foreground mb-1">Skor Away (opsional)</label>
+          <input type="number" value={data.away_score ?? ""} placeholder="-"
+            onChange={e => setData(p => ({ ...p, away_score: e.target.value === "" ? null : Number(e.target.value) }))}
+            className="w-full rounded border border-border bg-secondary/50 px-2.5 py-1.5 text-sm" />
+        </div>
+      </div>
+      <div>
+        <label className="block text-xs text-muted-foreground mb-1">Penguasaan Bola — Home (%) — sisanya otomatis untuk Away</label>
+        <input type="number" min={0} max={100} value={data.possession_home}
+          onChange={e => setData(p => ({ ...p, possession_home: Math.min(100, Math.max(0, Number(e.target.value))) }))}
+          className="w-full rounded border border-border bg-secondary/50 px-2.5 py-1.5 text-sm" />
+      </div>
+
+      {/* Daftar statistik */}
+      <div className="rounded border border-border p-3 space-y-2">
+        <div className="flex items-center justify-between">
+          <p className="text-xs font-semibold text-foreground">Statistik ({data.stats.length})</p>
+          <button onClick={loadPreset} className="text-[11px] text-primary hover:underline">Muat preset (Tembakan, Operan, dll)</button>
+        </div>
+
+        {data.stats.map((s, i) => (
+          <div key={i} className="rounded border border-border bg-secondary/30 p-2 space-y-1.5">
+            <div className="flex items-center gap-2">
+              <input value={s.label} placeholder="Nama statistik (cth: Tembakan)" onChange={e => updateStatRow(i, { label: e.target.value })}
+                className="flex-1 rounded border border-border bg-background px-2 py-1 text-xs" />
+              <button onClick={() => removeStatRow(i)} className="text-destructive/60 hover:text-destructive text-xs">✕</button>
+            </div>
+            <div className="grid grid-cols-3 gap-1.5">
+              <input type="number" value={s.home_value} placeholder="Home" onChange={e => updateStatRow(i, { home_value: Number(e.target.value) })}
+                className="rounded border border-border bg-background px-2 py-1 text-xs" />
+              <input type="number" value={s.away_value} placeholder="Away" onChange={e => updateStatRow(i, { away_value: Number(e.target.value) })}
+                className="rounded border border-border bg-background px-2 py-1 text-xs" />
+              <select value={s.direction} onChange={e => updateStatRow(i, { direction: e.target.value as StatDirection })}
+                className="rounded border border-border bg-background px-1 py-1 text-xs">
+                <option value="higher_better">Lebih besar = unggul</option>
+                <option value="lower_better">Lebih kecil = unggul</option>
+                <option value="neutral">Netral (tanpa badge)</option>
+              </select>
+            </div>
+            <label className="flex items-center gap-1.5 text-[11px] text-muted-foreground">
+              <input type="checkbox" checked={s.is_percent} onChange={e => updateStatRow(i, { is_percent: e.target.checked })} />
+              Tampilkan sebagai persen (%)
+            </label>
+          </div>
+        ))}
+
+        <button onClick={addStatRow} className="w-full rounded border border-primary/50 text-primary text-xs py-1.5 hover:bg-primary/10 transition-colors">
+          + Tambah Statistik
+        </button>
+      </div>
+
+      <button onClick={save} disabled={saving}
+        className="w-full rounded bg-primary py-2 text-xs font-bold text-black hover:bg-primary/90 disabled:opacity-40">
+        {saving ? "Menyimpan..." : "Simpan Widget"}
+      </button>
+    </div>
+  )
+}
+
+// ─── Form: Starting Lineup ────────────────────────────────────────────────────
+
+interface LineupPlayerDraft {
+  number: number
+  name: string
+  position: string
+  rating: number | null
+  photo_url: string
+  subbed_off: boolean
+}
+
+interface TeamLineupDraft {
+  team_name: string
+  flag: string
+  formation: string
+  players: LineupPlayerDraft[]
+}
+
+const EMPTY_LINEUP_PLAYER: LineupPlayerDraft = {
+  number: 0, name: "", position: "", rating: null, photo_url: "", subbed_off: false,
+}
+
+function emptyTeamLineup(): TeamLineupDraft {
+  return { team_name: "", flag: "🏳️", formation: "4-3-3", players: [] }
+}
+
+function TeamLineupEditor({
+  team, onChange,
+}: { team: TeamLineupDraft; onChange: (t: TeamLineupDraft) => void }) {
+  const addPlayer = () => onChange({ ...team, players: [...team.players, { ...EMPTY_LINEUP_PLAYER }] })
+  const removePlayer = (i: number) => onChange({ ...team, players: team.players.filter((_, j) => j !== i) })
+  const updatePlayer = (i: number, patch: Partial<LineupPlayerDraft>) =>
+    onChange({ ...team, players: team.players.map((p, j) => (j === i ? { ...p, ...patch } : p)) })
+
+  return (
+    <div className="space-y-2">
+      <div className="grid grid-cols-3 gap-2">
+        <input value={team.team_name} placeholder="Nama Tim" onChange={e => onChange({ ...team, team_name: e.target.value })}
+          className="rounded border border-border bg-secondary/50 px-2 py-1.5 text-sm" />
+        <input value={team.flag} placeholder="Bendera (emoji)" onChange={e => onChange({ ...team, flag: e.target.value })}
+          className="rounded border border-border bg-secondary/50 px-2 py-1.5 text-sm" />
+        <input value={team.formation} placeholder="Formasi cth: 4-2-3-1" onChange={e => onChange({ ...team, formation: e.target.value })}
+          className="rounded border border-border bg-secondary/50 px-2 py-1.5 text-sm" />
+      </div>
+      <p className="text-[10px] text-muted-foreground leading-relaxed">
+        Urutkan pemain dari <b>kiper</b> → <b>bek</b> → <b>gelandang (sesuai urutan formasi)</b> → <b>penyerang</b>.
+        Total pemain harus pas dengan formasi (cth 4-2-3-1 = 11 pemain).
+      </p>
+
+      <div className="space-y-1.5">
+        {team.players.map((p, i) => (
+          <div key={i} className="rounded border border-border bg-secondary/30 p-2 space-y-1.5">
+            <div className="flex items-center gap-1.5">
+              <span className="text-[10px] text-muted-foreground w-5">#{i + 1}</span>
+              <input type="number" value={p.number} placeholder="No." onChange={e => updatePlayer(i, { number: Number(e.target.value) })}
+                className="w-14 rounded border border-border bg-background px-1.5 py-1 text-xs" />
+              <input value={p.name} placeholder="Nama Pemain" onChange={e => updatePlayer(i, { name: e.target.value })}
+                className="flex-1 rounded border border-border bg-background px-2 py-1 text-xs" />
+              <input value={p.position} placeholder="Posisi (GK/CB/LW..)" onChange={e => updatePlayer(i, { position: e.target.value })}
+                className="w-28 rounded border border-border bg-background px-2 py-1 text-xs" />
+              <button onClick={() => removePlayer(i)} className="text-destructive/60 hover:text-destructive text-xs">✕</button>
+            </div>
+            <div className="flex items-center gap-1.5">
+              <input type="number" step="0.1" value={p.rating ?? ""} placeholder="Rating (cth 7.6)"
+                onChange={e => updatePlayer(i, { rating: e.target.value === "" ? null : Number(e.target.value) })}
+                className="w-28 rounded border border-border bg-background px-2 py-1 text-xs" />
+              <input value={p.photo_url} placeholder="URL Foto (opsional)" onChange={e => updatePlayer(i, { photo_url: e.target.value })}
+                className="flex-1 rounded border border-border bg-background px-2 py-1 text-xs" />
+              <label className="flex items-center gap-1 text-[10px] text-muted-foreground whitespace-nowrap">
+                <input type="checkbox" checked={p.subbed_off} onChange={e => updatePlayer(i, { subbed_off: e.target.checked })} />
+                Diganti
+              </label>
+            </div>
+          </div>
+        ))}
+      </div>
+
+      <button onClick={addPlayer} className="w-full rounded border border-primary/50 text-primary text-xs py-1.5 hover:bg-primary/10 transition-colors">
+        + Tambah Pemain ({team.players.length}/11)
+      </button>
+    </div>
+  )
+}
+
+function StartingLineupForm({ widgetId, onSaved }: { widgetId: string; onSaved: () => void }) {
+  const supabase = createClient()
+  const bzz = useBzzAutofill("starting_lineup")
+  const [saving, setSaving] = useState(false)
+  const [competition, setCompetition] = useState("")
+  const [home, setHome] = useState<TeamLineupDraft>(emptyTeamLineup())
+  const [away, setAway] = useState<TeamLineupDraft>(emptyTeamLineup())
+  const [activeTeam, setActiveTeam] = useState<"home" | "away">("home")
+
+  useEffect(() => {
+    supabase.from("widget_starting_lineup").select("*").eq("id", widgetId).maybeSingle()
+      .then(({ data: row }) => {
+        if (row) {
+          setCompetition((row as any).competition ?? "")
+          if ((row as any).home) setHome((row as any).home)
+          if ((row as any).away) setAway((row as any).away)
+        }
+      })
+  }, [widgetId])
+
+  const save = async () => {
+    setSaving(true)
+    await supabase.from("widget_starting_lineup").upsert({ id: widgetId, competition, home, away })
+    setSaving(false)
+    onSaved()
+  }
+
+  return (
+    <div className="space-y-3 text-sm">
+      <BzzBar
+        placeholder="Contoh: Portugal vs Maroko"
+        query={bzz.query} setQuery={bzz.setQuery}
+        loading={bzz.loading} error={bzz.error}
+        onFill={() => bzz.autofill((d: any) => {
+          setCompetition(d.competition ?? "")
+          if (d.home) setHome(prev => ({
+            ...prev,
+            team_name: d.home.team_name ?? prev.team_name,
+            flag: d.home.flag || prev.flag,
+            formation: d.home.formation ?? prev.formation,
+            players: d.home.players?.length ? d.home.players : prev.players,
+          }))
+          if (d.away) setAway(prev => ({
+            ...prev,
+            team_name: d.away.team_name ?? prev.team_name,
+            flag: d.away.flag || prev.flag,
+            formation: d.away.formation ?? prev.formation,
+            players: d.away.players?.length ? d.away.players : prev.players,
+          }))
+        })}
+      />
+      <div>
+        <label className="block text-xs text-muted-foreground mb-1">Kompetisi</label>
+        <input value={competition} onChange={e => setCompetition(e.target.value)} placeholder="Piala Dunia 2026 · Grup D"
+          className="w-full rounded border border-border bg-secondary/50 px-2.5 py-1.5 text-sm" />
+      </div>
+
+      <div className="flex gap-1.5">
+        <button onClick={() => setActiveTeam("home")}
+          className={`flex-1 rounded border py-1.5 text-xs font-semibold transition-colors ${activeTeam === "home" ? "border-primary text-primary bg-primary/10" : "border-border text-muted-foreground"}`}>
+          Tim Tuan Rumah
+        </button>
+        <button onClick={() => setActiveTeam("away")}
+          className={`flex-1 rounded border py-1.5 text-xs font-semibold transition-colors ${activeTeam === "away" ? "border-primary text-primary bg-primary/10" : "border-border text-muted-foreground"}`}>
+          Tim Tamu
+        </button>
+      </div>
+
+      {activeTeam === "home"
+        ? <TeamLineupEditor team={home} onChange={setHome} />
+        : <TeamLineupEditor team={away} onChange={setAway} />}
+
+      <button onClick={save} disabled={saving}
+        className="w-full rounded bg-primary py-2 text-xs font-bold text-black hover:bg-primary/90 disabled:opacity-40">
+        {saving ? "Menyimpan..." : "Simpan Widget"}
+      </button>
+    </div>
+  )
+}
 // ─── Form: Widget Hub ─────────────────────────────────────────────────────────
 
 interface HubSlotDraft {
@@ -1067,6 +1715,8 @@ const HUB_SLOT_OPTIONS: { value: WidgetType; label: string; icon: string }[] = [
   { value: "profil_stadion",        label: "Profil Stadion",        icon: "🏟️" },
   { value: "daftar_pemain",         label: "Daftar Pemain Tim",     icon: "👥" },
   { value: "pemain_andalan",        label: "Pemain Andalan",        icon: "🌟" },
+  { value: "statistik_pertandingan", label: "Statistik Pertandingan", icon: "📊" },
+  { value: "starting_lineup",        label: "Starting Lineup",        icon: "🧩" },
 ]
 
 function HubForm({ widgetId, onSaved }: { widgetId: string; onSaved: () => void }) {
@@ -1325,6 +1975,12 @@ export function WidgetInserter({ onInsert, editWidgetId, editWidgetType, onReset
           )}
           {selectedType === "hub" && (
             <HubForm widgetId={activeWidgetId} onSaved={handleSaved} />
+          )}
+          {selectedType === "statistik_pertandingan" && (
+            <StatistikPertandinganForm widgetId={activeWidgetId} onSaved={handleSaved} />
+          )}
+          {selectedType === "starting_lineup" && (
+            <StartingLineupForm widgetId={activeWidgetId} onSaved={handleSaved} />
           )}
         </div>
       )}

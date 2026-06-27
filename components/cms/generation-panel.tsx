@@ -1,12 +1,22 @@
 "use client"
 
-// components/cms/generation-panel.tsx — v2
+// components/cms/generation-panel.tsx — v3 (PIPELINE BARU)
 //
-// PERUBAHAN DARI v1:
-// + Quality score indicator setelah generate draft
-// + Warning berbeda untuk draft_below_quality vs draft_failed
-// + Tombol generate ulang muncul otomatis jika draft_failed
-// + Brief inspector menampilkan data quality warnings jika ada
+// PERUBAHAN DARI v2:
+// - STEP 3 ("Polish dengan Editor — GPT OSS 120B") DIHAPUS TOTAL.
+//   Editing sekarang dilakukan langsung di TipTap lewat popup AI-native
+//   per-paragraf (lihat components/editor/AIRewritePopup.tsx +
+//   app/api/rewrite-selection/route.ts). Panel ini sekarang HANYA mengurus
+//   2 step: Editorial Brief dan Draft.
+// - Step 1 sekarang menyebut "OpenRouter Nemotron 3 Ultra + Validator",
+//   bukan lagi "tanpa AI" — brief tetap grounded di fakta (divalidasi),
+//   tapi arah editorialnya sekarang dibantu AI.
+// - onFinalReady DIHAPUS dari props — begitu draft Gemma 4 31B selesai, draft itu
+//   sudah final dari sisi pipeline ini (revisi lanjutan terjadi inline di
+//   editor, bukan lewat panel).
+// - STEP 2 sekarang memanggil OpenRouter Gemma 4 31B (bukan lagi Llama 4 Scout
+//   via Cloudflare Workers AI), sesuai pipeline final di PDF Data Mapping
+//   HalfSpace: "Bzzoiro + Serper + Tavily → Nemotron 3 Ultra Brief → Gemma 4 31B".
 
 import { useState } from "react"
 import { Button }   from "@/components/ui/button"
@@ -14,11 +24,12 @@ import { Badge }    from "@/components/ui/badge"
 import { Textarea } from "@/components/ui/textarea"
 import { Label }    from "@/components/ui/label"
 import {
-  Loader2, FileText, PenLine, Wand2,
+  Loader2, FileText, PenLine,
   CheckCircle2, AlertCircle, AlertTriangle,
-  ChevronDown, ChevronUp, RefreshCw,
+  ChevronDown, ChevronUp, RefreshCw, Sparkles,
 } from "lucide-react"
 import type { EditorialBrief, NewsType } from "@/lib/editorial/types"
+import type { BriefValidationReport } from "@/lib/editorial/brief-validator"
 
 // ── Types ─────────────────────────────────────────────────────────────────────
 
@@ -26,13 +37,12 @@ interface GenerationPanelProps {
   newsType:     NewsType
   topic:        string
   onDraftReady: (title: string, content: string) => void
-  onFinalReady: (title: string, content: string) => void
 }
 
 type PipelineStatus =
   | "idle" | "generating_brief" | "brief_ready"
   | "generating_draft" | "draft_ready" | "draft_below_quality" | "draft_failed"
-  | "polishing" | "final_ready" | "error"
+  | "error"
 
 interface QualityDetails {
   passed: boolean
@@ -52,8 +62,6 @@ interface DoneEvent {
   draftStatus?: string
   tokenUsed?: number
   warning?: string
-  editNotes?: string
-  validationWarnings?: string[]
 }
 
 // ── SSE consumer ──────────────────────────────────────────────────────────────
@@ -133,7 +141,7 @@ function QualityPanel({ qd }: { qd: QualityDetails }) {
 
 // ── Brief Inspector ───────────────────────────────────────────────────────────
 
-function BriefInspector({ brief }: { brief: EditorialBrief }) {
+function BriefInspector({ brief, aiValidation }: { brief: EditorialBrief; aiValidation: BriefValidationReport | null }) {
   const [open, setOpen] = useState(false)
   const hasWarnings = brief.meta.dataQualityWarnings.length > 0
 
@@ -148,6 +156,11 @@ function BriefInspector({ brief }: { brief: EditorialBrief }) {
           Editorial Brief
           <Badge variant="secondary" className="text-xs">~{brief.meta.tokenEstimate} token</Badge>
           <Badge variant="outline" className="text-xs capitalize">{brief.angle.primary.replace(/_/g, " ")}</Badge>
+          {aiValidation?.aiUsed && (
+            <Badge className="text-xs bg-[#39FF14]/10 text-[#39FF14] border-[#39FF14]/30 gap-1">
+              <Sparkles className="w-3 h-3" />Nemotron 3 Ultra
+            </Badge>
+          )}
           {hasWarnings && <Badge className="text-xs bg-amber-500/15 text-amber-700 border-amber-500/30">⚠ Data warning</Badge>}
         </span>
         {open ? <ChevronUp className="w-4 h-4 shrink-0" /> : <ChevronDown className="w-4 h-4 shrink-0" />}
@@ -163,6 +176,26 @@ function BriefInspector({ brief }: { brief: EditorialBrief }) {
               {brief.meta.dataQualityWarnings.map((w, i) => (
                 <p key={i} className="text-xs text-amber-600">• [{w.field}] {w.instruction}</p>
               ))}
+            </div>
+          )}
+
+          {/* AI validation report */}
+          {aiValidation && (
+            <div className="bg-muted/20 border border-border/60 rounded p-2 space-y-1">
+              <p className="text-xs font-semibold text-muted-foreground">
+                Validator AI Editor Brief — {aiValidation.aiUsed ? "aktif" : "tidak aktif (fallback rule-based)"}
+              </p>
+              {aiValidation.acceptedFields.length > 0 && (
+                <p className="text-xs text-green-600">✓ Diterima: {aiValidation.acceptedFields.join(", ")}</p>
+              )}
+              {aiValidation.rejectedFields.length > 0 && (
+                <div>
+                  <p className="text-xs text-amber-600">⚠ Ditolak validator (fallback ke rule-based):</p>
+                  {aiValidation.rejectedFields.map((r, i) => (
+                    <p key={i} className="text-xs text-muted-foreground ml-3">– {r.field}: {r.reason}</p>
+                  ))}
+                </div>
+              )}
             </div>
           )}
 
@@ -246,16 +279,15 @@ function StepIndicator({ step, label, status }: {
 
 // ── Main Component ────────────────────────────────────────────────────────────
 
-export function GenerationPanel({ newsType, topic, onDraftReady, onFinalReady }: GenerationPanelProps) {
+export function GenerationPanel({ newsType, topic, onDraftReady }: GenerationPanelProps) {
   const [status,         setStatus]         = useState<PipelineStatus>("idle")
   const [progressLabel,  setProgressLabel]  = useState("")
   const [brief,          setBrief]          = useState<EditorialBrief | null>(null)
+  const [aiValidation,   setAiValidation]   = useState<BriefValidationReport | null>(null)
   const [generationId,   setGenerationId]   = useState<string | null>(null)
   const [draftWordCount, setDraftWordCount] = useState<number | null>(null)
   const [qualityDetails, setQualityDetails] = useState<QualityDetails | null>(null)
   const [qualityScore,   setQualityScore]   = useState<number | null>(null)
-  const [finalWordCount, setFinalWordCount] = useState<number | null>(null)
-  const [editNotes,      setEditNotes]      = useState<string | null>(null)
   const [errorMsg,       setErrorMsg]       = useState<string | null>(null)
   const [warningMsg,     setWarningMsg]     = useState<string | null>(null)
   const [manualContext,  setManualContext]  = useState("")
@@ -269,17 +301,15 @@ export function GenerationPanel({ newsType, topic, onDraftReady, onFinalReady }:
     setQualityDetails(null)
     setQualityScore(null)
     setDraftWordCount(null)
-    setFinalWordCount(null)
-    setEditNotes(null)
-    if (full) { setBrief(null); setGenerationId(null) }
+    if (full) { setBrief(null); setAiValidation(null); setGenerationId(null) }
   }
 
-  // ── STEP 1 ────────────────────────────────────────────────────────────────
+  // ── STEP 1: Editorial Brief — OpenRouter Nemotron 3 Ultra + Validator ──────
   async function handleGenerateBrief() {
     if (!topic.trim()) return
     reset(true)
     setStatus("generating_brief")
-    setProgressLabel("Mengambil data dari semua sumber...")
+    setProgressLabel("Mengambil data dari semua sumber, lalu menyusun arah editorial...")
 
     try {
       const res  = await fetch("/api/generate-brief", {
@@ -289,17 +319,15 @@ export function GenerationPanel({ newsType, topic, onDraftReady, onFinalReady }:
       const json = await res.json()
       if (!res.ok || !json.success) throw new Error(json.error ?? "Gagal generate brief")
       setBrief(json.brief)
+      setAiValidation(json.aiValidation ?? null)
       setGenerationId(json.generationId)
 
       if (!json.generationId) {
-        // Brief berhasil dibuat tapi gagal disimpan ke DB — tombol Generate Draft
-        // tidak akan bisa jalan (butuh generationId). Tampilkan error JELAS,
-        // jangan diam-diam lanjut ke brief_ready seolah semuanya normal.
         setErrorMsg(
           (json.sourceWarnings?.join(" | ") ?? "") ||
           "Brief berhasil dibuat tapi gagal disimpan ke database, sehingga langkah Generate Draft tidak bisa dilanjutkan. Cek log server / tabel article_generations di Supabase."
         )
-        setStatus("brief_ready") // brief tetap ditampilkan, tapi error di atas akan kelihatan
+        setStatus("brief_ready")
         setProgressLabel("")
         return
       }
@@ -313,7 +341,7 @@ export function GenerationPanel({ newsType, topic, onDraftReady, onFinalReady }:
     }
   }
 
-  // ── STEP 2 ────────────────────────────────────────────────────────────────
+  // ── STEP 2: Draft artikel — OpenRouter Gemma 4 31B ──────────────────────────
   async function handleGenerateDraft() {
     if (!generationId) return
     reset()
@@ -341,31 +369,6 @@ export function GenerationPanel({ newsType, topic, onDraftReady, onFinalReady }:
     )
   }
 
-  // ── STEP 3 ────────────────────────────────────────────────────────────────
-  async function handlePolish() {
-    if (!generationId) return
-    setStatus("polishing")
-    setProgressLabel("Mempersiapkan editor...")
-    setWarningMsg(null)
-
-    await consumeSSE(
-      "/api/polish-article",
-      { generationId },
-      (e) => setProgressLabel(e.label),
-      (data) => {
-        setFinalWordCount(data.wordCount)
-        setEditNotes(data.editNotes ?? null)
-        onFinalReady(data.title, data.content)
-        setStatus("final_ready")
-        setProgressLabel("")
-        if (data.validationWarnings?.length) {
-          setWarningMsg("Perhatian editor: " + data.validationWarnings.join(" · "))
-        }
-      },
-      (msg) => { setErrorMsg(msg); setStatus("draft_ready") }, // rollback ke draft_ready jika polish gagal
-    )
-  }
-
   // ── Step status ───────────────────────────────────────────────────────────
   const step1Status = (): "idle" | "active" | "done" | "warn" | "error" => {
     if (status === "generating_brief") return "active"
@@ -381,23 +384,19 @@ export function GenerationPanel({ newsType, topic, onDraftReady, onFinalReady }:
     if (draftWordCount)                     return "done"
     return "idle"
   }
-  const step3Status = (): "idle" | "active" | "done" | "warn" | "error" => {
-    if (status === "polishing")  return "active"
-    if (finalWordCount)          return "done"
-    return "idle"
-  }
-
-  const isDraftDone = ["draft_ready","draft_below_quality","draft_failed","polishing","final_ready"].includes(status)
 
   return (
     <div className="space-y-4">
 
       {/* Step indicators */}
       <div className="flex flex-col gap-2 p-3 bg-muted/30 rounded-lg border">
-        <StepIndicator step={1} label="Editorial Brief (tanpa AI)" status={step1Status()} />
-        <StepIndicator step={2} label="Draft artikel — Llama 4 Scout" status={step2Status()} />
-        <StepIndicator step={3} label="Editor — GPT OSS 120B (opsional)" status={step3Status()} />
+        <StepIndicator step={1} label="Editorial Brief — OpenRouter Nemotron 3 Ultra + Validator" status={step1Status()} />
+        <StepIndicator step={2} label="Draft artikel — OpenRouter Gemma 4 31B" status={step2Status()} />
       </div>
+      <p className="text-xs text-muted-foreground -mt-2">
+        Setelah draft siap, revisi dilakukan langsung di editor: highlight paragraf →
+        muncul tombol <span className="font-medium">✨ Tulis Ulang dengan AI</span>.
+      </p>
 
       {/* Konteks manual */}
       <div>
@@ -455,23 +454,23 @@ export function GenerationPanel({ newsType, topic, onDraftReady, onFinalReady }:
       {/* Brief Inspector + STEP 2 BUTTON */}
       {brief && (
         <div className="space-y-3">
-          <BriefInspector brief={brief} />
+          <BriefInspector brief={brief} aiValidation={aiValidation} />
 
           {status === "brief_ready" && (
             <Button onClick={handleGenerateDraft} className="w-full gap-2">
-              <PenLine className="w-4 h-4" />Generate Draft — Llama 4 Scout
+              <PenLine className="w-4 h-4" />Generate Draft — OpenRouter Gemma 4 31B
             </Button>
           )}
           {status === "generating_draft" && (
             <Button disabled className="w-full gap-2">
-              <Loader2 className="w-4 h-4 animate-spin" />Llama 4 Scout sedang menulis...
+              <Loader2 className="w-4 h-4 animate-spin" />Gemma 4 31B sedang menulis...
             </Button>
           )}
         </div>
       )}
 
-      {/* Quality details setelah draft */}
-      {qualityDetails && isDraftDone && (
+      {/* Quality details + status setelah draft */}
+      {qualityDetails && ["draft_ready","draft_below_quality","draft_failed"].includes(status) && (
         <div className="space-y-2">
           <div className="flex items-center justify-between">
             <span className="text-xs text-muted-foreground">Kualitas draft:</span>
@@ -481,66 +480,38 @@ export function GenerationPanel({ newsType, topic, onDraftReady, onFinalReady }:
         </div>
       )}
 
-      {/* STEP 3: Polish */}
-      {(status === "draft_ready" || status === "draft_below_quality" || status === "draft_failed" || status === "polishing" || status === "final_ready") && (
+      {["draft_ready","draft_below_quality","draft_failed"].includes(status) && (
         <div className="space-y-3 border-t pt-3">
           {draftWordCount && (
             <div className="flex items-center justify-between text-xs text-muted-foreground">
-              <span>Draft tersimpan</span>
+              <span>Draft tersimpan di editor</span>
               <Badge variant="outline">{draftWordCount} kata</Badge>
             </div>
           )}
 
-          {/* Generate ulang jika draft_failed */}
           {status === "draft_failed" && (
             <Button onClick={() => handleGenerateDraft()} variant="destructive" className="w-full gap-2">
               <RefreshCw className="w-4 h-4" />Generate Ulang Draft
             </Button>
           )}
 
-          {/* Polish button — muncul kecuali draft_failed dan belum ada final */}
-          {(status === "draft_ready" || status === "draft_below_quality") && (
-            <div className="space-y-2">
-              <p className="text-xs text-muted-foreground">
-                {status === "draft_below_quality"
-                  ? "Draft di bawah standar. Sangat disarankan polish dengan editor sebelum publish."
-                  : "Draft sudah masuk editor. Bisa langsung publish atau polish dulu."}
-              </p>
-              <Button onClick={handlePolish} variant={status === "draft_below_quality" ? "default" : "outline"} className="w-full gap-2">
-                <Wand2 className="w-4 h-4" />Polish dengan Editor (GPT OSS 120B)
-              </Button>
-            </div>
+          {status === "draft_below_quality" && (
+            <p className="text-xs text-amber-600">
+              Draft di bawah standar kualitas. Periksa dan tulis ulang bagian yang lemah langsung di editor
+              dengan popup ✨ AI, atau generate ulang.
+            </p>
           )}
 
-          {status === "polishing" && (
-            <Button disabled variant="outline" className="w-full gap-2">
-              <Loader2 className="w-4 h-4 animate-spin" />GPT OSS 120B memoles...
-            </Button>
-          )}
-
-          {status === "final_ready" && (
-            <div className="space-y-2">
-              <div className="flex items-center justify-between text-xs">
-                <span className="flex items-center gap-1 text-green-600">
-                  <CheckCircle2 className="w-3 h-3" />Artikel final siap
-                </span>
-                {finalWordCount && <Badge variant="outline">{finalWordCount} kata</Badge>}
-              </div>
-              {editNotes && (
-                <div className="bg-muted/30 rounded p-2 text-xs text-muted-foreground">
-                  <span className="font-medium">Perubahan:</span>{" "}
-                  {editNotes.split("|").map((n, i, a) => (
-                    <span key={i}>{n.trim()}{i < a.length - 1 ? " · " : ""}</span>
-                  ))}
-                </div>
-              )}
-            </div>
+          {status === "draft_ready" && (
+            <p className="text-xs text-green-600 flex items-center gap-1.5">
+              <CheckCircle2 className="w-3.5 h-3.5" />Draft siap — lanjutkan revisi langsung di editor.
+            </p>
           )}
         </div>
       )}
 
       {/* Reset */}
-      {!["idle","generating_brief","generating_draft","polishing"].includes(status) && (
+      {!["idle","generating_brief","generating_draft"].includes(status) && (
         <div className="flex gap-3">
           {status !== "brief_ready" && (
             <button onClick={() => { reset(); setStatus("brief_ready") }}
