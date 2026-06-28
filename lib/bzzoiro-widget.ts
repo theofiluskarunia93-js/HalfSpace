@@ -106,6 +106,24 @@ function eventHasTeams(e: any, names: string[]): boolean {
   return names.some(n => n && (h.includes(n) || a.includes(n) || n.includes(h) || n.includes(a)))
 }
 
+// PENTING: dokumentasi resmi Bzzoiro cuma menyebut filter `?team_id=` (numerik)
+// untuk /api/managers/ — TIDAK ADA filter `team_search=` (free-text nama tim).
+// Memanggil `?team_search=...` langsung kemungkinan besar diabaikan server
+// (param tak dikenal) dan mengembalikan manager pertama di seluruh database,
+// BUKAN manager tim yang dicari — bug ini ada di fetchBzzAnalisaTaktis &
+// fetchBzzPerbandingan sebelumnya. Fix: resolve team_id dulu lewat
+// /api/teams/?search=, baru query /api/managers/?team_id={id}.
+async function findManagerByTeamName(teamQuery: string): Promise<any | null> {
+  const teamsJson = await bzzGet(`/api/teams/?search=${encodeURIComponent(teamQuery)}&limit=5`).catch(() => null)
+  const teams: any[] = teamsJson?.results ?? (Array.isArray(teamsJson) ? teamsJson : [])
+  const team = teams[0]
+  if (!team?.id) return null
+
+  const mgrJson = await bzzGet(`/api/managers/?team_id=${team.id}&limit=1`).catch(() => null)
+  const list: any[] = mgrJson?.results ?? (Array.isArray(mgrJson) ? mgrJson : [])
+  return list[0] ?? null
+}
+
 // ═══════════════════════════════════════════════════════════════════════════════
 // 1. WIDGET JADWAL PERTANDINGAN
 // → /api/v2/events/  (search, date range)
@@ -638,7 +656,10 @@ export async function fetchBzzPeluang(query: string): Promise<BzzPeluangRow[]> {
   function buildRow(teamName: string, prob: number): BzzPeluangRow {
     const row = standingFor(teamName)
     const rank = row?.position ?? row?.rank ?? 1
-    const pts = row?.points ?? 0
+    // PENTING: field standings asli Bzzoiro adalah `pts` (lihat docs resmi:
+    // { position, team_id, team_name, played, won, drawn, lost, gf, ga, gd, pts }),
+    // BUKAN `points` — kode lama selalu baca 0 dari sini.
+    const pts = row?.pts ?? row?.points ?? 0
     const w = row?.won ?? row?.wins ?? 0
     const d = row?.drawn ?? row?.draws ?? 0
     const l = row?.lost ?? row?.losses ?? 0
@@ -746,15 +767,14 @@ export async function fetchBzzPerbandingan(query: string): Promise<BzzPerbanding
     if (hs > as_) homeWins++; else if (as_ > hs) awayWins++; else draws++
   }
 
-  // Manager (coach) untuk kedua tim
+  // Manager (coach) untuk kedua tim — resolve team_id dulu (lihat findManagerByTeamName)
   const [homeMgr, awayMgr] = await Promise.all([
-    bzzGet(`/api/managers/?team_search=${encodeURIComponent(teamA)}&limit=1`).catch(() => null),
-    bzzGet(`/api/managers/?team_search=${encodeURIComponent(teamB)}&limit=1`).catch(() => null),
+    findManagerByTeamName(teamA),
+    findManagerByTeamName(teamB),
   ])
 
   function coachName(mgr: any): string {
-    const list = mgr?.results ?? (Array.isArray(mgr) ? mgr : [])
-    return fix(list[0]?.name ?? list[0]?.manager_name ?? "")
+    return fix(mgr?.name ?? mgr?.manager_name ?? "")
   }
 
   return {
@@ -943,15 +963,15 @@ export interface BzzAnalisaTaktisData {
 }
 
 export async function fetchBzzAnalisaTaktis(query: string): Promise<BzzAnalisaTaktisData> {
-  // Coba cari manager by nama pelatih atau nama tim
+  // Coba cari manager by nama pelatih (search= valid, DRF SearchFilter) atau by nama tim
+  // (resolve team_id dulu — lihat findManagerByTeamName, ?team_search= bukan filter valid)
   const [byName, byTeam] = await Promise.all([
     bzzGet(`/api/managers/?search=${encodeURIComponent(query)}&limit=5`).catch(() => null),
-    bzzGet(`/api/managers/?team_search=${encodeURIComponent(query)}&limit=5`).catch(() => null),
+    findManagerByTeamName(query).catch(() => null),
   ])
 
   const listName: any[] = byName?.results ?? (Array.isArray(byName) ? byName : [])
-  const listTeam: any[] = byTeam?.results ?? (Array.isArray(byTeam) ? byTeam : [])
-  const manager = listName[0] ?? listTeam[0]
+  const manager = listName[0] ?? byTeam
 
   if (!manager) {
     // Fallback: cari via events untuk dapatkan team_name
@@ -970,23 +990,58 @@ export async function fetchBzzAnalisaTaktis(query: string): Promise<BzzAnalisaTa
   }
 
   const coachName = fix(manager.name ?? manager.manager_name ?? "")
-  const teamName = fix(manager.team_name ?? manager.team ?? "")
+
+  // PENTING: /api/managers/ TIDAK menyertakan nama tim langsung — cuma
+  // current_team_id (lihat docs resmi BSD). Tanpa resolve ini, teamName akan
+  // selalu kosong walau manager-nya ketemu (bug lama: cek manager.team_name /
+  // manager.team yang memang tidak pernah ada di respons asli).
+  let teamName = fix(manager.team_name ?? manager.team ?? "")
+  if (!teamName && manager.current_team_id) {
+    teamName = fix(
+      (await bzzGet(`/api/teams/${manager.current_team_id}/`).catch(() => null))?.name ?? ""
+    )
+  }
+  if (!teamName) teamName = fix(query)
 
   // Bzzoiro /api/managers/ menyimpan tactical_profile / preferred_formation
   const formation = manager.preferred_formation ?? manager.formation ?? manager.tactical_formation ?? "4-3-3"
+
+  // PENTING: field asli Bzzoiro adalah `tactical_profile` (label tunggal, selalu
+  // ada) dan `tactical_styles` (array detail, cuma muncul kalau manager punya
+  // ≥5 match dengan stats lengkap) — BUKAN `tactical_style`/`play_style`/
+  // `description` yang dicek kode lama (field-field itu tidak pernah ada di
+  // respons asli Bzzoiro, jadi playStyle nyaris selalu kosong sebelumnya).
+  const stylesDetailed: string[] = Array.isArray(manager.tactical_styles)
+    ? manager.tactical_styles.map((s: any) => String(s))
+    : (manager.tactical_styles ? [String(manager.tactical_styles)] : [])
   const playStyle = fix(
-    manager.tactical_style ?? manager.play_style ?? manager.description ?? ""
+    stylesDetailed[0] ?? manager.tactical_profile ?? manager.tactical_style ?? manager.play_style ?? manager.description ?? ""
   )
 
-  // Main weapons: dari pressing_style, attacking_style, key_attributes jika ada
+  // Main weapons: prioritaskan tactical_styles detail (kalau manager punya cukup
+  // match), lalu turunkan dari statistik agregat NYATA yang memang ada di
+  // /api/managers/ (pressing_intensity, avg_possession, clean_sheet_pct,
+  // over_25_pct) — bukan pressing_style/attacking_style/key_attributes yang
+  // memang tidak pernah ada di field asli Bzzoiro (bug lama).
   const weapons: string[] = []
-  if (manager.pressing_style) weapons.push(fix(manager.pressing_style))
-  if (manager.attacking_style) weapons.push(fix(manager.attacking_style))
-  if (manager.key_attributes) {
-    const attrs = Array.isArray(manager.key_attributes) ? manager.key_attributes : [manager.key_attributes]
-    attrs.forEach((a: any) => weapons.push(fix(String(a))))
+  stylesDetailed.slice(1, 3).forEach((s) => weapons.push(fix(s)))
+  if (typeof manager.pressing_intensity === "number") {
+    weapons.push(
+      manager.pressing_intensity >= 60 ? "Pressing tinggi" :
+      manager.pressing_intensity <= 30 ? "Bertahan terorganisir, pressing rendah" :
+      "Pressing menengah"
+    )
   }
-  // Fallback generic jika tidak ada data taktis detail
+  if (typeof manager.avg_possession === "number" && manager.avg_possession >= 55) {
+    weapons.push(`Dominasi penguasaan bola (${manager.avg_possession.toFixed(1)}% rata-rata)`)
+  }
+  if (typeof manager.clean_sheet_pct === "number" && manager.clean_sheet_pct >= 40) {
+    weapons.push(`Pertahanan solid (${manager.clean_sheet_pct.toFixed(0)}% clean sheet)`)
+  }
+  if (typeof manager.over_25_pct === "number" && manager.over_25_pct >= 55) {
+    weapons.push("Permainan terbuka, produktif gol")
+  }
+  // Fallback generic kalau manager belum punya cukup match (<5) untuk semua stat di atas
   if (weapons.length === 0 && formation) {
     if (formation.startsWith("4-3")) weapons.push("Kontrol tengah lapangan")
     if (formation.startsWith("4-4")) weapons.push("Transisi cepat")
