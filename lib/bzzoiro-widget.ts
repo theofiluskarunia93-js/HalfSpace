@@ -136,6 +136,16 @@ export async function fetchBzzJadwal(query: string): Promise<BzzJadwalMatch[]> {
 
   const league = fix(relevant[0]?.league_name ?? relevant[0]?.league ?? "")
 
+  // PENTING: tanpa cek ini, query yang tidak ketemu match sama sekali akan
+  // "berhasil" mengembalikan array kosong — form jadwal terlihat tersimpan
+  // padahal tabelnya kosong, tanpa keterangan apapun ke user.
+  if (relevant.length === 0) {
+    throw new Error(
+      `Tidak ada pertandingan "${query}" yang ditemukan di Bzzoiro dalam rentang 5 hari lalu s/d 14 hari ke depan. ` +
+      `Coba periksa nama tim, atau pertandingannya mungkin di luar rentang tanggal itu.`
+    )
+  }
+
   return relevant.slice(0, 10).map(e => {
     const dt = e.event_date ?? e.date ?? null
     let match_date: string | null = null
@@ -199,6 +209,16 @@ export async function fetchBzzKlasemen(leagueQuery: string): Promise<BzzStanding
 
   const json = await bzzGet(`/api/v2/standings/?league=${leagueId}&limit=30`)
   const table: any[] = json.results ?? json.standings ?? (Array.isArray(json) ? json : [])
+
+  // PENTING: liganya ketemu (leagueId valid), tapi kalau tabel standings-nya
+  // sendiri kosong (misal kompetisi belum mulai/data belum diisi Bzzoiro),
+  // tanpa cek ini form klasemen "berhasil" tersimpan dengan 0 baris.
+  if (table.length === 0) {
+    throw new Error(
+      `Liga "${leagueQuery}" ditemukan, tapi tabel klasemennya masih kosong di Bzzoiro ` +
+      `(kompetisi mungkin belum dimulai). Coba lagi setelah pertandingan pertama dimainkan.`
+    )
+  }
 
   const leagueName = fix(evList[0]?.league_name ?? leagueQuery)
 
@@ -319,6 +339,18 @@ export async function fetchBzzStatistik(query: string): Promise<BzzStatistikData
     },
   ].filter(s => s.home_value !== 0 || s.away_value !== 0) : []
 
+  // PENTING: tim/skor sudah ketemu, tapi kalau statRows kosong (endpoint stats
+  // gagal, ATAU sesuai docs Bzzoiro: data statistik spasial cuma terisi untuk
+  // match yang sudah live/selesai, null untuk yang belum mulai), tanpa cek ini
+  // form statistik "berhasil" tersimpan tapi seluruh tabel statistiknya kosong.
+  if (statRows.length === 0) {
+    const rawStatus = (event.status ?? "").toLowerCase()
+    const reason = rawStatus === "scheduled" || !rawStatus
+      ? "pertandingan belum dimulai — Bzzoiro baru mengisi statistik untuk match yang live/sudah selesai"
+      : "endpoint statistik Bzzoiro tidak mengembalikan data untuk pertandingan ini"
+    throw new Error(`Statistik untuk "${query}" masih kosong (${reason}). Coba fetch ulang setelah kickoff.`)
+  }
+
   return {
     home_team: home,
     away_team: away,
@@ -426,6 +458,16 @@ export async function fetchBzzTimeline(query: string): Promise<BzzTimelineData> 
       }
     })
 
+  // PENTING: tim/skor sudah ketemu, tapi kalau timeline-nya kosong (belum ada
+  // gol/kartu/substitusi tercatat, ATAU pertandingan belum mulai sama sekali),
+  // tanpa cek ini form timeline "berhasil" tersimpan tapi kosong tanpa keterangan.
+  if (timeline.length === 0) {
+    const reason = status === "upcoming"
+      ? "pertandingan belum dimulai, belum ada insiden untuk ditampilkan"
+      : "belum ada gol/kartu/substitusi yang tercatat Bzzoiro untuk pertandingan ini"
+    throw new Error(`Timeline untuk "${query}" masih kosong (${reason}).`)
+  }
+
   const abbr = (name: string) => name.slice(0, 3).toUpperCase()
 
   return {
@@ -446,11 +488,19 @@ export async function fetchBzzTimeline(query: string): Promise<BzzTimelineData> 
 
 // ═══════════════════════════════════════════════════════════════════════════════
 // 5. WIDGET STARTING LINEUP
-// → /api/v2/events/{id}/ — field predicted_lineup atau lineups
+// → /api/v2/events/{id}/lineups/  (endpoint dedicated v2, BUKAN /events/{id}/ biasa!)
+//   Response: { event_id, lineup_status: "confirmed"|"predicted"|"unavailable",
+//               lineups: { home: { team_name, formation, confidence, players[], substitutes[] },
+//                          away: { ... } } | null, unavailable_players, updated_at }
+//   "unavailable" -> lineups bernilai null. Bzzoiro men-generate predicted lineup
+//   secara periodik, jadi ini WAJAR terjadi untuk match yang masih jauh dari kickoff —
+//   bukan berarti ada bug, tapi kita harus kasih tahu user secara eksplisit alih-alih
+//   diam-diam mengembalikan form kosong yang terlihat seperti "berhasil tapi kosong".
 // ═══════════════════════════════════════════════════════════════════════════════
 
 export interface BzzLineupData {
   competition: string
+  lineupStatus: "confirmed" | "predicted" | "unavailable"
   home: {
     team_name: string
     flag: string
@@ -485,48 +535,60 @@ export async function fetchBzzStartingLineup(query: string): Promise<BzzLineupDa
   const event = relevant[0]
   if (!event) throw new Error(`Pertandingan "${query}" tidak ditemukan di Bzzoiro.`)
 
-  const eventDetail = await bzzGet(`/api/v2/events/${event.id}/`).catch(() => event)
-
   const home = fix(event.home_team ?? "")
   const away = fix(event.away_team ?? "")
   const competition = fix(event.league_name ?? event.league ?? "")
 
-  // Support berbagai shape lineup dari Bzzoiro
-  const rawLineups = eventDetail.lineups ?? eventDetail.predicted_lineup ?? eventDetail.lineup ?? null
+  // Endpoint dedicated untuk lineup — TIDAK ada di /api/v2/events/{id}/ biasa
+  const lineupRes = await bzzGet(`/api/v2/events/${event.id}/lineups/`)
+  const status: "confirmed" | "predicted" | "unavailable" = lineupRes?.lineup_status ?? "unavailable"
 
-  function buildTeam(rawTeam: any, teamName: string, formation: string) {
-    const players: any[] = rawTeam?.players ?? rawTeam?.starting ?? rawTeam ?? []
+  function buildTeam(rawTeam: any, teamName: string, fallbackFormation: string) {
+    const players: any[] = rawTeam?.players ?? []
     return {
-      team_name: teamName,
+      team_name: rawTeam?.team_name ? fix(rawTeam.team_name) : teamName,
       flag: "",
-      formation,
+      formation: rawTeam?.formation ?? fallbackFormation,
       players: players.slice(0, 11).map((p: any, i: number) => ({
-        number: p.number ?? p.jersey_number ?? p.shirt_number ?? i + 1,
-        name: fix(p.name ?? p.player_name ?? `Pemain ${i + 1}`),
-        position: p.position ?? p.pos ?? (i === 0 ? "GK" : "CM"),
-        rating: p.rating != null ? Number(p.rating) : null,
+        number: p.jersey_number ?? p.number ?? i + 1,
+        name: fix(p.short_name ?? p.name ?? `Pemain ${i + 1}`),
+        position: p.position ?? (i === 0 ? "GK" : "CM"),
+        rating: p.ai_score != null ? Number(p.ai_score) : (p.rating != null ? Number(p.rating) : null),
       })),
     }
   }
 
-  const homeFormation = eventDetail.home_formation ?? event.home_formation ?? "4-3-3"
-  const awayFormation = eventDetail.away_formation ?? event.away_formation ?? "4-3-3"
-
-  if (rawLineups) {
-    const homeRaw = rawLineups.home ?? rawLineups[0] ?? null
-    const awayRaw = rawLineups.away ?? rawLineups[1] ?? null
-    return {
-      competition,
-      home: buildTeam(homeRaw, home, homeFormation),
-      away: buildTeam(awayRaw, away, awayFormation),
-    }
+  if (status === "unavailable" || !lineupRes?.lineups) {
+    // Sesuai docs resmi Bzzoiro: lineup di-generate periodik, belum tentu tersedia
+    // untuk match yang masih jauh dari kickoff. Lempar error yang jelas supaya UI
+    // form bisa menampilkan pesan ke user, bukan terlihat "berhasil" dengan 0/11 pemain.
+    throw new Error(
+      `Lineup untuk "${query}" belum tersedia di Bzzoiro (status: unavailable). ` +
+      `Bzzoiro men-generate predicted lineup secara periodik mendekati kickoff — coba fetch ulang nanti.`
+    )
   }
 
-  // Fallback: kembalikan template kosong dengan nama tim terisi
+  const homeTeam = buildTeam(lineupRes.lineups.home, home, "4-3-3")
+  const awayTeam = buildTeam(lineupRes.lineups.away, away, "4-3-3")
+
+  // PENTING: status "predicted" kadang sudah punya team_name + formation duluan,
+  // tapi daftar pemain per-posisi belum selesai di-generate Bzzoiro (proses bertahap).
+  // Tanpa cek ini, form akan terisi "berhasil" tapi 0/11 pemain tanpa keterangan apapun
+  // — terlihat seperti bug padahal sebenarnya cuma data Bzzoiro belum lengkap.
+  if (homeTeam.players.length === 0 && awayTeam.players.length === 0) {
+    throw new Error(
+      `Formasi untuk "${query}" sudah diketahui (${homeTeam.formation} vs ${awayTeam.formation}), ` +
+      `tapi daftar pemain belum di-generate Bzzoiro (status: ${status}). ` +
+      `Ini bukan bug — Bzzoiro memproses prediksi lineup secara bertahap (formasi dulu, baru pemain). ` +
+      `Coba fetch ulang beberapa saat lagi, atau isi pemain secara manual untuk sekarang.`
+    )
+  }
+
   return {
     competition,
-    home: { team_name: home, flag: "", formation: homeFormation, players: [] },
-    away: { team_name: away, flag: "", formation: awayFormation, players: [] },
+    lineupStatus: status,
+    home: homeTeam,
+    away: awayTeam,
   }
 }
 
@@ -840,6 +902,16 @@ export async function fetchBzzDaftarPemain(teamQuery: string): Promise<BzzDaftar
 
   const json = await bzzGet(`/api/players/?team=${teamId}&limit=50`)
   const players: any[] = json.results ?? (Array.isArray(json) ? json : [])
+
+  // PENTING: tim-nya ketemu, tapi kalau roster pemainnya kosong di Bzzoiro,
+  // tanpa cek ini form "berhasil" tersimpan dengan 0 pemain — pola yang sama
+  // dengan bug starting_lineup sebelumnya.
+  if (players.length === 0) {
+    throw new Error(
+      `Tim "${teamQuery}" ditemukan, tapi daftar pemainnya kosong di Bzzoiro. ` +
+      `Coba lagi nanti atau isi pemain secara manual untuk sekarang.`
+    )
+  }
 
   function formatMV(mv: any): string {
     if (!mv || isNaN(Number(mv))) return "-"

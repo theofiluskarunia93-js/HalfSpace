@@ -2,7 +2,7 @@
 
 import { useState, useEffect, useRef, useCallback } from "react"
 import { useEditor, EditorContent } from "@tiptap/react"
-import { Extension } from "@tiptap/core"
+import { Extension, Node, mergeAttributes } from "@tiptap/core"
 import Blockquote from "@tiptap/extension-blockquote"
 import Paragraph from "@tiptap/extension-paragraph"
 import { StarterKit } from "@tiptap/starter-kit"
@@ -81,41 +81,49 @@ function ToolbarSeparator() {
   return <div className="mx-1 h-4 w-px bg-border" aria-hidden />
 }
 
-// ─── Shortcode placeholder builder ───────────────────────────────────────────
+// ─── Shortcode / badge maps (dipakai bersama oleh placeholder builder & Node) ─
+
+const WIDGET_SHORTCODE_BY_TYPE: Record<WidgetType, string> = {
+  jadwal:                  "match_data",
+  klasemen:                "klasemen_data",
+  transfer:                "transfer_data",
+  peluang:                 "peluang_data",
+  analisa_taktis:          "analisa_taktis_data",
+  perbandingan_tim:        "perbandingan_tim_data",
+  timeline_pertandingan:   "timeline_pertandingan_data",
+  profil_stadion:          "profil_stadion_data",
+  daftar_pemain:           "daftar_pemain_data",
+  pemain_andalan:          "pemain_andalan_data",
+  hub:                     "hub_data",
+  statistik_pertandingan:  "statistik_pertandingan_data",
+  starting_lineup:         "starting_lineup_data",
+}
+const WIDGET_ICON_BY_TYPE: Record<WidgetType, string> = {
+  jadwal: "📅", klasemen: "🏆", transfer: "🔄", peluang: "⭐", analisa_taktis: "🧠",
+  perbandingan_tim: "⚔️", timeline_pertandingan: "📋",
+  profil_stadion: "🏟️", daftar_pemain: "👥", pemain_andalan: "⭐", hub: "🗂️",
+  statistik_pertandingan: "📊", starting_lineup: "🧩",
+}
+const WIDGET_LABEL_BY_TYPE: Record<WidgetType, string> = {
+  jadwal: "Jadwal Pertandingan", klasemen: "Klasemen Grup",
+  transfer: "Transfer Pemain", peluang: "Peluang Juara", analisa_taktis: "Analisa Taktis",
+  perbandingan_tim: "Perbandingan Tim", timeline_pertandingan: "Timeline Pertandingan",
+  profil_stadion: "Profil Stadion", daftar_pemain: "Daftar Pemain Tim", pemain_andalan: "Pemain Andalan",
+  hub: "Widget Hub",
+  statistik_pertandingan: "Statistik Pertandingan", starting_lineup: "Starting Lineup",
+}
+
+function shortcodeFor(widgetId: string, widgetType: WidgetType): string {
+  const key = WIDGET_SHORTCODE_BY_TYPE[widgetType] ?? WIDGET_SHORTCODE_BY_TYPE.jadwal
+  return `[${key} id="${widgetId}"]`
+}
+
+// ─── Shortcode placeholder builder (HTML string — dipakai untuk setContent awal) ─
 
 function buildShortcodePlaceholder(widgetId: string, widgetType: WidgetType): string {
-  const shortcodeMap: Record<WidgetType, string> = {
-    jadwal:                  `[match_data id="${widgetId}"]`,
-    klasemen:                `[klasemen_data id="${widgetId}"]`,
-    transfer:                `[transfer_data id="${widgetId}"]`,
-    peluang:                 `[peluang_data id="${widgetId}"]`,
-    analisa_taktis:          `[analisa_taktis_data id="${widgetId}"]`,
-    perbandingan_tim:        `[perbandingan_tim_data id="${widgetId}"]`,
-    timeline_pertandingan:   `[timeline_pertandingan_data id="${widgetId}"]`,
-    profil_stadion:          `[profil_stadion_data id="${widgetId}"]`,
-    daftar_pemain:           `[daftar_pemain_data id="${widgetId}"]`,
-    pemain_andalan:          `[pemain_andalan_data id="${widgetId}"]`,
-    hub:                     `[hub_data id="${widgetId}"]`,
-    statistik_pertandingan:  `[statistik_pertandingan_data id="${widgetId}"]`,
-    starting_lineup:         `[starting_lineup_data id="${widgetId}"]`,
-  }
-  const iconMap: Record<WidgetType, string> = {
-    jadwal: "📅", klasemen: "🏆", transfer: "🔄", peluang: "⭐", analisa_taktis: "🧠",
-    perbandingan_tim: "⚔️", timeline_pertandingan: "📋",
-    profil_stadion: "🏟️", daftar_pemain: "👥", pemain_andalan: "⭐", hub: "🗂️",
-    statistik_pertandingan: "📊", starting_lineup: "🧩",
-  }
-  const labelMap: Record<WidgetType, string> = {
-    jadwal: "Jadwal Pertandingan", klasemen: "Klasemen Grup",
-    transfer: "Transfer Pemain", peluang: "Peluang Juara", analisa_taktis: "Analisa Taktis",
-    perbandingan_tim: "Perbandingan Tim", timeline_pertandingan: "Timeline Pertandingan",
-    profil_stadion: "Profil Stadion", daftar_pemain: "Daftar Pemain Tim", pemain_andalan: "Pemain Andalan",
-    hub: "Widget Hub",
-    statistik_pertandingan: "Statistik Pertandingan", starting_lineup: "Starting Lineup",
-  }
-  const shortcode = shortcodeMap[widgetType] ?? shortcodeMap.jadwal
-  const icon      = iconMap[widgetType] ?? "📦"
-  const label     = labelMap[widgetType] ?? widgetType
+  const shortcode = shortcodeFor(widgetId, widgetType)
+  const icon      = WIDGET_ICON_BY_TYPE[widgetType] ?? "📦"
+  const label     = WIDGET_LABEL_BY_TYPE[widgetType] ?? widgetType
   const shortId   = widgetId.slice(0, 8)
 
   return (
@@ -160,6 +168,91 @@ function buildShortcodePlaceholder(widgetId: string, widgetType: WidgetType): st
   )
 }
 
+// ─── Custom Node: Widget Shortcode Badge ─────────────────────────────────────
+// PENTING: tanpa Node ini, TipTap (skema ProseMirror) tidak mengenali elemen
+// <div class="widget-shortcode-badge" data-shortcode="..." ...> sama sekali.
+// Elemen tak dikenal otomatis DIBUANG beserta semua atribut data-*-nya saat
+// insertContent()/setContent() diparsing — itulah sebabnya shortcode widget
+// hilang dan data widget tidak pernah muncul setelah disisipkan ke artikel.
+// Dengan mendaftarkan Node ber-atom ini (lengkap dengan parseHTML/renderHTML),
+// atribut widgetId/widgetType/shortcode dijamin bertahan melewati
+// insertContent() → editor.getHTML() → resolveShortcodesForSave().
+const WidgetShortcodeBadge = Node.create({
+  name: "widgetShortcodeBadge",
+  group: "block",
+  atom: true,
+  selectable: true,
+  draggable: false,
+  isolating: true,
+
+  addAttributes() {
+    return {
+      widgetId: {
+        default: null,
+        parseHTML: (el: HTMLElement) => el.getAttribute("data-widget-id"),
+      },
+      widgetType: {
+        default: null,
+        parseHTML: (el: HTMLElement) => el.getAttribute("data-widget-type"),
+      },
+      shortcode: {
+        default: null,
+        parseHTML: (el: HTMLElement) => el.getAttribute("data-shortcode"),
+      },
+    }
+  },
+
+  parseHTML() {
+    return [{ tag: "div.widget-shortcode-badge" }]
+  },
+
+  renderHTML({ HTMLAttributes, node }) {
+    const widgetType = (node.attrs.widgetType ?? "jadwal") as WidgetType
+    const widgetId   = (node.attrs.widgetId ?? "") as string
+    const shortcode  = (node.attrs.shortcode as string) || shortcodeFor(widgetId, widgetType)
+    const icon       = WIDGET_ICON_BY_TYPE[widgetType] ?? "📦"
+    const label      = WIDGET_LABEL_BY_TYPE[widgetType] ?? widgetType
+    const shortId    = widgetId.slice(0, 8)
+
+    return [
+      "div",
+      mergeAttributes(HTMLAttributes, {
+        class: "widget-shortcode-badge",
+        "data-shortcode": shortcode,
+        "data-widget-id": widgetId,
+        "data-widget-type": widgetType,
+        contenteditable: "false",
+        style:
+          "background:#0f1117;border:1.5px solid rgba(57,255,20,0.45);" +
+          "border-radius:12px;overflow:hidden;margin:16px 0;cursor:default;font-family:inherit;",
+      }),
+      [
+        "div",
+        { style: "background:#13151c;border-bottom:1.5px solid rgba(57,255,20,0.25);padding:10px 14px;display:flex;align-items:center;justify-content:space-between;" },
+        [
+          "div", { style: "display:flex;align-items:center;gap:8px;" },
+          ["span", { style: "font-size:16px;" }, icon],
+          ["span", { style: "font-size:12px;font-weight:800;color:#f0f0f0;" }, label],
+          ["span", { style: "background:#39FF14;color:#111;font-size:8px;font-weight:900;padding:1px 6px;border-radius:20px;text-transform:uppercase;" }, "WIDGET"],
+        ],
+        [
+          "div", { style: "display:flex;align-items:center;gap:6px;" },
+          ["div", { style: "width:6px;height:6px;border-radius:50%;background:#39FF14;" }],
+          ["span", { style: "color:#39FF14;font-size:9px;font-weight:700;" }, "AKTIF"],
+        ],
+      ],
+      [
+        "div", { style: "padding:10px 14px;" },
+        ["code", { style: "font-size:10px;color:#a0a0a0;background:#1a1d24;padding:3px 8px;border-radius:6px;" }, shortcode],
+      ],
+      [
+        "div", { style: "padding:4px 14px 10px;display:flex;align-items:center;justify-content:flex-end;gap:4px;" },
+        ["span", { style: "color:#39FF14;font-size:9px;opacity:0.7;" }, `ID: ${shortId}...`],
+      ],
+    ]
+  },
+})
+
 // ─── Ekstrak shortcode dari HTML editor ──────────────────────────────────────
 
 function resolveShortcodesForSave(html: string): string {
@@ -175,16 +268,9 @@ function resolveShortcodesForSave(html: string): string {
       const wId   = el.dataset.widgetId
       const wType = el.dataset.widgetType
       if (wId && wType) {
-        const scMap: Record<string, string> = {
-          jadwal:   `[match_data id="${wId}"]`,
-          klasemen: `[klasemen_data id="${wId}"]`,
-          transfer: `[transfer_data id="${wId}"]`,
-          peluang:  `[peluang_data id="${wId}"]`,
-          analisa_taktis:        `[analisa_taktis_data id="${wId}"]`,
-          perbandingan_tim:      `[perbandingan_tim_data id="${wId}"]`,
-          timeline_pertandingan: `[timeline_pertandingan_data id="${wId}"]`,
-        }
-        p.textContent = scMap[wType] ?? `[match_data id="${wId}"]`
+        p.textContent = WIDGET_SHORTCODE_BY_TYPE[wType as WidgetType]
+          ? shortcodeFor(wId, wType as WidgetType)
+          : `[match_data id="${wId}"]`
       } else {
         el.remove()
         return
@@ -476,6 +562,7 @@ export function CreateArticleView({ onBack, articleId }: CreateArticleViewProps)
       StarterKit.configure({ codeBlock: false, blockquote: false, paragraph: false }),
       CustomBlockquote,
       CustomParagraph,
+      WidgetShortcodeBadge,
       TiptapImage,
       TiptapLink.configure({ openOnClick: false, HTMLAttributes: { target: "_blank", rel: "noopener noreferrer" } }),
     ],
