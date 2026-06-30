@@ -67,19 +67,31 @@ function parseJsonWithAutoRepair(text: string): unknown {
   throw new Error("Auto-repair JSON melebihi batas percobaan")
 }
 
-function extractJsonFromResponse(rawInput: string): { title: string; content: string } {
+// NEWv4: tambah metaDescription — golden standard SELALU punya "Meta
+// description" terpisah dari judul. metaDescription bersifat opsional di tipe
+// return (fallback "" kalau model belum patuh) supaya parser tidak langsung
+// menolak seluruh draft hanya karena field ini belum terisi — kekurangan
+// field ini ditangani lewat quality gate (lihat checkQuality) dan retry
+// instruction, bukan lewat hard-fail parser.
+function extractJsonFromResponse(rawInput: string): { title: string; metaDescription: string; content: string } {
   const raw = typeof rawInput === "string" ? rawInput : JSON.stringify(rawInput) ?? String(rawInput)
 
   const clean = sanitizeJsonControlChars(raw)
   let lastErr = ""
 
-  try { const p = parseJsonWithAutoRepair(clean) as any; if (p.title && p.content) return p } catch (e) { lastErr = e instanceof Error ? e.message : String(e) }
+  const normalize = (p: any) => ({
+    title: p.title,
+    metaDescription: typeof p.metaDescription === "string" ? p.metaDescription : "",
+    content: p.content,
+  })
+
+  try { const p = parseJsonWithAutoRepair(clean) as any; if (p.title && p.content) return normalize(p) } catch (e) { lastErr = e instanceof Error ? e.message : String(e) }
 
   const block = clean.match(/```(?:json)?\s*([\s\S]+?)```/)
-  if (block) { try { const p = parseJsonWithAutoRepair(block[1].trim()) as any; if (p.title && p.content) return p } catch (e) { lastErr = e instanceof Error ? e.message : lastErr } }
+  if (block) { try { const p = parseJsonWithAutoRepair(block[1].trim()) as any; if (p.title && p.content) return normalize(p) } catch (e) { lastErr = e instanceof Error ? e.message : lastErr } }
 
   const i = clean.indexOf("{"), j = clean.lastIndexOf("}")
-  if (i !== -1 && j !== -1) { try { const p = parseJsonWithAutoRepair(clean.slice(i, j + 1)) as any; if (p.title && p.content) return p } catch (e) { lastErr = e instanceof Error ? e.message : lastErr } }
+  if (i !== -1 && j !== -1) { try { const p = parseJsonWithAutoRepair(clean.slice(i, j + 1)) as any; if (p.title && p.content) return normalize(p) } catch (e) { lastErr = e instanceof Error ? e.message : lastErr } }
 
   throw new Error(
     `Model tidak mengembalikan JSON valid (panjang respons: ${raw.length} karakter). ` +
@@ -108,8 +120,11 @@ function buildRetryInstruction(
   if (qc.forbiddenFound.length > 0) {
     issues.push(`Frasa yang harus dihapus atau diganti: ${qc.forbiddenFound.map((f) => `"${f}"`).join(", ")}`)
   }
+  if (!qc.hasMetaDescription) {
+    issues.push(`Field "metaDescription" belum diisi dengan benar (panjang saat ini: ${qc.metaDescriptionLength} karakter, minimal 60). Isi dengan 1-2 kalimat fakta inti (skor/tanggal/venue/nama kunci), 120-180 karakter — JANGAN kosongkan atau pakai kalimat generik.`)
+  }
 
-  return issues.join("\n\n") + "\n\nKembalikan artikel LENGKAP dalam JSON yang sama. Jangan potong konten yang sudah bagus."
+  return issues.join("\n\n") + "\n\nKembalikan artikel LENGKAP dalam JSON yang sama (title, metaDescription, content). Jangan potong konten yang sudah bagus."
 }
 
 // Normalizer respons AI ke string
@@ -241,6 +256,7 @@ export async function POST(req: NextRequest) {
           parsed.content,
           brief.qualityGate,
           brief.quotes.length > 0,
+          parsed.metaDescription,
         )
 
         // Auto-retry jika quality score < 70 atau word count terlalu pendek
@@ -261,7 +277,7 @@ export async function POST(req: NextRequest) {
             ])
 
             const parsedRetry = extractJsonFromResponse(rawRetry)
-            const qcRetry = checkQuality(parsedRetry.content, brief.qualityGate, brief.quotes.length > 0)
+            const qcRetry = checkQuality(parsedRetry.content, brief.qualityGate, brief.quotes.length > 0, parsedRetry.metaDescription)
 
             // Ambil hasil terbaik antara percobaan pertama dan retry
             if (qcRetry.score > qc.score) {
@@ -291,14 +307,15 @@ export async function POST(req: NextRequest) {
         const { error: updateError } = await supabase
           .from("article_generations")
           .update({
-            draft_title:         parsed.title,
-            draft_content:       parsed.content,
-            draft_word_count:    qc.wordCount,
-            draft_quality_score: qc.score,
-            draft_quality_data:  qc,
-            draft_model:         "google/gemma-4-31b-it",
-            draft_generated_at:  new Date().toISOString(),
-            status:              draftStatus,
+            draft_title:           parsed.title,
+            draft_meta_description: parsed.metaDescription, // NEWv4 — lihat catatan migrasi Supabase di bawah
+            draft_content:         parsed.content,
+            draft_word_count:      qc.wordCount,
+            draft_quality_score:   qc.score,
+            draft_quality_data:    qc,
+            draft_model:           "google/gemma-4-31b-it",
+            draft_generated_at:    new Date().toISOString(),
+            status:                draftStatus,
           })
           .eq("id", generationId)
 
@@ -306,13 +323,14 @@ export async function POST(req: NextRequest) {
 
         // ── 7. Kirim hasil ke CMS ────────────────────────────────────────
         send("done", {
-          title:          parsed.title,
-          content:        parsed.content,
-          wordCount:      qc.wordCount,
-          qualityScore:   qc.score,
-          qualityDetails: qc,
+          title:           parsed.title,
+          metaDescription: parsed.metaDescription,
+          content:         parsed.content,
+          wordCount:       qc.wordCount,
+          qualityScore:    qc.score,
+          qualityDetails:  qc,
           draftStatus,
-          tokenUsed:      tokenEst.totalTokens,
+          tokenUsed:       tokenEst.totalTokens,
           warning: draftStatus !== "draft_ready"
             ? draftStatus === "draft_below_quality"
               ? `Draft di bawah standar kualitas (score ${qc.score}/100). Disarankan polish dengan editor sebelum publish.`
@@ -338,3 +356,16 @@ export async function POST(req: NextRequest) {
     },
   })
 }
+
+// ── CATATAN MIGRASI SUPABASE ────────────────────────────────────────────────
+// Route ini sekarang menulis 1 kolom baru ke tabel "article_generations":
+//   - draft_meta_description  text
+// Jika kolom ini belum ada, tambahkan via SQL:
+//
+//   alter table article_generations
+//     add column if not exists draft_meta_description text;
+//
+// Field ini berisi meta description SEO (1-2 kalimat, ~120-180 karakter)
+// yang dihasilkan Gemma 4 31B bersamaan dengan title+content — sebelumnya
+// pipeline tidak punya field ini sama sekali, padahal golden standard
+// editorial selalu menyertakan "Meta description" terpisah dari judul.

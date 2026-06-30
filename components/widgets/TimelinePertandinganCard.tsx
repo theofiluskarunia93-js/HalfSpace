@@ -79,14 +79,15 @@ function splitScore(s: string): [string, string] {
 function AvatarPhoto({
   photo, name, ringColor, size = 44,
 }: { photo?: string | null; name: string; ringColor: string; size?: number }) {
+  const [failed, setFailed] = useState(false)
   return (
     <div
       className="flex-shrink-0 overflow-hidden rounded-full border-2"
       style={{ width: size, height: size, borderColor: ringColor, boxShadow: `0 0 10px ${ringColor}40` }}
     >
-      {photo ? (
+      {photo && !failed ? (
         // eslint-disable-next-line @next/next/no-img-element
-        <img src={photo} alt={name} className="h-full w-full object-cover" />
+        <img src={photo} alt={name} className="h-full w-full object-cover" onError={() => setFailed(true)} />
       ) : (
         <div className="flex h-full w-full items-center justify-center bg-[#1e2e22] text-[#5a7a64]">
           <User size={size * 0.5} />

@@ -120,6 +120,20 @@ function shortcodeFor(widgetId: string, widgetType: WidgetType): string {
 
 // ─── Shortcode placeholder builder (HTML string — dipakai untuk setContent awal) ─
 
+// PENTING: nilai yang masuk ke atribut HTML (data-shortcode dkk) harus di-escape.
+// `shortcode` sendiri mengandung tanda kutip dua literal (mis. [match_data id="uuid"]),
+// jadi kalau langsung ditaruh ke dalam atribut yang juga dibatasi tanda kutip dua
+// (data-shortcode="..."), parser HTML akan berhenti di kutip PERTAMA yang ditemukan
+// di dalam shortcode itu sendiri — memotong atributnya dan merusak seluruh DOM
+// di sekitarnya (gejalanya: teks shortcode mentah/rusak tampil di artikel publik).
+function escapeHtmlAttr(str: string): string {
+  return str
+    .replace(/&/g, "&amp;")
+    .replace(/"/g, "&quot;")
+    .replace(/</g, "&lt;")
+    .replace(/>/g, "&gt;")
+}
+
 function buildShortcodePlaceholder(widgetId: string, widgetType: WidgetType): string {
   const shortcode = shortcodeFor(widgetId, widgetType)
   const icon      = WIDGET_ICON_BY_TYPE[widgetType] ?? "📦"
@@ -128,9 +142,9 @@ function buildShortcodePlaceholder(widgetId: string, widgetType: WidgetType): st
 
   return (
     `<div class="widget-shortcode-badge" ` +
-    `data-shortcode="${shortcode}" ` +
-    `data-widget-id="${widgetId}" ` +
-    `data-widget-type="${widgetType}" ` +
+    `data-shortcode="${escapeHtmlAttr(shortcode)}" ` +
+    `data-widget-id="${escapeHtmlAttr(widgetId)}" ` +
+    `data-widget-type="${escapeHtmlAttr(widgetType)}" ` +
     `contenteditable="false" ` +
     `style="` +
       `background:#0f1117;` +

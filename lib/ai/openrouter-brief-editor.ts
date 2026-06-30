@@ -1,9 +1,46 @@
-// lib/ai/openrouter-brief-editor.ts — BARU
+// lib/ai/openrouter-brief-editor.ts — v2
 //
-// STEP 2 dari pipeline baru: "OpenRouter Nemotron 3 Ultra (Editor Brief)".
+// PERUBAHAN DARI v1:
+// ✓ Model default DIGANTI dari Nemotron 3 Ultra (550B-a55B) → Nemotron 3
+//   Super (120B-a12B), atas keputusan eksplisit pengguna: Ultra terlalu
+//   lambat diproses dan sering timeout. Super jauh lebih cepat (12B active
+//   params vs 55B) sambil tetap dari keluarga model yang sama.
+// ✓ Timeout DITURUNKAN dari 270 detik → 150 detik. Awalnya dipertahankan
+//   270s saat model diganti ke Super, tapi setelah translation.ts (lihat
+//   lib/ai/translation.ts) juga menaikkan timeoutnya ke 60 detik per
+//   panggilan untuk masalah terkait, total skenario terburuk generate-brief
+//   (fetch Serper/Tavily + translate kutipan + translate fakta media +
+//   Editor Brief) berisiko melebihi maxDuration Vercel (300s). 150 detik
+//   dipilih supaya total skenario terburuk (~280s) masih punya buffer aman
+//   di bawah batas 300s, sambil tetap memberi waktu jauh lebih longgar
+//   dari budget awal Editor Brief sebelum masalah ini (yang sempat di angka
+//   lebih rendah dan menyebabkan timeout pada Nemotron 3 Ultra).
+// ✓ max_tokens DINAIKKAN dari 6000 → 16000. Riset menemukan bug yang dikenal
+//   di parser reasoning keluarga Nemotron 3 (super_v3/nemotron_v3, dipakai
+//   baik di Super maupun Ultra — lihat vLLM issue #39581 dan #39103):
+//   parameter "nonaktifkan reasoning" SERING diabaikan diam-diam oleh
+//   provider, sehingga model tetap menghasilkan reasoning trace penuh
+//   walau reasoning.enabled:false dikirim. Kalau max_tokens terlalu kecil
+//   untuk menanggung reasoning trace + jawaban JSON final sekaligus, output
+//   terpotong DI TENGAH reasoning trace — ini match dengan simptom yang
+//   dialami: token "<unk>" berulang dan teks acak di akhir respons, bukan
+//   sekadar "JSON kepotong". Menaikkan max_tokens memberi ruang model
+//   menyelesaikan reasoning-nya (kalau ada) sebelum mencapai jawaban final.
+// ✓ Tambah detectCorruptedOutput() — deteksi eksplisit pola output rusak
+//   (token "<unk>" berulang, gibberish non-kata berulang) SEBELUM mencoba
+//   parse JSON. Riset (GitHub issues RooCode #11968, OpenCode #18484)
+//   mengonfirmasi Nemotron 3 Super melalui OpenRouter memang dikenal kadang
+//   menghasilkan output rusak/infinite-loop — bukan kasus langka. Dengan
+//   deteksi eksplisit, sistem langsung fallback ke rule-based dengan pesan
+//   jelas ("output model rusak/corrupt"), bukan mencoba parse JSON yang
+//   sudah pasti gagal dan malah membuang waktu di auto-repair JSON.
+// ✓ Semua komentar, dokumentasi, dan error message diperbarui agar
+//   konsisten menyebut "Nemotron 3 Super" (bukan lagi "Nemotron 3 Ultra").
+//
+// STEP 2 dari pipeline: "OpenRouter Nemotron 3 Super (Editor Brief)".
 //
 // Pipeline lengkap per PDF Data Mapping HalfSpace:
-//   Bzzoiro + Serper + Tavily → Nemotron 3 Ultra Brief → Gemma 4 31B
+//   Bzzoiro + Serper + Tavily → Nemotron 3 Super Brief → Gemma 4 31B
 //
 // Tugas AI ini BUKAN menulis artikel, dan BUKAN menentukan fakta — fakta
 // (mustUse/canUse/doNotUse) tetap 100% dihasilkan oleh kode deterministik di
@@ -16,10 +53,20 @@
 // lib/editorial/brief-validator.ts (STEP 3 — Validator Editor) sebelum
 // digabung ke EditorialBrief final yang dikirim ke Gemma 4 31B (generate-draft).
 //
-// Model: nvidia/nemotron-3-ultra-550b-a55b:free (free tier OpenRouter).
+// Model: nvidia/nemotron-3-super-120b-a12b:free (free tier OpenRouter).
 // Override via env OPENROUTER_BRIEF_MODEL jika slug berubah —
 // cek selalu https://openrouter.ai/models sebelum deploy, slug free tier
 // OpenRouter cukup sering berubah.
+//
+// CATATAN PENTING soal stabilitas model ini: beberapa laporan komunitas
+// (RooCode, OpenCode — pengguna agentic coding tools, bukan khusus pipeline
+// ini) mendokumentasikan Nemotron 3 Super melalui OpenRouter kadang
+// menghasilkan output rusak atau terjebak infinite-loop reasoning. Modul ini
+// SUDAH didesain best-effort (fallback ke rule-based brief-builder.ts kalau
+// AI gagal/rusak) — jadi risiko ini tertangani secara struktural, bukan
+// diabaikan. Kalau frekuensi kegagalan tetap tinggi setelah perbaikan v2 ini,
+// pertimbangkan model non-reasoning sebagai alternatif (lihat catatan di
+// callBriefEditor di bawah).
 
 import type { ArticleAngle, EditorialBrief, NewsType } from "@/lib/editorial/types"
 
@@ -74,7 +121,8 @@ ATURAN MUTLAK (tidak boleh dilanggar):
   "subStorylines": ["<sub-narasi pendukung 1>", "<sub-narasi pendukung 2>"],
   "leadExample": "<1-2 kalimat CONTOH paragraf pembuka yang konkret, bukan instruksi abstrak — gaya The Athletic>",
   "transitionHints": ["<instruksi kalimat jembatan antar bagian 1>", "<instruksi kalimat jembatan 2>"]
-}`
+}
+5. Jawab LANGSUNG dengan JSON di atas. JANGAN menulis proses berpikir, draft, atau pertimbangan apapun sebelum JSON — langsung keluarkan JSON final saja.`
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -108,11 +156,11 @@ ANGLE USULAN DARI SISTEM RULE-BASED (boleh kamu pertahankan jika sudah paling ku
 - headlineDirection: ${ruleBasedAngle.headlineDirection}
 - narrativeFocus: ${ruleBasedAngle.narrativeFocus}
 
-Tugasmu: putuskan angle final, dan tulis arah editorial yang lebih tajam dan lebih manusiawi dari usulan rule-based di atas — TETAP hanya berdasarkan fakta yang diberikan. Kembalikan HANYA JSON sesuai skema yang sudah dijelaskan di system prompt.`
+Tugasmu: putuskan angle final, dan tulis arah editorial yang lebih tajam dan lebih manusiawi dari usulan rule-based di atas — TETAP hanya berdasarkan fakta yang diberikan. Kembalikan HANYA JSON sesuai skema yang sudah dijelaskan di system prompt. Jawab langsung dengan JSON, tanpa proses berpikir di luar JSON.`
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
-// Sanitizer — sama pendekatannya dengan generate-draft/route.ts (Llama 4 Scout):
+// Sanitizer — sama pendekatannya dengan generate-draft/route.ts (Gemma):
 // model open-source kadang menulis newline/tab MENTAH di tengah string JSON
 // (bukan \n yang sudah di-escape), padahal JSON murni tidak boleh punya
 // karakter kontrol mentah di dalam string. Ini menyusuri karakter satu per
@@ -148,6 +196,43 @@ function stripThinkingBlocks(raw: string): string {
   return raw.replace(/<think>[\s\S]*?<\/think>/gi, "").trim()
 }
 
+// ─────────────────────────────────────────────────────────────────────────────
+// NEWv2: DETEKSI OUTPUT RUSAK/CORRUPT — dipanggil SEBELUM mencoba parse JSON
+// sama sekali. Berdasarkan riset, pola berikut adalah ciri-ciri DIKENAL dari
+// kegagalan reasoning-parser keluarga Nemotron 3 melalui OpenRouter (BUKAN
+// sekadar JSON yang kepotong rapi di tengah kalimat — itu beda kasus, sudah
+// ditangani auto-repair di bawah):
+//   1. Token literal "<unk>" muncul berulang kali (>= 3x) — tanda decoder
+//      menghasilkan token yang gagal di-map balik ke teks oleh tokenizer.
+//      JSON dengan SATU "<unk>" di tengah teks editorial (mis. dalam kutipan)
+//      bisa jadi false-positive ringan, makanya threshold-nya >=3, bukan >=1.
+//   2. Rangkaian kata bersambung tanpa spasi yang tidak membentuk struktur
+//      JSON/kalimat wajar (mis. "genness(LOGbugwebkituniteinkMC...") — pola
+//      "repetition collapse" khas model reasoning yang outputnya rusak.
+// Kalau salah satu pola ini terdeteksi, JANGAN coba parse JSON / auto-repair
+// sama sekali — itu hanya buang waktu karena output sudah pasti tidak bisa
+// diselamatkan. Langsung lempar error spesifik supaya pemanggil (route.ts)
+// bisa fallback ke rule-based dengan pesan yang akurat.
+// ─────────────────────────────────────────────────────────────────────────────
+function detectCorruptedOutput(raw: string): string | null {
+  const unkCount = (raw.match(/<unk>/g) ?? []).length
+  if (unkCount >= 3) {
+    return `Output model rusak (corrupt) — token "<unk>" muncul ${unkCount} kali. Ini adalah kegagalan dikenal pada reasoning-parser Nemotron 3 di OpenRouter (model menghasilkan token yang gagal di-decode), bukan masalah max_tokens atau JSON yang kepotong rapi.`
+  }
+
+  // Heuristik kedua: cari rangkaian >= 40 karakter alfanumerik TANPA spasi
+  // sama sekali yang juga TIDAK mengandung karakter JSON struktural ({ } " : ,)
+  // — kombinasi ini sangat tidak mungkin muncul di output JSON yang sehat
+  // (field terpanjang sekalipun, mis. narrativeFocus, selalu berupa kalimat
+  // berbahasa Indonesia dengan spasi normal).
+  const gibberishMatch = raw.match(/[A-Za-z0-9]{40,}/)
+  if (gibberishMatch && !/[{}":,]/.test(gibberishMatch[0])) {
+    return `Output model rusak (corrupt) — terdeteksi rangkaian karakter tanpa spasi sepanjang ${gibberishMatch[0].length} karakter ("${gibberishMatch[0].slice(0, 40)}..."), ciri khas "repetition collapse" pada model reasoning yang gagal, bukan JSON valid yang kepotong.`
+  }
+
+  return null
+}
+
 // Auto-repair generic: kalau JSON.parse gagal karena tanda kutip mentah yang
 // tidak di-escape di tengah value (paling sering kejadian di field
 // leadExample, karena field ini memang diminta berisi CONTOH kalimat nyata
@@ -162,13 +247,9 @@ function parseJsonWithAutoRepair(text: string): unknown {
       return JSON.parse(current)
     } catch (e) {
       const msg = e instanceof Error ? e.message : String(e)
-      const m = msg.match(/position (\d+)/)
-      if (!m) throw e
-      const pos = Number(m[1])
-      // Scan mundur dari posisi error untuk cari tanda kutip mentah
-      // terdekat — itu yang salah menutup string duluan. V8 kadang skip
-      // whitespace setelah kutip itu sebelum melapor posisi error, jadi
-      // posisi error TIDAK selalu pas persis di karakter kutipnya.
+      const posMatch = msg.match(/position (\d+)/)
+      if (!posMatch) throw e
+      const pos = parseInt(posMatch[1], 10)
       let quoteIdx = -1
       for (let k = pos; k >= 0; k--) {
         if (current[k] === '"') { quoteIdx = k; break }
@@ -186,6 +267,16 @@ function parseJsonWithAutoRepair(text: string): unknown {
 // newline mentah di dalam string, atau kepotong sebelum JSON selesai.
 // ─────────────────────────────────────────────────────────────────────────────
 function extractJsonLoose(rawInput: string): unknown {
+  // NEWv2: cek output rusak/corrupt SEBELUM apapun lain — lihat
+  // detectCorruptedOutput() di atas untuk alasan lengkapnya.
+  const corruptionReason = detectCorruptedOutput(rawInput)
+  if (corruptionReason) {
+    throw new Error(
+      `OpenRouter (Nemotron 3 Super) — ${corruptionReason} ` +
+      `Awal: ${rawInput.slice(0, 150)} ||| Akhir: ${rawInput.slice(-150)}`
+    )
+  }
+
   const raw = stripThinkingBlocks(rawInput)
   const clean = sanitizeJsonControlChars(raw)
   let lastErr = ""
@@ -199,7 +290,7 @@ function extractJsonLoose(rawInput: string): unknown {
   if (i !== -1 && j !== -1 && j > i) { try { return parseJsonWithAutoRepair(clean.slice(i, j + 1)) } catch (e) { lastErr = e instanceof Error ? e.message : lastErr } }
 
   throw new Error(
-    `OpenRouter (Nemotron 3 Ultra) tidak mengembalikan JSON valid (panjang respons: ${raw.length} karakter, ` +
+    `OpenRouter (Nemotron 3 Super) tidak mengembalikan JSON valid (panjang respons: ${raw.length} karakter, ` +
     `kemungkinan kepotong karena max_tokens kurang). Parse error: ${lastErr}. ` +
     `Awal: ${raw.slice(0, 150)} ||| Akhir: ${raw.slice(-150)}`
   )
@@ -246,32 +337,40 @@ export async function callBriefEditor(
           { role: "user", content: buildBriefEditorUser(newsType, topic, deterministicBrief) },
         ],
         temperature: 0.4,
-        // Nemotron 3 Ultra adalah "frontier reasoning model" — reasoning-nya
-        // kemungkinan TIDAK bisa benar-benar dimatikan (beda dari model
-        // reasoning ringan lain). max_tokens di sini menanggung reasoning +
-        // jawaban JSON final sekaligus, jadi harus jauh lebih besar daripada
-        // model non-reasoning biasa — kalau kekecilan, semua kuota kepakai
-        // buat "berpikir" dan jawaban final jadi kosong (ini yang awalnya
-        // terjadi waktu masih 1600).
-        max_tokens: 6000,
+        // NEWv2: dinaikkan dari 6000 → 16000. Nemotron 3 Super JUGA model
+        // reasoning (parser super_v3) — sama seperti Ultra, parameter
+        // "reasoning.enabled:false" di bawah BISA diabaikan diam-diam oleh
+        // provider (bug dikenal di parser keluarga Nemotron 3, lihat catatan
+        // panjang di header file ini). Kalau itu terjadi, model tetap
+        // menghasilkan reasoning trace penuh sebelum jawaban JSON final —
+        // max_tokens kecil membuat reasoning trace itu kepotong DI TENGAH,
+        // dan pemotongan di tengah reasoning trace model besar berisiko
+        // menghasilkan token rusak (pola "<unk>" yang dialami sebelumnya).
+        // 16000 memberi ruang jauh lebih aman tanpa membuat biaya/latency
+        // membengkak tak terkendali (model ini gratis di OpenRouter, jadi
+        // biaya bukan pertimbangan; latency tetap dijaga lewat timeout di
+        // signal AbortSignal di bawah, bukan lewat membatasi max_tokens).
+        max_tokens: 16000,
         response_format: { type: "json_object" },
-        // effort "low" supaya reasoning tidak berlebihan & hemat token,
-        // exclude:true supaya teks reasoning tidak ikut numpuk di response
-        // body (kita memang tidak butuh reasoning trace-nya, cuma JSON final).
+        // effort "low" / enabled:false supaya reasoning tidak berlebihan &
+        // hemat token — TAPI lihat catatan di atas: ini TIDAK SELALU
+        // dihormati oleh provider untuk model reasoning keluarga Nemotron 3,
+        // makanya max_tokens dinaikkan sebagai mitigasi tambahan, bukan
+        // mengandalkan parameter ini sepenuhnya.
         reasoning: { enabled: false },
       }),
-      // Dinaikkan dari 50s -> 270s (4.5 menit). Per dokumentasi resmi Vercel
-      // (terakhir update Mei 2026, sejak Fluid Compute jadi default), Hobby
-      // plan sekarang juga dapat maxDuration sampai 300s — bukan 60s lagi
-      // seperti generasi lama. Disisakan ~30s dari budget 300s di route.ts
-      // untuk fetch Bzzoiro/Serper/Tavily + buildEditorialBrief + validator +
-      // insert Supabase, supaya total tidak kepotong paksa oleh Vercel
+      // DITURUNKAN dari 270 detik → 150 detik (2.5 menit). Setelah
+      // translation.ts juga menaikkan timeoutnya (translateOneQuote dan
+      // translateMediaFactsBatch, masing-masing ke 60 detik) untuk mengatasi
+      // warning "media_facts_translation GAGAL", skenario terburuk TOTAL
+      // generate-brief (fetch Serper/Tavily ~10s + translate kutipan 60s +
+      // translate fakta media 60s + Editor Brief ini) berisiko melebihi
+      // budget 300s Vercel Hobby plan kalau timeout di sini tetap 270s
+      // (10+60+60+270 = 400s). 150 detik membuat skenario terburuk total
+      // jadi ~280s — masih ada buffer ~20s di bawah batas 300s
       // (FUNCTION_INVOCATION_TIMEOUT / 504) sebelum sempat fallback rapi ke
-      // rule-based. Kalau Nemotron 3 Ultra di free tier OpenRouter ternyata
-      // konsisten butuh lebih dari ini, kemungkinan besar bukan soal timeout
-      // lagi tapi model/slug-nya memang lambat atau kena rate limit — cek log
-      // failureReason di sourceWarnings.
-      signal: AbortSignal.timeout(270_000),
+      // rule-based.
+      signal: AbortSignal.timeout(150_000),
     })
 
     if (!res.ok) {
@@ -291,14 +390,16 @@ export async function callBriefEditor(
       // cuma "kemungkinan di-deprecate" seperti sebelumnya.
       throw new Error(
         `OpenRouter (${model}) mengembalikan content kosong. finish_reason: ${finishReason ?? "?"}, ` +
-        `panjang reasoning: ${reasoningText.length} karakter${finishReason === "length" ? " — kemungkinan max_tokens masih kurang untuk model reasoning sebesar ini, atau reasoning effort perlu diturunkan lagi" : ""}.`
+        `panjang reasoning: ${reasoningText.length} karakter${finishReason === "length" ? " — kemungkinan max_tokens masih kurang, atau reasoning.enabled:false diabaikan provider (bug dikenal pada parser Nemotron 3 — lihat catatan di header file ini)." : ""}.`
       )
     }
 
     if (finishReason === "length") {
       console.warn(
-        `⚠️ Respons OpenRouter (${model}) kepotong (finish_reason: length) dengan max_tokens=6000. ` +
-        `Kalau ini sering terjadi, naikkan lagi nilainya di openrouter-brief-editor.ts.`
+        `⚠️ Respons OpenRouter (${model}) kepotong (finish_reason: length) dengan max_tokens=16000. ` +
+        `Kemungkinan reasoning.enabled:false diabaikan provider untuk model reasoning ini. ` +
+        `Kalau ini sering terjadi, naikkan lagi max_tokens di openrouter-brief-editor.ts, atau ` +
+        `pertimbangkan model non-reasoning sebagai alternatif (cek https://openrouter.ai/models filter "reasoning: false").`
       )
     }
 
@@ -322,10 +423,11 @@ export async function callBriefEditor(
     }
   } catch (err) {
     // AI editor brief bersifat best-effort. Kalau gagal (rate limit, timeout,
-    // model lagi down di free tier, slug berubah), pipeline TETAP lanjut
-    // memakai brief rule-based — tidak boleh memblokir Generate Brief hanya
-    // karena OpenRouter bermasalah. Tapi alasannya tetap dikembalikan supaya
-    // bisa ditampilkan apa adanya ke CMS, bukan disamarkan jadi pesan generic.
+    // model lagi down di free tier, slug berubah, ATAU output rusak/corrupt —
+    // lihat detectCorruptedOutput), pipeline TETAP lanjut memakai brief
+    // rule-based — tidak boleh memblokir Generate Brief hanya karena
+    // OpenRouter bermasalah. Tapi alasannya tetap dikembalikan supaya bisa
+    // ditampilkan apa adanya ke CMS, bukan disamarkan jadi pesan generic.
     const reason = err instanceof Error ? err.message : String(err)
     console.warn(`⚠️ callBriefEditor (OpenRouter ${model}) gagal, fallback ke rule-based:`, err)
     return { suggestion: null, failureReason: reason }

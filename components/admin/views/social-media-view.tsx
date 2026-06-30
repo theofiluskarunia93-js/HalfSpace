@@ -78,16 +78,11 @@ function sanitizeExcerpt(raw: string): string {
 // ─── Content type meta ────────────────────────────────────────────────────────
 
 const CONTENT_TYPE_LABELS: Record<ContentType, string> = {
-  match_preview:    "Preview Pertandingan",
-  match_result:     "Hasil Pertandingan",
-  schedule:         "Jadwal Lengkap",
-  squad:            "Daftar Skuad",
-  prediction:       "Prediksi Juara",
-  transfer:         "Transfer Rumor",
-  press_conference: "Konferensi Pers",
-  injury:           "Update Cedera",
-  trivia:           "Trivia & Feature",
-  general:          "Umum",
+  tournament_table:   "Tabel Turnamen",
+  match_preview:      "Preview Pertandingan",
+  match_result:       "Hasil Pertandingan",
+  transfer_rumor:     "Transfer Rumor",
+  transfer_done_deal: "Transfer Done Deal",
 }
 
 const ALL_CONTENT_TYPES = Object.keys(CONTENT_TYPE_LABELS) as ContentType[]
@@ -96,16 +91,14 @@ const ALL_CONTENT_TYPES = Object.keys(CONTENT_TYPE_LABELS) as ContentType[]
 
 function detectContentType(title: string): ContentType {
   const t = title.toLowerCase()
-  if (/hasil|skor|menang|kalah|imbang|gol/.test(t))                        return "match_result"
+  if (/hasil|skor|menang|kalah|imbang|gol|FT|HT/.test(t))                  return "match_result"
   if (/preview|prediksi laga|head.to.head|pertemuan|lawan/.test(t))        return "match_preview"
-  if (/jadwal|fixture|schedule/.test(t))                                   return "schedule"
-  if (/skuad|squad|daftar pemain|lineup/.test(t))                          return "squad"
-  if (/prediksi juara|favorit juara|peluang juara|odds/.test(t))           return "prediction"
-  if (/transfer|rumor|kabar|pindah|rekrut|kontrak|bursa/.test(t))          return "transfer"
-  if (/konferensi pers|press conference|manajer bicara|pelatih bicara/.test(t)) return "press_conference"
-  if (/cedera|injury|absen|pulih|kondisi/.test(t))                         return "injury"
-  if (/trivia|fakta|sejarah|rekor|statistik|tahukah/.test(t))              return "trivia"
-  return "general"
+  if (/bracket|tabel turnamen|jadwal turnamen|semifinal|perempat final|babak 8|klasemen grup/.test(t))
+                                                                            return "tournament_table"
+  if (/resmi|done deal|sah|teken kontrak|diumumkan|tanda tangan/.test(t))  return "transfer_done_deal"
+  if (/transfer|rumor|kabar|pindah|rekrut|kontrak|bursa|diminati|incar/.test(t))
+                                                                            return "transfer_rumor"
+  return "match_preview"
 }
 
 // ─── Parse overlay data from article title ────────────────────────────────────
@@ -131,7 +124,7 @@ function parseOverlayFromTitle(title: string, ct: ContentType): OverlayData {
     if (compMatch) base.competition = compMatch[1]
   }
 
-  if (ct === "transfer") {
+  if (ct === "transfer_rumor" || ct === "transfer_done_deal") {
     // Pattern: "Nama Pemain ke Klub" or "Nama Pemain dari Klub ke Klub"
     const toMatch   = title.match(/(.+?)\s+(?:ke|bergabung dengan|menuju)\s+(.+?)(?:\s*[,:\-|]|$)/i)
     const fromMatch = title.match(/dari\s+(.+?)\s+ke/i)
@@ -140,62 +133,16 @@ function parseOverlayFromTitle(title: string, ct: ContentType): OverlayData {
       base.toClub     = toMatch[2].trim()
     }
     if (fromMatch) base.fromClub = fromMatch[1].trim()
-    // Fee
+    // Fee — dipakai sebagai "Rumoured Fee" (done deal) atau dibiarkan kosong utk rumor
     const feeMatch = title.match(/(?:senilai|seharga|€|£|\$)?\s*(\d+[\d.,]*\s*(?:juta|miliar|M|B)?)/i)
     if (feeMatch) base.transferFee = feeMatch[0].trim()
   }
 
-  if (ct === "squad") {
-    const teamMatch = title.match(/skuad\s+(.+?)(?:\s+musim|\s+\d{4}|$)/i)
-    if (teamMatch) base.teamName = teamMatch[1].trim()
-    const seasonMatch = title.match(/(\d{4}(?:[\/\-]\d{2,4})?)/)
-    if (seasonMatch) base.season = seasonMatch[1]
-  }
-
-  if (ct === "prediction") {
-    const compMatch = title.match(/(Liga Champions|Premier League|La Liga|Serie A|Bundesliga|Ligue 1|Liga 1|World Cup|Euro|Copa America|AFCON|AFF Cup|AFC Cup)/i)
-    if (compMatch) base.tournament = compMatch[1]
-    // Favorit: kata setelah "juara" atau nama tim
-    const favMatch = title.match(/(?:juara|pemenang)?\s*:?\s*(.+?)(?:\s*[,:\-|]|$)/i)
-    if (favMatch) base.favorite = favMatch[1].trim()
-  }
-
-  if (ct === "schedule") {
-    const compMatch = title.match(/(Liga Champions|Premier League|La Liga|Serie A|Bundesliga|Ligue 1|Liga 1|World Cup|Euro|Copa America|AFCON|AFF Cup|AFC Cup)/i)
-    if (compMatch) base.competition = compMatch[1]
-    const countMatch = title.match(/(\d+)\s*pertandingan/i)
-    if (countMatch) base.matchCount = countMatch[1]
-  }
-
-  if (ct === "press_conference" || ct === "injury") {
-    const clubMatch = title.match(/(Manchester|Liverpool|Arsenal|Chelsea|City|Madrid|Barca|Bayern|PSG|Juventus|Inter|Milan|[A-Z][a-z]+ FC|[A-Z][a-z]+ United)/i)
-    if (clubMatch) base.clubName = clubMatch[1]
-    // Player/manager name: first capitalized words before verb
-    const nameMatch = title.match(/^([A-Z][a-z]+(?:\s+[A-Z][a-z]+){0,2})/)
-    if (nameMatch) {
-      if (ct === "injury") base.playerName = nameMatch[1]
-      else base.managerName = nameMatch[1]
-    }
-    // Injury status
-    if (ct === "injury") {
-      const statusMatch = title.match(/(absen \d+ minggu|cedera \w+|dipastikan absen|kembali berlatih|pulih)/i)
-      if (statusMatch) base.playerStatus = statusMatch[0]
-    }
-  }
-
-  if (ct === "general") {
-    base.headline = title.slice(0, 60)
-  }
-
-  if (ct === "trivia") {
-    // Extract number from title e.g. "38 Tahun" or "900 Gol"
-    const numMatch = title.match(/(\d+)\s*([A-Za-z]+)?/)
-    if (numMatch) {
-      base.triviaNumber = numMatch[1]
-      base.triviaUnit   = numMatch[2] || ""
-    }
-    base.triviaFact = title.slice(0, 80)
-    base.headline   = title.slice(0, 60)
+  if (ct === "tournament_table") {
+    const compMatch = title.match(/(Liga Champions|Premier League|La Liga|Serie A|Bundesliga|Ligue 1|Liga 1|World Cup|Piala Dunia|Euro|Copa America|AFCON|AFF Cup|AFC Cup)/i)
+    if (compMatch) base.tournamentName = compMatch[1]
+    const stageMatch = title.match(/(semifinal|perempat final|babak 8|babak 16|final|grup [A-H])/i)
+    if (stageMatch) base.tournamentStage = stageMatch[1]
   }
 
   return base
@@ -249,9 +196,22 @@ interface FieldDef {
   label: string
   placeholder: string
   required?: boolean
+  /** Default "input" (single line). Pakai "textarea" untuk field multi-baris (mis. daftar laga turnamen). */
+  type?: "input" | "textarea"
 }
 
 const OVERLAY_FIELDS: Partial<Record<ContentType, FieldDef[]>> = {
+  tournament_table: [
+    { key: "tournamentName",  label: "Nama Turnamen", placeholder: "Piala Dunia 2026",  required: true },
+    { key: "tournamentStage", label: "Babak",         placeholder: "Semifinal" },
+    {
+      key: "matchupsText",
+      label: "Daftar Laga (1 baris = 1 laga, format: Tim A vs Tim B)",
+      placeholder: "Argentina vs Brasil\nPortugal vs Spanyol",
+      required: true,
+      type: "textarea",
+    },
+  ],
   match_preview: [
     { key: "teamHome",    label: "Tim Kandang",  placeholder: "Real Madrid",     required: true },
     { key: "teamAway",    label: "Tim Tandang",  placeholder: "Barcelona",        required: true },
@@ -267,49 +227,20 @@ const OVERLAY_FIELDS: Partial<Record<ContentType, FieldDef[]>> = {
     { key: "competition", label: "Kompetisi",    placeholder: "Liga Champions" },
     { key: "matchDate",   label: "Tanggal",      placeholder: "14 Jun 2025" },
   ],
-  schedule: [
-    { key: "competition", label: "Kompetisi",        placeholder: "Liga Champions", required: true },
-    { key: "matchCount",  label: "Jumlah Laga",      placeholder: "8" },
-    { key: "dateRange",   label: "Rentang Tanggal",  placeholder: "14–21 Jun 2025" },
+  transfer_rumor: [
+    { key: "playerName",       label: "Nama Pemain",          placeholder: "Kylian Mbappé",  required: true },
+    { key: "fromClub",         label: "Klub Saat Ini",        placeholder: "PSG" },
+    { key: "toClub",           label: "Klub Tujuan (Rumor)",  placeholder: "Real Madrid",    required: true },
+    { key: "transferFee",      label: "Nilai Transfer (opsional)",  placeholder: "€80 Juta" },
+    { key: "rumorProbability", label: "Peluang Transfer (opsional)", placeholder: "70%" },
   ],
-  squad: [
-    { key: "teamName",    label: "Nama Tim",     placeholder: "Manchester City", required: true },
-    { key: "season",      label: "Musim",        placeholder: "2025/26" },
-    { key: "playerCount", label: "Jumlah Pemain", placeholder: "25" },
-  ],
-  prediction: [
-    { key: "tournament",  label: "Turnamen",     placeholder: "Liga Champions",  required: true },
-    { key: "favorite",    label: "Favorit Juara", placeholder: "Manchester City", required: true },
-  ],
-  transfer: [
-    { key: "playerName",  label: "Nama Pemain",  placeholder: "Kylian Mbappé",   required: true },
-    { key: "fromClub",    label: "Dari Klub",    placeholder: "PSG" },
-    { key: "toClub",      label: "Ke Klub",      placeholder: "Real Madrid",     required: true },
-    { key: "transferFee", label: "Nilai Transfer", placeholder: "€180 Juta" },
-  ],
-  injury: [
-    { key: "playerName",     label: "Nama Pemain",    placeholder: "Virgil van Dijk",  required: true },
-    { key: "clubName",       label: "Nama Klub",      placeholder: "Liverpool" },
-    { key: "playerStatus",   label: "Status",         placeholder: "OUT" },
-    { key: "injuryType",     label: "Jenis Cedera",   placeholder: "Ligamen Lutut" },
-    { key: "injuryDuration", label: "Durasi Absen",   placeholder: "6-8 Minggu" },
-  ],
-  press_conference: [
-    { key: "managerName", label: "Nama Manajer/Pelatih", placeholder: "Pep Guardiola", required: true },
-    { key: "managerRole", label: "Jabatan",               placeholder: "Manajer Manchester City" },
-    { key: "clubName",    label: "Nama Klub",             placeholder: "Manchester City" },
-    { key: "quote",       label: "Kutipan",               placeholder: "Kami tidak takut siapapun..." },
-  ],
-  trivia: [
-    { key: "triviaNumber", label: "Angka/Statistik", placeholder: "38",                              required: true },
-    { key: "triviaUnit",   label: "Satuan",          placeholder: "Tahun" },
-    { key: "triviaFact",   label: "Fakta",           placeholder: "Usia CR7 saat cetak 900 gol…",   required: true },
-    { key: "headline",     label: "Headline",        placeholder: "Judul artikel trivia…" },
-    { key: "subheadline",  label: "Subheadline",     placeholder: "Detail tambahan…" },
-  ],
-  general: [
-    { key: "headline",    label: "Headline",    placeholder: "Judul singkat…",    required: true },
-    { key: "subheadline", label: "Subheadline", placeholder: "Detail tambahan…" },
+  transfer_done_deal: [
+    { key: "playerName",  label: "Nama Pemain",     placeholder: "Kylian Mbappé",   required: true },
+    { key: "fromClub",    label: "Dari Klub",       placeholder: "PSG",             required: true },
+    { key: "toClub",      label: "Ke Klub",         placeholder: "Real Madrid",     required: true },
+    { key: "transferFee", label: "Rumoured/Nilai Transfer", placeholder: "€180 Juta" },
+    { key: "marketValue", label: "Market Value",   placeholder: "€2.5 Juta" },
+    { key: "position",    label: "Posisi",          placeholder: "Centre-Back" },
   ],
 }
 
@@ -372,7 +303,7 @@ function OverlayForm({
   onChange: (patch: Partial<OverlayData>) => void
   onContentTypeChange: (ct: ContentType) => void
 }) {
-  const fields = OVERLAY_FIELDS[overlay.contentType] ?? OVERLAY_FIELDS.general!
+  const fields = OVERLAY_FIELDS[overlay.contentType] ?? OVERLAY_FIELDS.match_preview!
 
   return (
     <div className="space-y-3">
@@ -402,17 +333,27 @@ function OverlayForm({
       {/* Dynamic fields */}
       <div className="grid grid-cols-2 gap-2">
         {fields.map((field) => (
-          <div key={field.key} className={field.key === "headline" ? "col-span-2" : ""}>
+          <div key={field.key} className={field.type === "textarea" ? "col-span-2" : ""}>
             <label className="text-xs text-muted-foreground mb-1 block">
               {field.label}
               {field.required && <span className="text-primary ml-0.5">*</span>}
             </label>
-            <Input
-              value={(overlay[field.key] as string) ?? ""}
-              onChange={(e) => onChange({ [field.key]: e.target.value })}
-              placeholder={field.placeholder}
-              className="h-8 text-xs border-border bg-secondary/30 focus-visible:ring-primary"
-            />
+            {field.type === "textarea" ? (
+              <Textarea
+                value={(overlay[field.key] as string) ?? ""}
+                onChange={(e) => onChange({ [field.key]: e.target.value })}
+                placeholder={field.placeholder}
+                rows={4}
+                className="text-xs border-border bg-secondary/30 focus-visible:ring-primary resize-none"
+              />
+            ) : (
+              <Input
+                value={(overlay[field.key] as string) ?? ""}
+                onChange={(e) => onChange({ [field.key]: e.target.value })}
+                placeholder={field.placeholder}
+                className="h-8 text-xs border-border bg-secondary/30 focus-visible:ring-primary"
+              />
+            )}
           </div>
         ))}
       </div>
@@ -438,7 +379,7 @@ export function SocialMediaView({ onBack, articleId }: SocialMediaViewProps) {
 
   // Section 2 — Image Generator
   const [imagePrompt, setImagePrompt]           = useState("")
-  const [overlay, setOverlay]                   = useState<OverlayData>({ contentType: "general" })
+  const [overlay, setOverlay]                   = useState<OverlayData>({ contentType: "match_preview" })
   const [generatedImageUrl, setGeneratedImageUrl] = useState<string | null>(null)
   const [generatingImage, setGeneratingImage]   = useState(false)
   const [imageError, setImageError]             = useState<string | null>(null)

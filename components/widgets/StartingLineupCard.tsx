@@ -81,6 +81,7 @@ function ratingColor(r: number): string {
 }
 
 function PlayerNode({ p }: { p: LineupPlayer }) {
+  const [photoFailed, setPhotoFailed] = useState(false)
   return (
     <div className="flex flex-col items-center gap-1 w-[64px] flex-shrink-0">
       <div className="relative">
@@ -90,9 +91,9 @@ function PlayerNode({ p }: { p: LineupPlayer }) {
           </span>
         )}
         <div className="h-12 w-12 overflow-hidden rounded-full border-2 border-white/70 bg-[#1e2e22] shadow-[0_2px_8px_rgba(0,0,0,0.4)]">
-          {p.photo_url ? (
+          {p.photo_url && !photoFailed ? (
             // eslint-disable-next-line @next/next/no-img-element
-            <img src={p.photo_url} alt={p.name} className="h-full w-full object-cover" />
+            <img src={p.photo_url} alt={p.name} className="h-full w-full object-cover" onError={() => setPhotoFailed(true)} />
           ) : (
             <div className="flex h-full w-full items-center justify-center text-[#5a7a64]">
               <User size={22} />

@@ -843,7 +843,34 @@ export async function fetchKonpersContext(topic: string): Promise<BzzoiroContext
       // standings gagal — lanjut tanpa klasemen
     }
 
+    // NEWv3: Laga terbaru (finished[0]) adalah pertandingan yang HAMPIR PASTI
+    // melatari konferensi pers ini. Golden standard artikel konpers SELALU
+    // menyebut skor, kompetisi, venue, dan tanggal laga itu secara eksplisit
+    // di paragraf pembuka (mis. "Uruguay kalah 0-1 dari Spanyol pada laga
+    // pamungkas Grup H di Stadion Guadalajara, Sabtu (27/6/2026)"). Sebelumnya
+    // field ini hanya numpang lewat sebagai satu baris generik di dalam "FORM
+    // 5 LAGA TERAKHIR" tanpa venue maupun label kompetisi — sekarang dipisah
+    // eksplisit sebagai blok tersendiri supaya brief-builder bisa menariknya
+    // langsung sebagai mustUse "PERTANDINGAN_KONPERS" dan dateline kota.
+    const latest = finished[0]
+    if (latest) {
+      const lHome = fixEncoding(latest.home_team ?? "")
+      const lAway = fixEncoding(latest.away_team ?? "")
+      const lHomeScore = latest.home_score ?? 0
+      const lAwayScore = latest.away_score ?? 0
+      const lDate = latest.event_date ?? "-"
+      const lLeague = fixEncoding(latest.league_name ?? latest.league ?? "")
+      const lVenue = latest.venue ? fixEncoding(latest.venue) : ""
+      lines.push("")
+      lines.push("PERTANDINGAN TERKAIT KONPERS (laga terbaru tim ini):")
+      lines.push(`  ${lHome} ${lHomeScore} - ${lAwayScore} ${lAway}`)
+      if (lLeague) lines.push(`  Kompetisi: ${lLeague}`)
+      if (lVenue)  lines.push(`  Venue: ${lVenue}`)
+      lines.push(`  Tanggal: ${lDate}`)
+    }
+
     // Form 5 laga — hasil W/D/L + skor
+    lines.push("")
     lines.push("FORM 5 LAGA TERAKHIR:")
     finished.forEach((e: any) => {
       const home      = fixEncoding(e.home_team ?? "")

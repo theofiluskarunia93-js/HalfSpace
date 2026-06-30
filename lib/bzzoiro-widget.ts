@@ -46,6 +46,22 @@ function fix(str: string | null | undefined): string {
   try { return decodeURIComponent(escape(str)) } catch { return str }
 }
 
+function ageFromDOB(dob: string): number {
+  const d = new Date(dob)
+  if (isNaN(d.getTime())) return 0
+  const now = new Date()
+  let age = now.getFullYear() - d.getFullYear()
+  if (now.getMonth() < d.getMonth() || (now.getMonth() === d.getMonth() && now.getDate() < d.getDate())) age--
+  return age
+}
+
+// PENTING: pencarian nama pemain dengan aksen (mis. "Mbappe" vs "Mbappé") bisa
+// gagal total kalau API tidak melakukan normalisasi aksen di sisi server.
+// Helper ini bikin variasi tanpa-aksen untuk dicoba sebagai fallback pencarian.
+function stripDiacritics(str: string): string {
+  return str.normalize("NFD").replace(/[\u0300-\u036f]/g, "")
+}
+
 // Tabel translasi nama tim Indonesia → Inggris (sama seperti di bzzoiro.ts)
 const ID_TO_EN: Record<string, string> = {
   jepang: "japan", swedia: "sweden", inggris: "england", prancis: "france",
@@ -215,6 +231,25 @@ export interface BzzStandingRow {
   points: number
 }
 
+// PENTING: path asli Bzzoiro adalah /leagues/{id}/standings/ (nested resource),
+// BUKAN /standings/?league={id}. Kompetisi grup (Piala Dunia dkk) juga
+// mengembalikan bentuk { grouped: true, groups: {A:[...], B:[...]} } bukan
+// array `standings` rata seperti liga biasa — helper ini menangani keduanya.
+async function fetchStandingsTable(leagueId: number | string, hint?: string): Promise<any[]> {
+  const json = await bzzGet(`/api/v2/leagues/${leagueId}/standings/`)
+  if (json?.grouped && json?.groups && typeof json.groups === "object") {
+    const groupMatch = hint?.match(/\bgr(?:o|u)up?\s*([a-h])\b/i)
+    const requestedGroup = groupMatch?.[1]?.toUpperCase()
+    if (requestedGroup && Array.isArray(json.groups[requestedGroup])) {
+      return json.groups[requestedGroup].map((r: any) => ({ ...r, __group: requestedGroup }))
+    }
+    return Object.entries(json.groups).flatMap(([letter, rows]: [string, any]) =>
+      Array.isArray(rows) ? rows.map((r: any) => ({ ...r, __group: letter })) : []
+    )
+  }
+  return json.results ?? json.standings ?? (Array.isArray(json) ? json : [])
+}
+
 export async function fetchBzzKlasemen(leagueQuery: string): Promise<BzzStandingRow[]> {
   // Coba cari league_id dari events dulu
   const events = await bzzGet(
@@ -225,8 +260,9 @@ export async function fetchBzzKlasemen(leagueQuery: string): Promise<BzzStanding
 
   if (!leagueId) throw new Error(`Liga "${leagueQuery}" tidak ditemukan di Bzzoiro.`)
 
-  const json = await bzzGet(`/api/v2/standings/?league=${leagueId}&limit=30`)
-  const table: any[] = json.results ?? json.standings ?? (Array.isArray(json) ? json : [])
+  // PENTING: path asli Bzzoiro adalah /leagues/{id}/standings/ (nested resource),
+  // BUKAN /standings/?league={id} — itu sebabnya selalu 404 sebelumnya.
+  const table: any[] = await fetchStandingsTable(leagueId, leagueQuery)
 
   // PENTING: liganya ketemu (leagueId valid), tapi kalau tabel standings-nya
   // sendiri kosong (misal kompetisi belum mulai/data belum diisi Bzzoiro),
@@ -243,14 +279,16 @@ export async function fetchBzzKlasemen(leagueQuery: string): Promise<BzzStanding
   return table.map((row, i) => ({
     rank: row.position ?? row.rank ?? i + 1,
     team_name: fix(row.team_name ?? row.team ?? ""),
-    group_label: leagueName,
+    group_label: row.__group ? `Grup ${row.__group}` : leagueName,
     played: row.played ?? row.matches_played ?? 0,
     won: row.won ?? row.wins ?? 0,
     drawn: row.drawn ?? row.draws ?? 0,
     lost: row.lost ?? row.losses ?? 0,
     gf: row.goals_for ?? row.gf ?? 0,
     ga: row.goals_against ?? row.ga ?? 0,
-    points: row.points ?? 0,
+    // PENTING: field standings asli Bzzoiro adalah `pts`, bukan `points`
+    // (kode lama selalu baca 0 dari sini).
+    points: row.pts ?? row.points ?? 0,
   }))
 }
 
@@ -287,25 +325,40 @@ export async function fetchBzzStatistik(query: string): Promise<BzzStatistikData
 
   if (!event) throw new Error(`Pertandingan "${query}" tidak ditemukan di Bzzoiro.`)
 
-  const stats = await bzzGet(`/api/v2/events/${event.id}/stats/`).catch(() => null)
+  const statsResp = await bzzGet(`/api/v2/events/${event.id}/stats/`).catch(() => null)
+  // PENTING: field asli Bzzoiro nested per sisi — { stats: { home: {...}, away: {...} } } —
+  // BUKAN flat seperti shots_home/shots_away yang dicari kode lama. Itu sebabnya
+  // semua stat selain possession selalu 0 dan ikut tersaring (cuma possession
+  // muncul di screenshot, karena dihitung dengan cara berbeda sebagai fallback).
+  const homeStats: any = statsResp?.stats?.home ?? {}
+  const awayStats: any = statsResp?.stats?.away ?? {}
 
   const home = fix(event.home_team ?? "")
   const away = fix(event.away_team ?? "")
   const competition = fix(event.league_name ?? event.league ?? "")
 
-  // Helper: ambil nilai stat dari response (support berbagai shape key)
+  // Helper: ambil nilai stat dari objek per-sisi, support 3 bentuk asli Bzzoiro:
+  // angka polos (mis. total_shots: 11), objek {value,total,pct} (mis. crosses),
+  // dan objek {actual} (mis. xg: {actual: 1.23}).
   function sv(obj: any, ...keys: string[]): number {
     for (const k of keys) {
-      if (obj?.[k] != null && !isNaN(Number(obj[k]))) return Number(obj[k])
+      const v = obj?.[k]
+      if (v == null) continue
+      if (typeof v === "object") {
+        if (v.value != null && !isNaN(Number(v.value))) return Number(v.value)
+        if (v.actual != null && !isNaN(Number(v.actual))) return Number(v.actual)
+        continue
+      }
+      if (!isNaN(Number(v))) return Number(v)
     }
     return 0
   }
 
-  const possH = sv(stats, "possession_home", "home_possession", "possession")
-  const possA = sv(stats, "possession_away", "away_possession")
+  const possH = sv(homeStats, "ball_possession", "possession")
+  const possA = sv(awayStats, "ball_possession", "possession")
   const possession_home = possH || (possA ? 100 - possA : 50)
 
-  const statRows = stats ? [
+  const statRows = statsResp ? [
     {
       label: "Penguasaan Bola",
       home_value: possession_home,
@@ -315,43 +368,43 @@ export async function fetchBzzStatistik(query: string): Promise<BzzStatistikData
     },
     {
       label: "Tembakan",
-      home_value: sv(stats, "shots_home", "total_shots_home"),
-      away_value: sv(stats, "shots_away", "total_shots_away"),
+      home_value: sv(homeStats, "total_shots", "shots"),
+      away_value: sv(awayStats, "total_shots", "shots"),
       is_percent: false,
       direction: "higher_better" as const,
     },
     {
       label: "Tembakan Tepat Sasaran",
-      home_value: sv(stats, "shots_on_target_home", "on_target_home"),
-      away_value: sv(stats, "shots_on_target_away", "on_target_away"),
+      home_value: sv(homeStats, "shots_on_target", "on_target"),
+      away_value: sv(awayStats, "shots_on_target", "on_target"),
       is_percent: false,
       direction: "higher_better" as const,
     },
     {
       label: "xG",
-      home_value: sv(stats, "xg_home"),
-      away_value: sv(stats, "xg_away"),
+      home_value: sv(homeStats, "xg"),
+      away_value: sv(awayStats, "xg"),
       is_percent: false,
       direction: "higher_better" as const,
     },
     {
       label: "Pelanggaran",
-      home_value: sv(stats, "fouls_home"),
-      away_value: sv(stats, "fouls_away"),
+      home_value: sv(homeStats, "fouls"),
+      away_value: sv(awayStats, "fouls"),
       is_percent: false,
       direction: "lower_better" as const,
     },
     {
       label: "Kartu Kuning",
-      home_value: sv(stats, "yellow_cards_home"),
-      away_value: sv(stats, "yellow_cards_away"),
+      home_value: sv(homeStats, "yellow_cards"),
+      away_value: sv(awayStats, "yellow_cards"),
       is_percent: false,
       direction: "lower_better" as const,
     },
     {
       label: "Sepak Pojok",
-      home_value: sv(stats, "corners_home"),
-      away_value: sv(stats, "corners_away"),
+      home_value: sv(homeStats, "corner_kicks", "corners"),
+      away_value: sv(awayStats, "corner_kicks", "corners"),
       is_percent: false,
       direction: "higher_better" as const,
     },
@@ -405,9 +458,12 @@ export interface BzzTimelineData {
     team: "home" | "away"
     score_after: string
     player_name: string
+    player_photo?: string
     assist_name?: string
     sub_in_name?: string
+    sub_in_photo?: string
     sub_out_name?: string
+    sub_out_photo?: string
   }>
 }
 
@@ -434,16 +490,27 @@ export async function fetchBzzTimeline(query: string): Promise<BzzTimelineData> 
     rawStatus === "finished" ? "finished" : rawStatus === "live" ? "live" : "upcoming"
 
   // Peta tipe insiden Bzzoiro → tipe widget
-  function mapType(t: string): BzzTimelineData["events"][0]["type"] {
+  function mapType(t: string): BzzTimelineData["events"][0]["type"] | null {
     t = t.toLowerCase()
     if (t.includes("goal") || t.includes("gol")) return "goal"
     if (t.includes("penalty") || t.includes("penalti")) return "penalty"
     if (t.includes("red") || t.includes("merah")) return "red_card"
     if (t.includes("yellow") || t.includes("kuning")) return "yellow_card"
+    if (t.includes("card") || t.includes("kartu")) return "yellow_card" // kartu tanpa warna spesifik -> default aman (bukan goal)
     if (t.includes("sub") || t.includes("ganti")) return "substitution"
     if (t.includes("var")) return "var"
-    return "goal"
+    return null // tipe tidak dikenal -> jangan ditebak sebagai goal (bisa merusak skor berjalan)
   }
+
+  // PENTING: incidents Bzzoiro mengidentifikasi tim lewat ID numerik
+  // (home_team_id/away_team_id di event, team_id di tiap incident) — BUKAN
+  // field nama seperti team_name/team yang tidak pernah ada di respons asli.
+  // Kode lama selalu baca string kosong dari field itu, jadi isHome selalu
+  // false dan SEMUA insiden (termasuk semua substitusi & gol) salah dianggap
+  // milik tim away — itu sebabnya skor berjalan bisa melewati skor akhir asli,
+  // dan semua pergantian pemain tampak dari satu tim saja.
+  const homeTeamId = event.home_team_id ?? event.home_id
+  const awayTeamId = event.away_team_id ?? event.away_id
 
   // Lacak skor berjalan
   let runH = 0, runA = 0
@@ -456,13 +523,26 @@ export async function fetchBzzTimeline(query: string): Promise<BzzTimelineData> 
     .sort((a, b) => (Number(a.minute ?? 0) - Number(b.minute ?? 0)))
     .map(inc => {
       const type = mapType(inc.type ?? inc.incident_type ?? "")
-      const incHome = fix(inc.team_name ?? inc.team ?? "")
-      const isHome = incHome.toLowerCase().includes(home.toLowerCase().split(" ")[0])
+      if (!type) return null
+
+      let isHome: boolean
+      if (inc.team_id != null && homeTeamId != null) {
+        // Jalur utama: cocokkan via ID numerik (paling akurat)
+        isHome = String(inc.team_id) === String(homeTeamId)
+      } else if (inc.team === "home" || inc.team === "away") {
+        isHome = inc.team === "home"
+      } else {
+        // Fallback terakhir: cocokkan nama tim (kurang akurat, cuma kalau ID tidak ada)
+        const incHome = fix(inc.team_name ?? "")
+        isHome = !!incHome && incHome.toLowerCase().includes(home.toLowerCase().split(" ")[0])
+      }
       const team: "home" | "away" = isHome ? "home" : "away"
 
       if (type === "goal" || type === "penalty") {
         if (isHome) { runH++ } else { runA++ }
       }
+
+      const photoUrl = (pid: any) => pid ? `https://sports.bzzoiro.com/img/player/${pid}/` : undefined
 
       return {
         minute: String(inc.minute ?? "?") + "'" ,
@@ -470,11 +550,15 @@ export async function fetchBzzTimeline(query: string): Promise<BzzTimelineData> 
         team,
         score_after: `${runH}-${runA}`,
         player_name: fix(inc.player_name ?? inc.player ?? ""),
+        player_photo: type !== "substitution" ? photoUrl(inc.player_id) : undefined,
         assist_name: fix(inc.assist_name ?? inc.assist ?? "") || undefined,
         sub_in_name: type === "substitution" ? fix(inc.sub_in_name ?? inc.player_in ?? "") || undefined : undefined,
+        sub_in_photo: type === "substitution" ? photoUrl(inc.player_in_id) : undefined,
         sub_out_name: type === "substitution" ? fix(inc.sub_out_name ?? inc.player_out ?? inc.player_name ?? "") || undefined : undefined,
+        sub_out_photo: type === "substitution" ? photoUrl(inc.player_out_id ?? inc.player_id) : undefined,
       }
     })
+    .filter((x): x is NonNullable<typeof x> => x !== null)
 
   // PENTING: tim/skor sudah ketemu, tapi kalau timeline-nya kosong (belum ada
   // gol/kartu/substitusi tercatat, ATAU pertandingan belum mulai sama sekali),
@@ -528,6 +612,7 @@ export interface BzzLineupData {
       name: string
       position: string
       rating: number | null
+      photo_url: string | null
     }>
   }
   away: {
@@ -539,6 +624,7 @@ export interface BzzLineupData {
       name: string
       position: string
       rating: number | null
+      photo_url: string | null
     }>
   }
 }
@@ -572,6 +658,8 @@ export async function fetchBzzStartingLineup(query: string): Promise<BzzLineupDa
         name: fix(p.short_name ?? p.name ?? `Pemain ${i + 1}`),
         position: p.position ?? (i === 0 ? "GK" : "CM"),
         rating: p.ai_score != null ? Number(p.ai_score) : (p.rating != null ? Number(p.rating) : null),
+        // Bzzoiro: foto pemain via image proxy publik, tidak perlu API call tambahan
+        photo_url: p.id ? `https://sports.bzzoiro.com/img/player/${p.id}/` : null,
       })),
     }
   }
@@ -630,11 +718,8 @@ export async function fetchBzzPeluang(query: string): Promise<BzzPeluangRow[]> {
   const event = events[0]
   const leagueId = event.league_id ?? event.league
 
-  // Klasemen untuk semua tim
-  const standings = leagueId
-    ? await bzzGet(`/api/v2/standings/?league=${leagueId}&limit=25`).catch(() => null)
-    : null
-  const table: any[] = standings?.results ?? standings?.standings ?? (Array.isArray(standings) ? standings : [])
+  // Klasemen untuk semua tim (path benar: /leagues/{id}/standings/)
+  const table: any[] = leagueId ? await fetchStandingsTable(leagueId, query).catch(() => []) : []
 
   // Predictions untuk event ini
   const preds = await bzzGet(`/api/v2/predictions/?event=${event.id}`).catch(() => null)
@@ -701,6 +786,33 @@ export interface BzzPerbandinganData {
   home_wins: number
   draws: number
   away_wins: number
+  home_value: string
+  away_value: string
+}
+
+// PENTING: tidak ada agregat "nilai skuad tim" langsung di Bzzoiro — market
+// value cuma ada per-pemain (/players/{id}/, field market_value_eur). Jadi
+// untuk dapat nilai skuad, kita ambil squad tim (/teams/{id}/squad/) lalu
+// jumlahkan market value tiap pemain. Dibatasi 25 pemain pertama per tim biar
+// tidak terlalu banyak request paralel.
+async function fetchSquadValueLabel(teamName: string): Promise<string> {
+  const teamsJson = await bzzGet(`/api/teams/?search=${encodeURIComponent(teamName)}&limit=5`).catch(() => null)
+  const teams: any[] = teamsJson?.results ?? (Array.isArray(teamsJson) ? teamsJson : [])
+  const team = teams[0]
+  if (!team?.id) return "-"
+
+  const squadJson = await bzzGet(`/api/v2/teams/${team.id}/squad/`).catch(() => null)
+  const players: any[] = squadJson?.players ?? squadJson?.results ?? (Array.isArray(squadJson) ? squadJson : [])
+  if (players.length === 0) return "-"
+
+  const detailed = await Promise.all(
+    players.slice(0, 25).map((p) => bzzGet(`/api/v2/players/${p.id}/`).catch(() => null))
+  )
+  const total = detailed.reduce((sum, p) => sum + Number(p?.market_value_eur ?? 0), 0)
+  if (total === 0) return "-"
+
+  const m = total / 1_000_000
+  return m >= 1 ? `€${m.toFixed(1)}M` : `€${(total / 1000).toFixed(0)}K`
 }
 
 export async function fetchBzzPerbandingan(query: string): Promise<BzzPerbandinganData> {
@@ -720,11 +832,8 @@ export async function fetchBzzPerbandingan(query: string): Promise<BzzPerbanding
   const leagueId = mainEvent?.league_id ?? mainEvent?.league
   const competition = fix(mainEvent?.league_name ?? mainEvent?.league ?? "")
 
-  // Standings
-  const standings = leagueId
-    ? await bzzGet(`/api/v2/standings/?league=${leagueId}&limit=25`).catch(() => null)
-    : null
-  const table: any[] = standings?.results ?? standings?.standings ?? (Array.isArray(standings) ? standings : [])
+  // Standings (path benar: /leagues/{id}/standings/)
+  const table: any[] = leagueId ? await fetchStandingsTable(leagueId, query).catch(() => []) : []
 
   function getStandRow(name: string) {
     return table.find(r =>
@@ -768,9 +877,12 @@ export async function fetchBzzPerbandingan(query: string): Promise<BzzPerbanding
   }
 
   // Manager (coach) untuk kedua tim — resolve team_id dulu (lihat findManagerByTeamName)
-  const [homeMgr, awayMgr] = await Promise.all([
+  // + nilai skuad kedua tim (lihat fetchSquadValueLabel)
+  const [homeMgr, awayMgr, homeValue, awayValue] = await Promise.all([
     findManagerByTeamName(teamA),
     findManagerByTeamName(teamB),
+    fetchSquadValueLabel(teamA),
+    fetchSquadValueLabel(teamB),
   ])
 
   function coachName(mgr: any): string {
@@ -791,6 +903,8 @@ export async function fetchBzzPerbandingan(query: string): Promise<BzzPerbanding
     home_wins: homeWins,
     draws,
     away_wins: awayWins,
+    home_value: homeValue,
+    away_value: awayValue,
   }
 }
 
@@ -808,6 +922,7 @@ export interface BzzTransferRow {
   transfer_value: number | null
   transfer_date: string | null
   is_free: boolean
+  photo_url: string | null
 }
 
 export async function fetchBzzTransfer(playerQuery: string): Promise<BzzTransferRow> {
@@ -828,6 +943,9 @@ export async function fetchBzzTransfer(playerQuery: string): Promise<BzzTransfer
     transfer_value: mvM,
     transfer_date: null,
     is_free: mv === 0,
+    // Bzzoiro: foto pemain via image proxy publik, tidak perlu API call tambahan
+    // (404 kalau tidak ada foto -> Card harus sedia fallback/placeholder)
+    photo_url: player.id ? `https://sports.bzzoiro.com/img/player/${player.id}/` : null,
   }
 }
 
@@ -853,9 +971,21 @@ export interface BzzPemainAndalanData {
 }
 
 export async function fetchBzzPemainAndalan(playerQuery: string): Promise<BzzPemainAndalanData> {
-  const json = await bzzGet(`/api/players/?search=${encodeURIComponent(playerQuery)}&limit=5`)
-  const players: any[] = json.results ?? (Array.isArray(json) ? json : [])
-  const player = players[0]
+  // PENTING: endpoint players yang lebih lengkap ada di /api/v2/players/
+  // (filter by name/club/national-team/nationality/position). Kalau nama
+  // mengandung aksen (mis. "Mbappé") dan tidak ketemu, coba lagi tanpa aksen
+  // ("Mbappe") sebagai fallback — beberapa nama Bzzoiro tersimpan tanpa aksen.
+  async function searchPlayer(q: string) {
+    const json = await bzzGet(`/api/v2/players/?search=${encodeURIComponent(q)}&limit=5`).catch(() => null)
+    const list: any[] = json?.results ?? (Array.isArray(json) ? json : [])
+    return list[0] ?? null
+  }
+
+  let player = await searchPlayer(playerQuery)
+  if (!player) {
+    const stripped = stripDiacritics(playerQuery)
+    if (stripped !== playerQuery) player = await searchPlayer(stripped)
+  }
   if (!player) throw new Error(`Pemain "${playerQuery}" tidak ditemukan di Bzzoiro.`)
 
   const playerId = player.id
@@ -881,9 +1011,12 @@ export async function fetchBzzPemainAndalan(playerQuery: string): Promise<BzzPem
     nama_pemain: fix(player.player_name ?? player.name ?? playerQuery),
     nomor_punggung: player.jersey_number ?? player.shirt_number ?? 10,
     posisi: fix(player.position ?? ""),
-    usia: player.age ?? 25,
-    tinggi_badan: player.height ?? 175,
-    berat_badan: player.weight ?? 70,
+    // PENTING: field asli Bzzoiro adalah height_cm/weight_kg/date_of_birth —
+    // bukan height/weight/age (yang tidak pernah ada, jadi selalu fallback
+    // ke default 175/70/25 sebelumnya, terlepas dari data pemain sebenarnya).
+    usia: player.age ?? (player.date_of_birth ? ageFromDOB(player.date_of_birth) : 25),
+    tinggi_badan: player.height_cm ?? player.height ?? 175,
+    berat_badan: player.weight_kg ?? player.weight ?? 70,
     kaki_dominan: player.preferred_foot === "left" ? "Kiri"
       : player.preferred_foot === "both" ? "Kedua"
       : "Kanan",
@@ -920,8 +1053,11 @@ export async function fetchBzzDaftarPemain(teamQuery: string): Promise<BzzDaftar
   const teamId = team.id
   const teamName = fix(team.name ?? team.team_name ?? teamQuery)
 
-  const json = await bzzGet(`/api/players/?team=${teamId}&limit=50`)
-  const players: any[] = json.results ?? (Array.isArray(json) ? json : [])
+  // PENTING: path asli Bzzoiro adalah /teams/{id}/squad/ (nested resource),
+  // BUKAN /players/?team={id} — pola bug yang sama dengan standings sebelumnya.
+  // Itu sebabnya tim ketemu tapi daftar pemain selalu kosong.
+  const json = await bzzGet(`/api/v2/teams/${teamId}/squad/`)
+  const players: any[] = json.players ?? json.results ?? (Array.isArray(json) ? json : [])
 
   // PENTING: tim-nya ketemu, tapi kalau roster pemainnya kosong di Bzzoiro,
   // tanpa cek ini form "berhasil" tersimpan dengan 0 pemain — pola yang sama
@@ -939,12 +1075,23 @@ export async function fetchBzzDaftarPemain(teamQuery: string): Promise<BzzDaftar
     return m >= 1 ? `€${m.toFixed(1)}M` : `€${(Number(mv) / 1000).toFixed(0)}K`
   }
 
-  return players.map(p => ({
+  // PENTING: endpoint /teams/{id}/squad/ cuma kasih shape ringkas (TIDAK ada
+  // market_value) — sesuai docs resmi: "For full per-player detail (market
+  // value, foot, contract, etc.) hit /players/{id}/". Jadi nilai pasar perlu
+  // di-fetch terpisah per pemain. Dibatasi 30 pemain pertama agar tidak terlalu
+  // banyak request paralel.
+  const detailed = await Promise.all(
+    players.slice(0, 30).map((p) =>
+      bzzGet(`/api/v2/players/${p.id}/`).catch(() => null)
+    )
+  )
+
+  return players.slice(0, 30).map((p, i) => ({
     nomor_punggung: p.jersey_number ?? p.shirt_number ?? 0,
     nama_pemain: fix(p.player_name ?? p.name ?? ""),
-    usia: p.age ?? 0,
+    usia: p.age ?? (p.date_of_birth ? ageFromDOB(p.date_of_birth) : 0),
     asal_klub: teamName,
-    nilai_pasar: formatMV(p.market_value),
+    nilai_pasar: formatMV(detailed[i]?.market_value ?? p.market_value),
     posisi: fix(p.position ?? null) || null,
   })).sort((a, b) => a.nomor_punggung - b.nomor_punggung)
 }
@@ -1076,9 +1223,27 @@ export interface BzzProfilStadionData {
 export async function fetchBzzProfilStadion(query: string): Promise<BzzProfilStadionData> {
   const json = await bzzGet(`/api/venues/?search=${encodeURIComponent(query)}&limit=5`)
   const venues: any[] = json.results ?? (Array.isArray(json) ? json : [])
-  const venue = venues[0]
 
-  if (!venue) throw new Error(`Stadion "${query}" tidak ditemukan di Bzzoiro.`)
+  // PENTING: dokumentasi resmi Bzzoiro cuma mengonfirmasi endpoint DETAIL
+  // (/api/venues/{id}/) — tidak jelas apakah /api/venues/ (list) benar2
+  // mendukung filter ?search=. Kalau parameter itu diabaikan diam-diam oleh
+  // server, API akan balas baris PERTAMA di database secara default — sama
+  // sekali tidak terkait dengan yang dicari (cth: cari "SoFi" balik "11 June
+  // Stadium, Tripoli, Libya"). Jadi jangan langsung percaya venues[0] — cek
+  // dulu ada kecocokan kata dengan query sebelum dipakai.
+  const qWords = query.toLowerCase().split(/\s+/).filter(w => w.length > 2)
+  const venue = venues.find((v) => {
+    const name = fix(v.name ?? v.venue_name ?? "").toLowerCase()
+    return qWords.length === 0 || qWords.some((w) => name.includes(w))
+  })
+
+  if (!venue) {
+    throw new Error(
+      `Stadion "${query}" tidak ditemukan secara akurat di Bzzoiro — hasil yang ` +
+      `kembali dari pencarian tidak cocok dengan nama yang dicari (kemungkinan ` +
+      `stadion ini belum ada di database mereka). Coba nama lain atau isi manual.`
+    )
+  }
 
   return {
     nama_stadion: fix(venue.name ?? venue.venue_name ?? query),

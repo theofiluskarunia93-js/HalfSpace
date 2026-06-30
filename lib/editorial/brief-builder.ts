@@ -64,6 +64,9 @@ import {
 import { selectAngle } from "./angle-selector"
 import type { AngleResult } from "./angle-selector"
 import type { ArticleAngle } from "./types"
+import { translateQuotes, translateMediaFacts } from "../ai/translation" // NEWv4 — terjemahan kutipan & fakta media terkontrol, lihat catatan di buildEditorialBrief
+import { formatDateIndonesian } from "./date-formatter" // NEWv4 — normalisasi tanggal Bzzoiro ke format Indonesia yang tidak ambigu
+import { validateTranslatedQuotes } from "./brief-validator" // NEWv4 — validasi integritas nama entitas pasca-terjemahan kutipan
 
 interface BuildBriefInput {
   newsType: NewsType
@@ -98,16 +101,75 @@ function parseTeamNames(bzzoiroText: string, topic: string): [string, string] {
 }
 
 function parseBzzoiroHasil(bzzoiroText: string, home: string, away: string): BzzoiroExtractedHasil {
+  const rawDate = bzzoiroText.match(/Tanggal:\s*(.+)/)?.[1]?.trim() ?? ""
+  // NEWv4: normalisasi tanggal ke format Indonesia tidak ambigu (lihat
+  // date-formatter.ts). Kalau format asli tidak dikenali, formatted.display
+  // fallback ke rawDate apa adanya (TIDAK pernah menampilkan tanggal yang
+  // sudah diproses tapi mungkin salah).
+  const formattedDate = formatDateIndonesian(rawDate)
   return {
     home, away,
     score:       bzzoiroText.match(/SKOR AKHIR:\s*(.+)/)?.[1]?.trim() ?? "? - ?",
     competition: bzzoiroText.match(/Liga\/Kompetisi:\s*(.+)/)?.[1]?.trim() ?? "",
-    date:        bzzoiroText.match(/Tanggal:\s*(.+)/)?.[1]?.trim() ?? "",
+    date:        formattedDate.display || rawDate,
+    venue:       bzzoiroText.match(/Venue:\s*(.+)/)?.[1]?.trim(),
     keyIncidents: extractKeyIncidents(bzzoiroText),
     stats:        extractStats(bzzoiroText),
     momentumSummary: summarizeMomentum(bzzoiroText, home, away),
   }
 }
+
+// NEWv3: Golden standard match report SELALU dibuka dengan dateline
+// "KOTA — narasi..." (contoh: "PHILADELPHIA — Brasil meraih kemenangan...").
+// Helper ini mengambil nama kota dari string venue mentah Bzzoiro, yang
+// biasanya berformat "Stadion X, Kota" atau "Kota, Negara" atau cuma "Kota".
+// Heuristik longgar: ambil token terakhir setelah koma jika ada koma; kalau
+// tidak ada koma, ambil kata terakhir dari venue (paling sering nama kota
+// ditempel di akhir nama stadion, mis. "AT&T Stadium Dallas" → "Dallas").
+function extractCityFromVenue(venue?: string): string | undefined {
+  if (!venue) return undefined
+  const trimmed = venue.trim()
+  if (!trimmed) return undefined
+  if (trimmed.includes(",")) {
+    const parts = trimmed.split(",").map((s) => s.trim()).filter(Boolean)
+    return parts[parts.length - 1]
+  }
+  const words = trimmed.split(/\s+/).filter(Boolean)
+  return words[words.length - 1]
+}
+
+// NEWv3: Parser untuk blok "PERTANDINGAN TERKAIT KONPERS" — laga terbaru yang
+// melatari konferensi pers (skor, kompetisi, venue, tanggal). Golden standard
+// artikel konpers selalu menyebut fakta ini di paragraf pembuka, jadi field
+// ini WAJIB ada di mustUse, bukan sekadar tersembunyi di teks mentah.
+// NEWv3: di-export (sebelumnya private) — dipakai ulang di
+// app/api/generate-brief/route.ts untuk membangun extraTerms (skor/tanggal
+// laga) yang disisipkan ke query Serper & Tavily khusus tipe konpers, supaya
+// hasil pencarian media/konteks terikat ke laga yang sama persis dengan yang
+// diidentifikasi di Bzzoiro — bukan dihitung ulang dengan regex duplikat.
+export interface KonpersMatchInfo {
+  matchup: string   // "Uruguay 0 - 1 Spanyol"
+  competition?: string
+  venue?: string
+  date?: string
+}
+export function parseKonpersMatch(bzzoiroText: string): KonpersMatchInfo | undefined {
+  const block = bzzoiroText.match(/PERTANDINGAN TERKAIT KONPERS[^:]*:\s*\n([\s\S]+?)(?:\n\nFORM|\nFORM 5|$)/)?.[1]
+  if (!block) return undefined
+  const matchup = block.match(/^\s*(.+?\s+\d+\s*-\s*\d+\s+.+?)\s*$/m)?.[1]?.trim()
+  if (!matchup) return undefined
+  const rawDate = block.match(/Tanggal:\s*(.+)/)?.[1]?.trim()
+  // NEWv4: normalisasi tanggal — lihat catatan di parseBzzoiroHasil di atas.
+  const formattedDate = rawDate ? formatDateIndonesian(rawDate) : undefined
+  return {
+    matchup,
+    competition: block.match(/Kompetisi:\s*(.+)/)?.[1]?.trim(),
+    venue:       block.match(/Venue:\s*(.+)/)?.[1]?.trim(),
+    date:        formattedDate?.display || rawDate,
+  }
+}
+
+
 
 function parseBzzoiroPreview(bzzoiroText: string, home: string, away: string): BzzoiroExtractedPreview {
   const h2hSection = bzzoiroText.match(/H2H 5 PERTANDINGAN TERAKHIR:\n([\s\S]+?)(?:\n\n|\nFORM)/)?.[1] ?? ""
@@ -196,9 +258,17 @@ function parseBzzoiroTrivia(bzzoiroText: string, manualContext: string): Bzzoiro
 
 // ─────────────────────────────────────────────────────────────────────────────
 // SEO BUILDER — keyword otomatis dari topik dan newsType
+// NEWv3: tambah parameter `mustUse` — golden standard SELALU menulis meta
+// description sebagai 1 kalimat ringkas berisi fakta inti (skor, tanggal,
+// venue/kompetisi, nama kunci), bukan kalimat generik. Field ini diteruskan
+// ke Gemma sebagai daftar fakta WAJIB masuk meta description, supaya hasilnya
+// konsisten konkret seperti "Brasil menang 3-0 atas Haiti di Stadion
+// Philadelphia pada laga Piala Dunia, Sabtu (20/6/2026)..." — bukan kalimat
+// kosong seperti "Simak ulasan lengkap pertandingan ini di artikel berikut."
 // ─────────────────────────────────────────────────────────────────────────────
-function buildSeoMeta(newsType: NewsType, topic: string, home?: string, away?: string): SeoMeta {
+function buildSeoMeta(newsType: NewsType, topic: string, home?: string, away?: string, mustUse?: string[]): SeoMeta {
   const cleanTopic = topic.trim()
+  const facts = mustUse ?? []
 
   const primaryByType: Record<NewsType, string> = {
     hasil:    home && away ? `Hasil ${home} vs ${away}` : `Hasil ${cleanTopic}`,
@@ -227,12 +297,27 @@ function buildSeoMeta(newsType: NewsType, topic: string, home?: string, away?: s
     trivia:   `[hook editorial] — ${primaryByType.trivia}`,
   }
 
+  // Pilih fakta paling konkret untuk tiap tipe — pola sama dengan golden
+  // standard: skor+tanggal+venue (hasil/konpers), matchDate+winProbability
+  // (preview), nilai transfer (transfer), diagnosa+timeline (cedera), fakta
+  // rekor utama (trivia). Maksimal 3 fakta supaya tetap ringkas ~140-180 char.
+  const metaFactsByType: Record<NewsType, string[]> = {
+    hasil:    facts.filter((f) => f.startsWith("Skor akhir") || f.startsWith("Kompetisi") || f.startsWith("Menit")).slice(0, 3),
+    preview:  facts.filter((f) => f.startsWith("Pertandingan") || f.startsWith("Win probability")).slice(0, 2),
+    transfer: facts.filter((f) => f.includes("Nilai pasar") || f.startsWith("Pemain") || f.includes("Status")).slice(0, 2),
+    cedera:   facts.filter((f) => f.startsWith("Pemain") || f.includes("Diagnosa") || f.includes("Dampak odds")).slice(0, 2),
+    konpers:  facts.filter((f) => f.startsWith("Kutipan")).slice(0, 1),
+    trivia:   facts.slice(0, 2),
+  }
+
   return {
-    primaryKeyword:     primaryByType[newsType],
-    secondaryKeywords:  secondaryByType[newsType],
-    titleTemplate:      templateByType[newsType],
+    primaryKeyword:        primaryByType[newsType],
+    secondaryKeywords:     secondaryByType[newsType],
+    titleTemplate:         templateByType[newsType],
+    metaDescriptionFacts:  metaFactsByType[newsType],
   }
 }
+
 
 // ─────────────────────────────────────────────────────────────────────────────
 // DATA QUALITY WARNINGS — [FIX #7]
@@ -243,6 +328,9 @@ function buildDataWarnings(
   hasilData?: BzzoiroExtractedHasil,
   cederaData?: BzzoiroExtractedCedera,
   triviaData?: BzzoiroExtractedTrivia,
+  quoteTranslationFailureCount = 0, // NEWv4
+  mediaFactsTranslationFailed = false, // NEWv4
+  quoteIntegrityIssues: { field: string; reason: string }[] = [], // NEWv4
 ): DataQualityWarning[] {
   const warnings: DataQualityWarning[] = []
 
@@ -283,6 +371,37 @@ function buildDataWarnings(
       instruction: "Data shotmap xG dan statistik historis dari Bzzoiro TIDAK TERSEDIA. Artikel trivia hanya boleh menggunakan fakta dari manualContext. DILARANG mengarang statistik historis.",
     })
   }
+  // NEWv4: Warning jika terjemahan kutipan gagal (API error/timeout) dan
+  // fallback passthrough dipakai — kutipan kemungkinan masih berbahasa
+  // Inggris atau kurang natural. Editor manusia perlu mengecek kutipan ini
+  // sebelum publish (lihat lib/ai/quote-translator.ts).
+  if (quoteTranslationFailureCount > 0) {
+    warnings.push({
+      field: "quote_translation",
+      status: "partial",
+      instruction: `${quoteTranslationFailureCount} kutipan GAGAL diterjemahkan otomatis ke Bahasa Indonesia (API error/timeout) dan memakai fallback teks asli. WAJIB cek manual sebelum publish — kutipan ini mungkin masih berbahasa Inggris atau kurang natural. Jangan biarkan Gemma menerjemahkan ulang kutipan ini sendiri.`,
+    })
+  }
+  // NEWv4: Warning jika terjemahan fakta media (transferStatus/
+  // injuryStatement/mediaHighlights/dst) gagal — field-field ini kemungkinan
+  // masih berbahasa Inggris di mustUse/canUse.
+  if (mediaFactsTranslationFailed) {
+    warnings.push({
+      field: "media_facts_translation",
+      status: "partial",
+      instruction: `Penerjemahan fakta media (status transfer/cedera/highlight) GAGAL (API error/timeout). Sebagian fakta di mustUse/canUse mungkin masih berbahasa Inggris. WAJIB cek manual sebelum publish.`,
+    })
+  }
+  // NEWv4: Warning jika validasi integritas terjemahan kutipan menemukan
+  // masalah (nama hilang, atau hasil terjemahan menggembung) — lihat
+  // checkTranslationIntegrity() di brief-validator.ts.
+  if (quoteIntegrityIssues.length > 0) {
+    warnings.push({
+      field: "quote_translation_integrity",
+      status: "partial",
+      instruction: `Validasi integritas terjemahan kutipan menemukan ${quoteIntegrityIssues.length} masalah: ${quoteIntegrityIssues.map((i) => i.reason).join(" | ")}. WAJIB cek manual kutipan ini sebelum publish — kemungkinan nama berubah atau ada informasi tambahan yang tidak ada di sumber asli.`,
+    })
+  }
 
   return warnings
 }
@@ -298,23 +417,36 @@ function buildLeadExample(
   previewData?: BzzoiroExtractedPreview,
   playerData?: BzzoiroExtractedPlayer,
   serper?: SerperExtracted,
+  bzzoiroText?: string,
 ): string {
   // HASIL
+  // NEWv3: golden standard match report SELALU dibuka dengan dateline
+  // "KOTA — narasi faktual (skor, kompetisi, tanggal)..." dalam SATU paragraf
+  // lead, baru paragraf KEDUA boleh masuk angle/dramatisasi. Sebelumnya
+  // leadExample di sini langsung melompat ke kalimat dramatis tanpa dateline
+  // sama sekali — sekarang dateline+fakta inti digabung sebagai kalimat
+  // pembuka WAJIB, dan variasi angle di bawah ini jadi kalimat KEDUA dst.
   if (newsType === "hasil" && hasilData) {
-    const { home, away, score, keyIncidents } = hasilData
+    const { home, away, score, competition, date, keyIncidents } = hasilData
+    const city = extractCityFromVenue(hasilData.venue)
+    const dateline = city ? `${city.toUpperCase()} — ` : ""
+    const compPhrase = competition ? ` dalam laga ${competition}` : ""
+    const datePhrase = date ? `, ${date}` : ""
+    const factualOpening = `${dateline}${home} ${parseInt(score.split("-")[0]?.trim() ?? "0") >= parseInt(score.split("-")[1]?.trim() ?? "0") ? "meraih kemenangan" : "menghadapi"} ${score} atas ${away}${compPhrase}${datePhrase}.`
+
     const redCard = keyIncidents.find((i) => i.type.toLowerCase().includes("red"))
     const firstGoal = keyIncidents.find((i) => i.type.toLowerCase().includes("goal") && !i.type.toLowerCase().includes("own"))
 
     if (angle === "upset_result") {
-      return `Angka tidak pernah salah. Kecuali malam itu. Ketika ${away} tiba dengan probabilitas menang yang kecil, tidak ada yang menyangka mereka yang akan meninggalkan lapangan dengan tiga poin.`
+      return `${factualOpening} Angka tidak pernah salah. Kecuali malam itu — ketika ${away} tiba dengan probabilitas menang yang kecil, tidak ada yang menyangka mereka yang akan meninggalkan lapangan dengan tiga poin.`
     }
     if (angle === "comeback" && firstGoal) {
       const scoreParts = score.match(/(\d+)\s*-\s*(\d+)/)
       const winner = scoreParts && parseInt(scoreParts[1]) > parseInt(scoreParts[2]) ? home : away
-      return `Untuk beberapa saat, semuanya terlihat sudah ditentukan. Lalu ${winner} membuktikan bahwa pertandingan baru benar-benar selesai ketika peluit terakhir dibunyikan.`
+      return `${factualOpening} Untuk beberapa saat, semuanya terlihat sudah ditentukan. Lalu ${winner} membuktikan bahwa pertandingan baru benar-benar selesai ketika peluit terakhir dibunyikan.`
     }
     if (angle === "controversy" && redCard) {
-      return `Menit ${redCard.minute}. Kartu merah untuk ${redCard.player}. Sejak saat itu, ini bukan lagi pertandingan yang sama — dan semua orang di stadion tahu itu.`
+      return `${factualOpening} Menit ${redCard.minute}, kartu merah untuk ${redCard.player} mengubah segalanya — sejak saat itu, ini bukan lagi pertandingan yang sama.`
     }
     if (angle === "individual_brilliance") {
       const hatTrickPlayer = (() => {
@@ -326,16 +458,13 @@ function buildLeadExample(
         for (const [p, c] of counts) if (c >= 3) return p
         return null
       })()
-      if (hatTrickPlayer) return `Ada malam-malam di mana statistik cukup untuk menceritakan semuanya. Tiga gol. Satu pemain. Dan sebuah pertandingan yang tidak akan dilupakan siapapun yang menyaksikannya.`
+      if (hatTrickPlayer) return `${factualOpening} Tiga gol, satu pemain — ${hatTrickPlayer} mencatatkan namanya dalam pertandingan yang tidak akan dilupakan siapapun yang menyaksikannya.`
     }
     if (hasilData.stats.xgTotal) {
       const [xgH, xgA] = hasilData.stats.xgTotal
-      const scoreParts = score.match(/(\d+)\s*-\s*(\d+)/)
-      if (scoreParts && hasilData.stats.xgTotal) {
-        return `xG ${home} ${xgH}, xG ${away} ${xgA}. Angka itu seharusnya menceritakan siapa yang menang. Kenyataannya berbeda — dan itulah yang membuat ${score} menjadi lebih dari sekadar skor.`
-      }
+      return `${factualOpening} xG ${home} ${xgH}, xG ${away} ${xgA} — angka yang seharusnya menceritakan siapa yang lebih dominan, namun kenyataan di papan skor berbicara dengan caranya sendiri.`
     }
-    return `${score}. Dua angka yang membutuhkan lebih dari satu paragraf untuk dijelaskan.`
+    return factualOpening
   }
 
   // PREVIEW
@@ -370,14 +499,21 @@ function buildLeadExample(
   }
 
   // KONPERS
+  // NEWv3: golden standard konpers SELALU punya 2 paragraf lead — paragraf 1
+  // atmosferik/dramatis (tanpa angka), paragraf 2 fakta konkret hasil laga +
+  // venue + tanggal (mis. "Uruguay kalah 0-1 dari Spanyol pada laga pamungkas
+  // Grup H di Stadion Guadalajara, Sabtu (27/6/2026)."). Sebelumnya leadExample
+  // konpers cuma 1 kalimat atmosferik tanpa fakta sama sekali.
   if (newsType === "konpers") {
+    const konpersMatch = parseKonpersMatch(bzzoiroText ?? "")
+    const factualSecondPara = konpersMatch
+      ? ` ${konpersMatch.matchup}${konpersMatch.competition ? ` pada laga ${konpersMatch.competition}` : ""}${konpersMatch.venue ? ` di ${konpersMatch.venue}` : ""}${konpersMatch.date ? `, ${konpersMatch.date}` : ""}.`
+      : ""
+
     if (serper?.quotes && serper.quotes.length > 0) {
-      const q = serper.quotes[0]
-      // Gunakan kutipan terkuat sebagai pembuka — tapi tidak boleh langsung kutip panjang
-      // (itu kerja Llama, kita hanya template)
-      return `Pelatih itu tidak butuh banyak kata. Tapi kata-kata yang keluar dari bibirnya hari itu terasa lebih berat dari biasanya.`
+      return `Pelatih itu tidak butuh banyak kata. Tapi kata-kata yang keluar dari bibirnya hari itu terasa lebih berat dari biasanya.${factualSecondPara}`
     }
-    return `Konferensi pers bisa menjadi formalitas. Tapi ada momen-momen ketika ruangan itu menjadi tempat di mana arah sebuah musim ditentukan.`
+    return `Konferensi pers bisa menjadi formalitas. Tapi ada momen-momen ketika ruangan itu menjadi tempat di mana arah sebuah musim ditentukan.${factualSecondPara}`
   }
 
   // TRIVIA (menggunakan fakta pertama dari brief)
@@ -579,7 +715,61 @@ export async function buildEditorialBrief(input: BuildBriefInput): Promise<Edito
   const serper = extractSerperData(serperText, newsType)
   const tavily = extractTavilyData(tavilyText, bzzoiroText, serperText, newsType)
 
+  // NEWv4: dipindah ke atas (sebelumnya dipanggil sesudah blok terjemahan
+  // kutipan) — supaya home/away sudah tersedia untuk quoteIntegrityCheck di
+  // bawah, yang butuh tahu nama tim agar bisa memverifikasi nama itu tetap
+  // muncul utuh di hasil terjemahan kutipan.
   const [home, away] = parseTeamNames(bzzoiroText, topic)
+
+  // NEWv4: TERJEMAHAN KUTIPAN TERKONTROL — lihat lib/ai/quote-translator.ts.
+  // serper.quotes hasil extractSerperData() masih berbahasa Inggris (karena
+  // serper.ts/tavily.ts sekarang diarahkan ke ESPN/Sky Sports/Goal.com).
+  // Sebelumnya rencana awal membiarkan Gemma menerjemahkan kutipan sambil
+  // menulis draft — RISIKO TINGGI karena kutipan adalah ucapan langsung
+  // seseorang, idiom bisa melenceng maknanya, dan tidak ada tahap verifikasi
+  // terpisah. Sekarang kutipan diterjemahkan SEBELUM masuk ke brief lewat
+  // pemanggilan LLM kecil & terkontrol (temperature 0.1, tugas tunggal),
+  // supaya saat sampai ke Gemma, kutipan SUDAH final dalam Bahasa Indonesia
+  // dan Gemma tinggal menyalinnya apa adanya (tidak boleh diterjemahkan/
+  // diparafrase ulang — lihat aturan mutlak baru di gemma-writer-prompt.ts).
+  // translatedQuotes.translationOk:false menandai kutipan yang GAGAL
+  // diterjemahkan (API error/timeout) — brief-validator memakai flag ini
+  // untuk menambahkan dataQualityWarnings (lihat brief-validator.ts).
+  const translatedQuotes = await translateQuotes(serper.quotes)
+  serper.quotes = translatedQuotes.map((tq) => ({ text: tq.text, speaker: tq.speaker, source: tq.source }))
+  const quoteTranslationFailures = translatedQuotes.filter((tq) => !tq.translationOk)
+
+  // NEWv4: VALIDASI INTEGRITAS TERJEMAHAN — lihat checkTranslationIntegrity()
+  // di brief-validator.ts. Mengecek bahwa nama tim/pemain tetap utuh di hasil
+  // terjemahan kutipan, dan hasil terjemahan tidak "menggembung" berisi
+  // informasi tambahan yang tidak ada di teks asli. Ini lapis verifikasi
+  // TERPISAH dari translateQuotes() sendiri — supaya kalaupun model
+  // penerjemah "lolos" menghasilkan output yang formatnya valid tapi
+  // isinya menyimpang, masalah itu tetap terdeteksi di sini, bukan baru
+  // ketahuan setelah draft jadi/dipublish.
+  const quoteIntegrityCheck = validateTranslatedQuotes(translatedQuotes, [home, away])
+
+  // NEWv4: terjemahan fakta media non-kutipan (transferStatus, injuryStatement,
+  // mediaHighlights dari Serper; injuryDetails, transferTimeline,
+  // additionalFacts dari Tavily) — lihat catatan lengkap di
+  // lib/ai/translation.ts (translateMediaFacts). Field-field ini sebelumnya
+  // langsung dimasukkan apa adanya (Bahasa Inggris) ke mustUse/canUse, dengan
+  // risiko Gemma mencampur Inggris-Indonesia dalam draft.
+  const translatedMediaFacts = await translateMediaFacts({
+    transferStatus:   serper.transferStatus,
+    injuryStatement:  serper.injuryStatement,
+    injuryDetails:    tavily.injuryDetails,
+    transferTimeline: tavily.transferTimeline,
+    mediaHighlights:  serper.mediaHighlights,
+    additionalFacts:  tavily.additionalFacts,
+  })
+  serper.transferStatus   = translatedMediaFacts.transferStatus
+  serper.injuryStatement  = translatedMediaFacts.injuryStatement
+  serper.mediaHighlights  = translatedMediaFacts.mediaHighlights ?? serper.mediaHighlights
+  tavily.injuryDetails    = translatedMediaFacts.injuryDetails
+  tavily.transferTimeline = translatedMediaFacts.transferTimeline
+  tavily.additionalFacts  = translatedMediaFacts.additionalFacts ?? tavily.additionalFacts
+  const mediaFactsTranslationFailed = !translatedMediaFacts.translationOk
 
   const hasilData   = newsType === "hasil"    ? parseBzzoiroHasil(bzzoiroText, home, away)   : undefined
   const previewData = newsType === "preview"  ? parseBzzoiroPreview(bzzoiroText, home, away) : undefined
@@ -680,6 +870,14 @@ export async function buildEditorialBrief(input: BuildBriefInput): Promise<Edito
   }
 
   if (newsType === "konpers") {
+    // NEWv3: skor + venue + tanggal laga yang melatari konpers — golden
+    // standard SELALU menyebut ini eksplisit di paragraf pembuka/kedua.
+    const konpersMatch = parseKonpersMatch(bzzoiroText)
+    if (konpersMatch) {
+      mustUse.push(`Hasil laga: ${konpersMatch.matchup}${konpersMatch.competition ? ` (${konpersMatch.competition})` : ""}`)
+      if (konpersMatch.venue) mustUse.push(`Venue: ${konpersMatch.venue}`)
+      if (konpersMatch.date)  mustUse.push(`Tanggal: ${konpersMatch.date}`)
+    }
     serper.quotes.forEach((q) => mustUse.push(`Kutipan: "${q.text}" — ${q.speaker}`))
     serper.mediaHighlights.forEach((h) => mustUse.push(h))
   }
@@ -714,10 +912,15 @@ export async function buildEditorialBrief(input: BuildBriefInput): Promise<Edito
   }
 
   // ── Quotes dari Serper ────────────────────────────────────────────────────
+  // NEWv4: originalText diambil dari translatedQuotes (bukan serper.quotes,
+  // yang sudah di-overwrite jadi versi terjemahan tanpa field original) —
+  // lihat blok translateQuotes() di atas. Index harus konsisten karena
+  // serper.quotes di-assign dari translatedQuotes.map(...) di urutan yang sama.
   const quotes: EditorialBriefQuote[] = serper.quotes.slice(0, 3).map((q, i) => ({
     text: q.text,
     speaker: q.speaker,
     placement: (i === 0 ? "middle" : i === 1 ? "closing" : "middle") as EditorialBriefQuote["placement"],
+    originalText: translatedQuotes[i]?.original,
   }))
 
   // Konpers: kutipan pertama bisa jadi lead
@@ -745,7 +948,7 @@ export async function buildEditorialBrief(input: BuildBriefInput): Promise<Edito
   const suggestedH2s = buildH2s(newsType, angle, hasilData, previewData, playerData, mustUse, cederaData)
 
   // ── Data quality warnings ─────────────────────────────────────────────────
-  const dataQualityWarnings = buildDataWarnings(newsType, playerData, hasilData, cederaData, triviaData)
+  const dataQualityWarnings = buildDataWarnings(newsType, playerData, hasilData, cederaData, triviaData, quoteTranslationFailures.length, mediaFactsTranslationFailed, quoteIntegrityCheck.issues)
 
   // ── Build brief ───────────────────────────────────────────────────────────
   const brief: EditorialBrief = {
@@ -756,7 +959,7 @@ export async function buildEditorialBrief(input: BuildBriefInput): Promise<Edito
       tokenEstimate:     0,
       dataQualityWarnings,
     },
-    seo: buildSeoMeta(newsType, topic, home || undefined, away || undefined),
+    seo: buildSeoMeta(newsType, topic, home || undefined, away || undefined, mustUse),
     angle: {
       primary:           angle,
       rationale:         angleResult.rationale,
@@ -765,7 +968,7 @@ export async function buildEditorialBrief(input: BuildBriefInput): Promise<Edito
     },
     keyFacts: { mustUse, canUse, doNotUse },
     storylines: {
-      leadExample:       buildLeadExample(newsType, angle, hasilData, previewData, playerData, serper),
+      leadExample:       buildLeadExample(newsType, angle, hasilData, previewData, playerData, serper, bzzoiroText),
       leadInstruction:   buildLeadInstruction(newsType, angle),
       primaryStoryline:  angleResult.narrativeFocus,
       subStorylines:     angleResult.subStorylines,

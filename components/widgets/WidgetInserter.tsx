@@ -217,6 +217,8 @@ function PerbandinganTimForm({ widgetId, onSaved }: { widgetId: string; onSaved:
             competition: d.competition ?? p.competition,
             home_rank: d.home_rank ?? p.home_rank,
             away_rank: d.away_rank ?? p.away_rank,
+            home_value: d.home_value ?? p.home_value,
+            away_value: d.away_value ?? p.away_value,
             home_coach: d.home_coach ?? p.home_coach,
             away_coach: d.away_coach ?? p.away_coach,
             total_matches: d.total_matches ?? p.total_matches,
@@ -715,18 +717,19 @@ function TransferForm({ widgetId, onSaved }: { widgetId: string; onSaved: () => 
     id: crypto.randomUUID(), league_label: "", player_name: "", player_initials: "",
     position: "", age: "", from_club: "", from_club_color: "#888", to_club: "",
     league_dest: "", transfer_value: "", is_free: false, status: "confirmed", transfer_date: "",
+    photo_url: "",
   }])
 
   useEffect(() => {
     supabase.from("widget_transfer").select("*").eq("widget_id", widgetId).order("transfer_date", { ascending: false })
-      .then(({ data }) => { if (data && data.length > 0) setRows(data.map(r => ({ ...r, age: r.age ?? "", transfer_value: r.transfer_value ?? "", is_free: r.is_free ?? false })) as any) })
+      .then(({ data }) => { if (data && data.length > 0) setRows(data.map(r => ({ ...r, age: r.age ?? "", transfer_value: r.transfer_value ?? "", is_free: r.is_free ?? false, photo_url: r.photo_url ?? "" })) as any) })
   }, [widgetId])
 
   function updateRow(i: number, field: string, value: any) {
     setRows(prev => { const c = [...prev]; c[i] = { ...c[i], [field]: value }; return c })
   }
   function addRow() {
-    setRows(prev => [...prev, { id: crypto.randomUUID(), league_label: "", player_name: "", player_initials: "", position: "", age: "", from_club: "", from_club_color: "#888", to_club: "", league_dest: "", transfer_value: "", is_free: false, status: "confirmed", transfer_date: "" }])
+    setRows(prev => [...prev, { id: crypto.randomUUID(), league_label: "", player_name: "", player_initials: "", position: "", age: "", from_club: "", from_club_color: "#888", to_club: "", league_dest: "", transfer_value: "", is_free: false, status: "confirmed", transfer_date: "", photo_url: "" }])
   }
   async function removeRow(i: number) {
     const row = rows[i] as any
@@ -746,6 +749,7 @@ function TransferForm({ widgetId, onSaved }: { widgetId: string; onSaved: () => 
         transfer_value: row.transfer_value !== "" ? Number(row.transfer_value) : null,
         is_free: (row as any).is_free, status: (row as any).status,
         transfer_date: row.transfer_date || null,
+        photo_url: (row as any).photo_url || null,
       }, { onConflict: "id" })
     }
     setSaving(false)
@@ -775,6 +779,7 @@ function TransferForm({ widgetId, onSaved }: { widgetId: string; onSaved: () => 
             is_free: d.is_free ?? false,
             status: "rumor",
             transfer_date: d.transfer_date ?? "",
+            photo_url: d.photo_url ?? "",
           }])
         })}
       />

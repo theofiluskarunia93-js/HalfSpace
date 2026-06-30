@@ -30,6 +30,14 @@ export interface EditorialBriefQuote {
   text: string
   speaker: string
   placement: "lead" | "middle" | "closing"
+  // NEWv4: teks asli sebelum diterjemahkan (lihat lib/ai/translation.ts).
+  // Opsional — hanya terisi untuk kutipan yang sumbernya berbahasa Inggris
+  // (ESPN/Sky Sports/Goal.com) dan sudah lewat translateQuotes(). Disimpan
+  // untuk audit trail: editor manusia bisa membandingkan langsung hasil
+  // terjemahan vs ucapan asli tanpa harus menggali log terpisah, terutama
+  // penting untuk kutipan yang dataQualityWarnings menandai bermasalah
+  // (lihat field "quote_translation" / "quote_translation_integrity").
+  originalText?: string
 }
 
 // NEWv2: Kontrol kualitas data — jika field ini ada, Llama wajib ikuti batasannya
@@ -40,10 +48,16 @@ export interface DataQualityWarning {
 }
 
 // NEWv2: Metadata SEO untuk judul dan paragraf pertama
+// NEWv3: + metaDescriptionTemplate dan metaDescriptionFacts — golden standard
+// SELALU menyertakan "Meta description" terpisah dari judul (1 kalimat ringkas
+// berisi skor/tanggal/venue/hook utama, ~140-160 karakter). Field ini dipush
+// eksplisit ke brief supaya Gemma WAJIB generate metaDescription di output,
+// bukan cuma title+content seperti sebelumnya.
 export interface SeoMeta {
   primaryKeyword: string    // keyword utama — WAJIB ada di judul
   secondaryKeywords: string[] // keyword pendukung — masuk di 100 kata pertama
   titleTemplate: string     // format: "[primaryKeyword]: [hook]" atau "[hook] — [primaryKeyword]"
+  metaDescriptionFacts: string[] // fakta inti yang WAJIB masuk meta description (skor/tanggal/venue/nama kunci)
 }
 
 export interface EditorialBrief {
@@ -100,26 +114,37 @@ export interface EditorialBrief {
     minWordCount: number
     minH2Count: number
     requiresBlockquote: boolean
+    requiresMetaDescription: boolean // NEWv3: golden standard selalu punya meta description terpisah dari title
     forbiddenPhrases: string[]  // frasa yang menunjukkan artikel generik/AI
   }
 }
 
-// Word targets per tipe — sesuai article-prompts.ts
+// Word targets per tipe — DISESUAIKAN ke golden standard nyata:
+// hasil ~693, preview ~714, transfer ~723, konpers ~744, cedera ~686, trivia ~681 kata.
+// Target lama (500-700) terlalu rendah dan membuat draft konsisten di-flag
+// "draft_below_quality" walau secara editorial sudah lengkap — sekarang
+// rentang dinaikkan supaya selaras dengan panjang artikel golden standard
+// (rata-rata + buffer ±60 kata), dan h2Min dinaikkan jadi 4 (golden standard
+// rata-rata punya 4 H2: lead implisit + 3-4 subheading bernama).
 export const WORD_TARGETS: Record<NewsType, EditorialBrief["wordTarget"]> = {
-  hasil:    { min: 500, max: 700, paragraphMin: 8, h2Min: 3 },
-  preview:  { min: 500, max: 700, paragraphMin: 8, h2Min: 3 },
-  cedera:   { min: 500, max: 700, paragraphMin: 8, h2Min: 3 },
-  konpers:  { min: 500, max: 700, paragraphMin: 8, h2Min: 3 },
-  transfer: { min: 500, max: 700, paragraphMin: 8, h2Min: 3 },
-  trivia:   { min: 500, max: 700, paragraphMin: 8, h2Min: 3 },
+  hasil:    { min: 650, max: 800, paragraphMin: 9,  h2Min: 4 },
+  preview:  { min: 650, max: 820, paragraphMin: 9,  h2Min: 4 },
+  cedera:   { min: 620, max: 780, paragraphMin: 9,  h2Min: 4 },
+  konpers:  { min: 650, max: 820, paragraphMin: 10, h2Min: 4 },
+  transfer: { min: 650, max: 800, paragraphMin: 9,  h2Min: 4 },
+  trivia:   { min: 620, max: 780, paragraphMin: 9,  h2Min: 4 },
 }
 
 // Quality gate default — sama untuk semua tipe
 // forbiddenPhrases dideteksi sebelum simpan ke Supabase
+// minWordCount & minH2Count dinaikkan supaya sejalan dengan WORD_TARGETS baru
+// (golden standard rata-rata 680-745 kata, 4+ H2 bernama) — nilai lama (450/3)
+// terlalu longgar dan meluluskan draft yang jauh lebih tipis dari standar.
 export const DEFAULT_QUALITY_GATE: EditorialBrief["qualityGate"] = {
-  minWordCount: 450,
-  minH2Count: 3,
+  minWordCount: 600,
+  minH2Count: 4,
   requiresBlockquote: false, // hanya required jika brief.quotes.length > 0
+  requiresMetaDescription: true, // NEWv3: golden standard selalu punya meta description terpisah
   forbiddenPhrases: [
     "Dalam laga yang",
     "Pertandingan yang",
@@ -147,6 +172,8 @@ export interface QualityCheckResult {
   wordCount: number
   h2Count: number
   hasBlockquote: boolean
+  hasMetaDescription: boolean // NEWv3
+  metaDescriptionLength: number // NEWv3
   forbiddenFound: string[]
   score: number // 0-100
 }
@@ -155,11 +182,18 @@ export function checkQuality(
   htmlContent: string,
   gate: EditorialBrief["qualityGate"],
   hasQuotes: boolean,
+  metaDescription?: string, // NEWv3 — opsional supaya tidak breaking-change pemanggil lama
 ): QualityCheckResult {
   const text = htmlContent.replace(/<[^>]+>/g, " ")
   const wordCount = text.split(/\s+/).filter(Boolean).length
   const h2Count = (htmlContent.match(/<h2>/g) ?? []).length
   const hasBlockquote = htmlContent.includes("<blockquote>")
+
+  const metaDescriptionLength = metaDescription?.trim().length ?? 0
+  // Golden standard: meta description selalu 1 kalimat utuh, kira-kira
+  // 120-200 karakter (lihat contoh "Brasil menang 3-0 atas Haiti..." dsb).
+  // Di bawah 60 karakter berarti kosong/placeholder, jadi dianggap gagal.
+  const hasMetaDescription = metaDescriptionLength >= 60
 
   const forbiddenFound = gate.forbiddenPhrases.filter((phrase) =>
     htmlContent.toLowerCase().includes(phrase.toLowerCase())
@@ -169,17 +203,19 @@ export function checkQuality(
   const h2Pass    = h2Count >= gate.minH2Count
   const quotePass = !hasQuotes || !gate.requiresBlockquote || hasBlockquote
   const phrasePass = forbiddenFound.length === 0
+  const metaPass  = !gate.requiresMetaDescription || hasMetaDescription
 
   // Score: setiap kriteria bobotnya berbeda
   let score = 0
-  if (wordPass)   score += 35
-  else score += Math.floor((wordCount / gate.minWordCount) * 35)
+  if (wordPass)   score += 30
+  else score += Math.floor((wordCount / gate.minWordCount) * 30)
   if (h2Pass)     score += 20
   if (quotePass)  score += 15
-  if (phrasePass) score += 30
-  else score += Math.max(0, 30 - forbiddenFound.length * 8)
+  if (phrasePass) score += 25
+  else score += Math.max(0, 25 - forbiddenFound.length * 7)
+  if (metaPass)   score += 10
 
-  const passed = wordPass && h2Pass && quotePass && forbiddenFound.length === 0
+  const passed = wordPass && h2Pass && quotePass && forbiddenFound.length === 0 && metaPass
 
-  return { passed, wordCount, h2Count, hasBlockquote, forbiddenFound, score }
+  return { passed, wordCount, h2Count, hasBlockquote, hasMetaDescription, metaDescriptionLength, forbiddenFound, score }
 }

@@ -18,7 +18,7 @@
 //   (lib/editorial/brief-builder.ts — satu-satunya sumber kebenaran untuk
 //    mustUse/canUse/doNotUse/SEO/qualityGate)
 //     |
-//   OpenRouter Nemotron 3 Ultra — Editor Brief (AI)
+//   OpenRouter Nemotron 3 Super — Editor Brief (AI)
 //   (lib/ai/openrouter-brief-editor.ts — hanya memutuskan angle/judul/lead/narasi,
 //    WAJIB hanya berdasarkan fakta dari brief deterministik)
 //     |
@@ -49,22 +49,34 @@ import { fetchSerperContext } from "@/lib/news-context/serper"
 import { fetchTavilyContext } from "@/lib/news-context/tavily"
 
 // Brief builder rule-based (tidak berubah)
-import { buildEditorialBrief } from "@/lib/editorial/brief-builder"
+import { buildEditorialBrief, parseKonpersMatch } from "@/lib/editorial/brief-builder"
 
-// ── BARU: AI Editor Brief (OpenRouter Nemotron 3 Ultra) + Validator ────────
+// ── BARU: AI Editor Brief (OpenRouter Nemotron 3 Super) + Validator ────────
 import { callBriefEditor } from "@/lib/ai/openrouter-brief-editor"
 import { validateAndMergeAiBrief } from "@/lib/editorial/brief-validator"
 
 import type { NewsType } from "@/lib/editorial/types"
 
-// Nemotron 3 Ultra (550B-a55B) lebih besar dari Super (120B) — responsnya
-// di free tier OpenRouter bisa lebih lambat. Fetch ke OpenRouter di
-// lib/ai/openrouter-brief-editor.ts dikasih timeout sampai 270 detik, jadi
-// function ini juga perlu budget waktu yang sepadan.
+// NEWv2: model Editor Brief diganti dari Nemotron 3 Ultra (550B-a55B) →
+// Nemotron 3 Super (120B-a12B), atas keputusan eksplisit: Ultra terlalu
+// lambat diproses dan sering timeout. Lihat catatan lengkap di header
+// lib/ai/openrouter-brief-editor.ts.
+//
+// NEWv3: timeout Editor Brief diturunkan dari 270s → 150s, dan timeout
+// translateOneQuote/translateMediaFactsBatch (lib/ai/translation.ts)
+// dinaikkan ke 60s masing-masing (untuk mengatasi warning
+// "media_facts_translation GAGAL"). Kombinasi ini dipilih supaya skenario
+// TERBURUK total satu request generate-brief (fetch Serper/Tavily ~10s +
+// translate kutipan 60s + translate fakta media 60s + Editor Brief 150s
+// = ~280s) masih punya buffer ~20s di bawah maxDuration 300s Vercel —
+// kalau timeout Editor Brief dipertahankan 270s seperti sebelumnya, total
+// skenario terburuk bisa mencapai ~400s dan berisiko kepotong paksa oleh
+// Vercel sebelum sempat fallback rapi ke rule-based.
+//
+// maxDuration TETAP 300 detik (maksimum yang diizinkan Vercel Hobby plan).
 // Per dokumentasi Vercel terbaru (Mei 2026, sejak Fluid Compute jadi
-// default), Hobby plan sekarang mengizinkan maxDuration sampai 300 detik
-// (5 menit) — bukan 60 detik lagi seperti generasi lama. 300 di sini adalah
-// batas maksimum yang diizinkan plan Hobby, jadi sudah dipakai penuh.
+// default), Hobby plan mengizinkan maxDuration sampai 300 detik (5
+// menit) — bukan 60 detik lagi seperti generasi lama.
 export const maxDuration = 300
 
 // Map newsType ke Bzzoiro fetcher yang sesuai
@@ -90,12 +102,48 @@ export async function POST(req: NextRequest) {
       return NextResponse.json({ error: "newsType dan topic wajib diisi" }, { status: 400 })
     }
 
-    // ── 1. Fetch semua sumber secara paralel (RAW DATA) ──────────────────────
-    const [bzzoiroResult, serperResult, tavilyResult] = await Promise.allSettled([
-      BZZOIRO_FETCHERS[newsType](topic),
-      fetchSerperContext(newsType as any, topic),
-      fetchTavilyContext(newsType as any, topic),
-    ])
+    // ── 1. Fetch semua sumber (RAW DATA) ──────────────────────────────────────
+    // NEWv3: khusus KONPERS, Bzzoiro di-fetch LEBIH DULU (bukan paralel penuh)
+    // supaya skor+venue+tanggal laga yang melatari konpers (lihat
+    // fetchKonpersContext → blok "PERTANDINGAN TERKAIT KONPERS") bisa
+    // disisipkan sebagai extraTerms ke query Serper & Tavily. Tanpa ini,
+    // Serper/Tavily hanya mencari berdasarkan nama tim generik dan berisiko
+    // mengembalikan kutipan/konteks dari konpers tim yang sama tapi laga yang
+    // berbeda. Tipe lain TETAP fetch paralel penuh seperti sebelumnya (tidak
+    // ada penalti latency untuk tipe yang tidak butuh extraTerms ini).
+    let bzzoiroResult: PromiseSettledResult<{ contextText: string; meta: Record<string, unknown>; warning?: string }>
+    let serperResult: PromiseSettledResult<Awaited<ReturnType<typeof fetchSerperContext>>>
+    let tavilyResult: PromiseSettledResult<Awaited<ReturnType<typeof fetchTavilyContext>>>
+
+    if (newsType === "konpers") {
+      try {
+        const value = await BZZOIRO_FETCHERS[newsType](topic)
+        bzzoiroResult = { status: "fulfilled", value }
+      } catch (reason) {
+        bzzoiroResult = { status: "rejected", reason }
+      }
+
+      const konpersMatch = bzzoiroResult.status === "fulfilled"
+        ? parseKonpersMatch(bzzoiroResult.value.contextText ?? "")
+        : undefined
+      const extraTerms = konpersMatch?.matchup // mis. "Uruguay 0 - 1 Spanyol" — disisipkan ke query
+
+      const results = await Promise.allSettled([
+        fetchSerperContext(newsType as any, topic, extraTerms),
+        fetchTavilyContext(newsType as any, topic, extraTerms),
+      ])
+      serperResult = results[0]
+      tavilyResult = results[1]
+    } else {
+      const results = await Promise.allSettled([
+        BZZOIRO_FETCHERS[newsType](topic),
+        fetchSerperContext(newsType as any, topic),
+        fetchTavilyContext(newsType as any, topic),
+      ])
+      bzzoiroResult = results[0]
+      serperResult  = results[1]
+      tavilyResult  = results[2]
+    }
 
     const bzzoiroText = bzzoiroResult.status === "fulfilled" ? (bzzoiroResult.value.contextText ?? "") : ""
     const serperText  = serperResult.status === "fulfilled"  ? (serperResult.value.contextText ?? "")  : ""
@@ -123,7 +171,7 @@ export async function POST(req: NextRequest) {
       manualContext,
     })
 
-    // ── 3. OpenRouter Nemotron 3 Ultra — Editor Brief (AI, best-effort) ────────
+    // ── 3. OpenRouter Nemotron 3 Super — Editor Brief (AI, best-effort) ────────
     const { suggestion: aiSuggestion, failureReason: aiFailureReason } = await callBriefEditor(newsType, topic, deterministicBrief)
 
     // ── 4. Validator Editor (Next.js, pure TS) — gabung + tolak yang tidak grounded
@@ -142,7 +190,7 @@ export async function POST(req: NextRequest) {
       }
     } else {
       sourceWarnings.push(
-        `OpenRouter Nemotron 3 Ultra tidak terpakai untuk brief ini — ${aiFailureReason ?? "alasan tidak diketahui"}. ` +
+        `OpenRouter Nemotron 3 Super tidak terpakai untuk brief ini — ${aiFailureReason ?? "alasan tidak diketahui"}. ` +
         `Brief memakai rule-based sepenuhnya (artikel tetap bisa lanjut digenerate normal).`
       )
     }
@@ -160,12 +208,16 @@ export async function POST(req: NextRequest) {
         brief_ai_used:    validation.aiUsed,            // kolom baru — bool
         brief_ai_report:  validation,                    // kolom baru — jsonb
         status:           "brief_ready",
-        // source_used: sesuai pipeline PDF — Bzzoiro + Serper + Tavily → Nemotron 3 Ultra
+        // source_used: sesuai pipeline PDF — Bzzoiro + Serper + Tavily → Nemotron 3 Super
         source_used:      [
           bzzoiroText ? "bzzoiro" : null,
           serperText  ? "serper"  : null,
           tavilyText  ? "tavily"  : null,
-          validation.aiUsed ? "openrouter-nemotron-3-ultra" : null,
+          // NEWv2: diganti dari "openrouter-nemotron-3-ultra" — kalau ada
+          // kode lain (laporan/analytics) yang memfilter berdasarkan nilai
+          // string ini, sesuaikan juga di sana. Tidak ditemukan pemakaian
+          // lain di codebase saat perubahan ini dibuat.
+          validation.aiUsed ? "openrouter-nemotron-3-super" : null,
         ].filter(Boolean).join(","),
       })
       .select("id")
@@ -212,9 +264,10 @@ export async function POST(req: NextRequest) {
 // Generate-brief ini adalah STEP 1-3 dari pipeline lengkap HalfSpace per PDF:
 //   1. Bzzoiro + Serper + Tavily → raw data
 //   2. buildEditorialBrief() → brief deterministik
-//   3. Nemotron 3 Ultra → editorial suggestion (best-effort)
+//   3. Nemotron 3 Super → editorial suggestion (best-effort)
 //   4. Validator → merge + grounding check
 //   5. Simpan ke Supabase (status: brief_ready)
 // STEP berikutnya (/api/generate-draft) mengirim brief ini ke Gemma 4 31B
-// untuk generate artikel final. (Per PDF: "Pipeline: Bzzoiro + Serper + Tavily
-// → Nemotron 3 Ultra Brief → Gemma 4 31B")
+// untuk generate artikel final. (Per PDF, disesuaikan: "Pipeline: Bzzoiro +
+// Serper + Tavily → Nemotron 3 Super Brief → Gemma 4 31B" — model Editor
+// Brief diganti dari Nemotron 3 Ultra ke Super, lihat catatan di header file.)

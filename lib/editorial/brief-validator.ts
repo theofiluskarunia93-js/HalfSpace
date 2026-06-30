@@ -154,3 +154,102 @@ export function validateAndMergeAiBrief(
 
   return { brief, validation: report }
 }
+
+// ─────────────────────────────────────────────────────────────────────────────
+// NEWv4: VALIDASI PASCA-TERJEMAHAN — kutipan & fakta media
+// ─────────────────────────────────────────────────────────────────────────────
+// Dipanggil dari brief-builder.ts SETELAH translateQuotes()/translateMediaFacts()
+// (lib/ai/translation.ts). Tugasnya BUKAN menerjemahkan ulang — hanya
+// memverifikasi bahwa hasil terjemahan tidak "melayang" dari teks asli:
+//   1. Nama entitas (tim/pemain dari keyNames) WAJIB tetap muncul persis di
+//      hasil terjemahan — kalau hilang, kemungkinan terjemahan mengubah/
+//      menghapus nama yang seharusnya dipertahankan verbatim (lihat aturan
+//      mutlak #5 di buildTranslateSystemPrompt: "Pertahankan nama orang,
+//      klub, dan kompetisi PERSIS seperti aslinya").
+//   2. Hasil terjemahan TIDAK BOLEH jauh lebih panjang dari teks asli (lebih
+//      dari 1.6x jumlah kata) — indikasi model menambah informasi/opini yang
+//      tidak ada di teks asli (melanggar aturan mutlak #2/#3 di translation.ts).
+//   3. Hasil terjemahan TIDAK BOLEH kosong sama sekali.
+// Ini heuristik ringan (bukan NLP berat), sejalan dengan gaya allNumbersGrounded
+// di atas — cukup untuk menangkap kasus paling berisiko, bukan mendeteksi
+// semua kemungkinan kesalahan nuansa (itu di luar kemampuan heuristik teks).
+
+export interface TranslationIntegrityIssue {
+  field: string
+  original: string
+  translated: string
+  reason: string
+}
+
+export interface TranslationIntegrityReport {
+  passed: boolean
+  issues: TranslationIntegrityIssue[]
+}
+
+// Cek apakah setiap nama di `keyNames` yang muncul di `original` juga masih
+// muncul di `translated`. Pencocokan case-insensitive & per-kata (nama bisa
+// terdiri lebih dari satu kata, mis. "Luis de la Fuente").
+function namesPreserved(original: string, translated: string, keyNames: string[]): string[] {
+  const missing: string[] = []
+  const translatedLower = translated.toLowerCase()
+  for (const name of keyNames) {
+    if (!name.trim()) continue
+    const nameLower = name.trim().toLowerCase()
+    if (original.toLowerCase().includes(nameLower) && !translatedLower.includes(nameLower)) {
+      missing.push(name.trim())
+    }
+  }
+  return missing
+}
+
+/**
+ * Validasi satu pasang (teks asli, teks terjemahan) terhadap daftar nama
+ * entitas yang wajib dipertahankan (biasanya: home, away, keyPlayers).
+ * Mengembalikan array issue (kosong = lolos).
+ */
+export function checkTranslationIntegrity(
+  field: string,
+  original: string,
+  translated: string,
+  keyNames: string[],
+): TranslationIntegrityIssue[] {
+  const issues: TranslationIntegrityIssue[] = []
+
+  if (!translated.trim()) {
+    issues.push({ field, original, translated, reason: "Hasil terjemahan kosong." })
+    return issues
+  }
+
+  const missingNames = namesPreserved(original, translated, keyNames)
+  if (missingNames.length > 0) {
+    issues.push({
+      field, original, translated,
+      reason: `Nama berikut ada di teks asli tapi hilang di hasil terjemahan: ${missingNames.join(", ")}. Kemungkinan nama berubah/terhapus saat diterjemahkan.`,
+    })
+  }
+
+  const originalWords = original.trim().split(/\s+/).filter(Boolean).length
+  const translatedWords = translated.trim().split(/\s+/).filter(Boolean).length
+  if (originalWords > 0 && translatedWords > originalWords * 1.6) {
+    issues.push({
+      field, original, translated,
+      reason: `Hasil terjemahan (${translatedWords} kata) jauh lebih panjang dari teks asli (${originalWords} kata) — indikasi informasi/opini tambahan yang tidak ada di teks asli.`,
+    })
+  }
+
+  return issues
+}
+
+/**
+ * Validasi sekumpulan kutipan hasil translateQuotes() sekaligus.
+ */
+export function validateTranslatedQuotes(
+  quotes: Array<{ text: string; original: string; speaker: string }>,
+  keyNames: string[],
+): TranslationIntegrityReport {
+  const issues: TranslationIntegrityIssue[] = []
+  quotes.forEach((q, i) => {
+    issues.push(...checkTranslationIntegrity(`quotes[${i}]`, q.original, q.text, [...keyNames, q.speaker]))
+  })
+  return { passed: issues.length === 0, issues }
+}

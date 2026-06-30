@@ -444,6 +444,7 @@ export interface TransferRow {
   is_free: boolean
   status: "confirmed" | "official" | "medical" | "rumor"
   transfer_date: string | null
+  photo_url?: string | null
 }
 
 interface TransferCardProps {
@@ -451,6 +452,27 @@ interface TransferCardProps {
   isAdmin?: boolean
   onEdit?: (widgetId: string) => void
   refreshKey?: number
+}
+
+// Avatar dengan foto Bzzoiro (kalau ada), fallback ke inisial kalau foto kosong/404
+function PlayerAvatarSmall({ photoUrl, initials, name }: { photoUrl?: string | null; initials: string; name: string }) {
+  const [failed, setFailed] = useState(false)
+  if (photoUrl && !failed) {
+    return (
+      <div className="h-9 w-9 shrink-0 overflow-hidden rounded-full border-2 border-[#39FF14]/40">
+        {/* eslint-disable-next-line @next/next/no-img-element */}
+        <img src={photoUrl} alt={name} className="h-full w-full object-cover" onError={() => setFailed(true)} />
+      </div>
+    )
+  }
+  return (
+    <div
+      className="flex h-9 w-9 shrink-0 items-center justify-center rounded-full border-2 border-[#39FF14]/40 text-xs font-black text-[#39FF14]"
+      style={{ background: "rgba(57,255,20,0.08)" }}
+    >
+      {initials}
+    </div>
+  )
 }
 
 export function TransferCard({ widgetId, isAdmin, onEdit }: TransferCardProps) {
@@ -611,12 +633,11 @@ export function TransferCard({ widgetId, isAdmin, onEdit }: TransferCardProps) {
                       </td>
                       <td className="px-4 py-3">
                         <div className="flex items-center gap-3">
-                          <div
-                            className="flex h-9 w-9 shrink-0 items-center justify-center rounded-full border-2 border-[#39FF14]/40 text-xs font-black text-[#39FF14]"
-                            style={{ background: "rgba(57,255,20,0.08)" }}
-                          >
-                            {row.player_initials || row.player_name.slice(0,2).toUpperCase()}
-                          </div>
+                          <PlayerAvatarSmall
+                            photoUrl={row.photo_url}
+                            initials={row.player_initials || row.player_name.slice(0, 2).toUpperCase()}
+                            name={row.player_name}
+                          />
                           <div>
                             <p className="font-bold text-white text-sm whitespace-nowrap">{row.player_name}</p>
                             <p className="text-[11px] text-gray-500 uppercase tracking-wide">

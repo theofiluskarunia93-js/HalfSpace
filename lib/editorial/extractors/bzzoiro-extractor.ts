@@ -17,6 +17,7 @@ export interface BzzoiroExtractedHasil {
   score: string
   competition: string
   date: string
+  venue?: string // NEWv3: golden standard match report SELALU dibuka dengan dateline "KOTA —"
   keyIncidents: Array<{
     minute: string | number
     type: string

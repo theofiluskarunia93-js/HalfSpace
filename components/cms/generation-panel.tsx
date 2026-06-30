@@ -36,7 +36,9 @@ import type { BriefValidationReport } from "@/lib/editorial/brief-validator"
 interface GenerationPanelProps {
   newsType:     NewsType
   topic:        string
-  onDraftReady: (title: string, content: string) => void
+  // NEWv4: parameter ke-3 metaDescription opsional — diisi dari hasil
+  // generate-draft (Gemma 4 31B sekarang selalu menghasilkan field ini).
+  onDraftReady: (title: string, content: string, metaDescription?: string) => void
 }
 
 type PipelineStatus =
@@ -49,12 +51,15 @@ interface QualityDetails {
   wordCount: number
   h2Count: number
   hasBlockquote: boolean
+  hasMetaDescription: boolean // NEWv4
+  metaDescriptionLength: number // NEWv4
   forbiddenFound: string[]
   score: number
 }
 
 interface DoneEvent {
   title: string
+  metaDescription?: string // NEWv4
   content: string
   wordCount: number
   qualityScore?: number
@@ -358,7 +363,7 @@ export function GenerationPanel({ newsType, topic, onDraftReady }: GenerationPan
         setDraftWordCount(data.wordCount)
         setQualityScore(data.qualityScore ?? null)
         setQualityDetails(data.qualityDetails ?? null)
-        onDraftReady(data.title, data.content)
+        onDraftReady(data.title, data.content, data.metaDescription)
 
         const ds = data.draftStatus ?? "draft_ready"
         setStatus(ds as PipelineStatus)
