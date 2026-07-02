@@ -480,6 +480,28 @@ export async function fetchBzzTimeline(query: string): Promise<BzzTimelineData> 
   const incidents = await bzzGet(`/api/v2/events/${event.id}/incidents/`).catch(() => null)
   const incList: any[] = incidents?.incidents ?? incidents?.results ?? (Array.isArray(incidents) ? incidents : [])
 
+  // PENTING: menurut laporan bug di forum komunitas Bzzoiro sendiri, field
+  // identitas tim DI DALAM tiap incident ("tidak ada informasi soal tim/sisi
+  // mana insiden itu terjadi") memang tidak bisa diandalkan — baik nama
+  // maupun ID. Solusi yang lebih solid: ambil lineup pertandingan (endpoint
+  // yang sama dipakai widget Starting Lineup, sudah terbukti reliable —
+  // punya daftar pemain lengkap per sisi home/away dengan id masing-masing),
+  // lalu bangun peta player_id -> "home"|"away" dari situ. Satu kali fetch
+  // untuk seluruh pertandingan, dipakai untuk cocokkan SEMUA insiden.
+  const lineupResp = await bzzGet(`/api/v2/events/${event.id}/lineups/`).catch(() => null)
+  const playerSideMap = new Map<string, "home" | "away">()
+  function indexLineupSide(sideData: any, side: "home" | "away") {
+    const players: any[] = sideData?.players ?? sideData?.starting_xi ?? []
+    const subs: any[] = sideData?.substitutes ?? sideData?.bench ?? []
+    ;[...players, ...subs].forEach((p: any) => {
+      if (p?.id != null) playerSideMap.set(String(p.id), side)
+    })
+  }
+  if (lineupResp?.lineups) {
+    indexLineupSide(lineupResp.lineups.home, "home")
+    indexLineupSide(lineupResp.lineups.away, "away")
+  }
+
   const home = fix(event.home_team ?? "")
   const away = fix(event.away_team ?? "")
   const hs = event.home_score ?? 0
@@ -503,12 +525,12 @@ export async function fetchBzzTimeline(query: string): Promise<BzzTimelineData> 
   }
 
   // PENTING: incidents Bzzoiro mengidentifikasi tim lewat ID numerik
-  // (home_team_id/away_team_id di event, team_id di tiap incident) — BUKAN
-  // field nama seperti team_name/team yang tidak pernah ada di respons asli.
-  // Kode lama selalu baca string kosong dari field itu, jadi isHome selalu
-  // false dan SEMUA insiden (termasuk semua substitusi & gol) salah dianggap
-  // milik tim away — itu sebabnya skor berjalan bisa melewati skor akhir asli,
-  // dan semua pergantian pemain tampak dari satu tim saja.
+  // (home_team_id/away_team_id di event) — tapi field identitas tim DI DALAM
+  // incident itu sendiri dilaporkan komunitas Bzzoiro TIDAK reliable. Jadi
+  // urutan prioritas: (1) peta player_id->side dari lineup [paling akurat,
+  // lihat playerSideMap di atas], (2) team_id numerik kalau ada, (3) field
+  // team "home"/"away" literal kalau ada, (4) fallback nama tim (paling
+  // lemah, cuma dipakai kalau semua di atas tidak tersedia).
   const homeTeamId = event.home_team_id ?? event.home_id
   const awayTeamId = event.away_team_id ?? event.away_id
 
@@ -525,14 +547,21 @@ export async function fetchBzzTimeline(query: string): Promise<BzzTimelineData> 
       const type = mapType(inc.type ?? inc.incident_type ?? "")
       if (!type) return null
 
+      // Untuk substitusi, pemain yang MASUK (player_in_id) yang dipakai untuk
+      // cocokkan sisi — pemain keluar & masuk selalu satu tim yang sama,
+      // tapi player_in_id lebih sering terisi lengkap di lineup starting_xi+bench.
+      const lookupId = type === "substitution" ? (inc.player_in_id ?? inc.player_id) : inc.player_id
+      const sideFromLineup = lookupId != null ? playerSideMap.get(String(lookupId)) : undefined
+
       let isHome: boolean
-      if (inc.team_id != null && homeTeamId != null) {
-        // Jalur utama: cocokkan via ID numerik (paling akurat)
+      if (sideFromLineup) {
+        isHome = sideFromLineup === "home"
+      } else if (inc.team_id != null && homeTeamId != null) {
         isHome = String(inc.team_id) === String(homeTeamId)
       } else if (inc.team === "home" || inc.team === "away") {
         isHome = inc.team === "home"
       } else {
-        // Fallback terakhir: cocokkan nama tim (kurang akurat, cuma kalau ID tidak ada)
+        // Fallback terakhir: cocokkan nama tim (paling lemah, cuma kalau semua di atas tidak ada)
         const incHome = fix(inc.team_name ?? "")
         isHome = !!incHome && incHome.toLowerCase().includes(home.toLowerCase().split(" ")[0])
       }
