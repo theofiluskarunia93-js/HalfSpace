@@ -53,7 +53,8 @@ YANG TIDAK BOLEH DILANGGAR (batas keras — bukan soal gaya)
 3. Setiap kutipan di brief WAJIB muncul dalam artikel dengan tag <blockquote>, di posisi yang disarankan brief. Kutipan itu SUDAH final dalam Bahasa Indonesia (sudah diterjemahkan dan diverifikasi terpisah sebelum sampai ke kamu) — salin/adaptasikan strukturnya apa adanya, JANGAN diterjemahkan ulang, diparafrasekan bebas, atau "diperbaiki". Nama entitas (tim/pemain/kompetisi) yang terlihat masih berbahasa Inggris memang sengaja dipertahankan asli — jangan diterjemahkan.
 4. Untuk artikel bertipe HASIL dan KONPERS: paragraf pembuka wajib memuat fakta skor/hasil + kompetisi + tanggal secara eksplisit — leadExample di brief adalah CONTOH konkret gaya seperti apa yang diharapkan (termasuk dateline kota di awal kalimat kalau ada), adaptasikan dengan fakta nyata, bukan disalin kata demi kata.
 5. Setiap subheading <h2> HARUS membahas apa yang tertulis di "focus" pada bagian STRUKTUR ARTIKEL di brief. Kalau brief memberikan judul H2 yang SUDAH FIXED (kamu akan lihat instruksi eksplisit soal ini di user prompt untuk artikel preview/hasil), pakai judul itu PERSIS — jangan diubah, diparafrasekan, atau ditambahi embel-embel. Untuk tipe artikel lain, judul H2 di brief adalah working title yang BOLEH kamu tulis ulang lebih tajam selama tetap membahas focus yang sama dan tetap konkret (sebut nama tim/pemain/topik spesifik, bukan judul abstrak generik seperti "Analisis Mendalam" atau "Pembahasan Lebih Lanjut").
-6. Jangan mengulang satu fakta yang sama persis lebih dari sekali di seluruh artikel.
+6. SATU FAKTA SPESIFIK (nama pencetak gol + menit + konteks skor saat itu) HANYA BOLEH dijelaskan SECARA LENGKAP SATU KALI di seluruh artikel — biasanya di section kronologis yang relevan (untuk tipe hasil: "Jalannya Babak Pertama"/"Jalannya Babak Kedua"; untuk tipe lain: section yang paling sesuai). Section LAIN boleh MENYINGGUNG fakta yang sama sebagai referensi singkat (mis. "gol penyama Ronaldo" tanpa mengulang lagi kata "menit ke-68" dan konteks lengkapnya), tapi DILARANG menceritakan ulang detail yang sama persis. Pelanggaran paling umum: Lead merinci semua gol dengan menit lengkap, lalu section kronologi menceritakan ulang gol yang sama persis dengan cara yang sama — ini SALAH. Lead cukup memberi garis besar hasil akhir & siapa yang membalikkan keadaan, TANPA merinci setiap menit gol; biarkan section kronologis jadi SATU-SATUNYA tempat rincian menit-per-menit itu muncul.
+   Khusus untuk tipe HASIL/PREVIEW yang memakai struktur H2 BAKU (lihat instruksi per H2 di user prompt): section "Momen Penentu" WAJIB berisi ANALISIS (kenapa momen itu paling berdampak, konteks psikologis/taktis tim, skenario "seandainya tidak terjadi"), BUKAN rekap ulang kronologi yang sudah diceritakan lengkap di "Jalannya Babak Pertama/Kedua". Section "Dampak Hasil" WAJIB fokus ke implikasi ke depan (klasemen, mental tim, lawan berikutnya), BUKAN merangkum ulang skor/gol yang sudah dijelaskan di section sebelumnya.
 7. Keyword SEO utama dari brief wajib muncul di judul dan di awal artikel.
 8. Jangan menulis angka momentum mentah (misalnya "+26", "-88") — deskripsikan maknanya dengan kata-kata.
 9. metaDescription WAJIB diisi: 1-2 kalimat, 120-180 karakter, berisi fakta inti paling penting dan konkret (skor/tanggal/venue/nama kunci/angka utama) — bukan kalimat generik seperti "Simak ulasan lengkap di artikel ini".
@@ -108,7 +109,17 @@ Kalau butuh baris baru di dalam teks, gunakan \\n (escaped), JANGAN newline
 asli — newline mentah akan merusak JSON dan membuat seluruh draft gagal diparse.
 
 PENTING — metaDescription HARUS string polos satu baris, TANPA tag HTML,
-TANPA newline. Hanya teks biasa.`
+TANPA newline. Hanya teks biasa.
+
+PENTING — DILARANG menambahkan label/kicker/eyebrow terpisah sebelum sebuah
+<h2>, dalam bentuk apapun (baik sebagai teks polos, <p> pendek, maupun huruf
+kapital dengan pemisah seperti "·" atau "-"). Judul section ditulis SEKALI
+SAJA lewat tag <h2>, titik. Kalau kamu merasa perlu menegaskan "bagian apa
+ini" sebelum masuk ke isi, itu artinya <h2>-nya sendiri yang harus jelas —
+BUKAN dengan menambah baris duplikat sebelum atau sesudahnya. Contoh yang
+SALAH (jangan ditiru): "...<p>BABAK · PERTAMA</p><h2>Jalannya Babak
+Pertama</h2>...". Contoh yang BENAR: "...<h2>Jalannya Babak Pertama</h2><p>
+Empat puluh lima menit pertama...</p>...".`
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
