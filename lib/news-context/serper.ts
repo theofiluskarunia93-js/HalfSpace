@@ -13,11 +13,11 @@
 // ✓ gl/hl diganti dari "id"/"id" → "us"/"en" — parameter lama membiaskan
 //   hasil pencarian Google ke konten BERBAHASA Indonesia, yang bertentangan
 //   dengan tujuan fokus ke 3 situs Inggris di atas. Terjemahan ke Bahasa
-//   Indonesia tetap terjadi, tapi di tahap Gemma (generate-draft), BUKAN di
+//   Indonesia tetap terjadi, tapi di tahap Qwen3-Next (generate-draft), BUKAN di
 //   tahap pencarian — supaya kualitas & kelengkapan sumber tidak terdegradasi
 //   oleh bias bahasa pencarian.
 // ✓ Tambah TRANSLATION_NOTE yang disisipkan ke contextText — menandai dengan
-//   eksplisit ke pemanggil hilir (brief-builder → Gemma) bahwa snippet di
+//   eksplisit ke pemanggil hilir (brief-builder → Qwen3-Next) bahwa snippet di
 //   bawah ini BERBAHASA INGGRIS dan WAJIB diterjemahkan/diparafrasakan ke
 //   Bahasa Indonesia saat dipakai di draft, bukan disalin verbatim.
 //
@@ -80,7 +80,7 @@ interface SourceSpec {
 // ─── Sumber media SERAGAM untuk semua tipe — ESPN, Sky Sports, Goal.com ────
 // Permintaan eksplisit: 3 situs ini paling lengkap & paling update datanya
 // untuk sepak bola global, walau berbahasa Inggris (diterjemahkan di tahap
-// generate-draft/Gemma, lihat catatan TRANSLATION_NOTE di bawah).
+// generate-draft/Qwen3-Next, lihat catatan TRANSLATION_NOTE di bawah).
 // Transfer tetap menambahkan Fabrizio Romano sebagai keyword tambahan (bukan
 // site:) karena ia jurnalis lepas tepercaya untuk transfer rumor, bukan situs.
 const SERPER_SOURCES_COMMON: SourceSpec[] = [
@@ -177,7 +177,7 @@ async function serperSearch(apiKey: string, query: string, num: number): Promise
     // membiaskan hasil Google ke region & bahasa Indonesia, yang
     // bertentangan dengan tujuan mengutamakan ESPN/Sky Sports/Goal.com
     // (semua berbahasa Inggris, basis data internasional). Terjemahan ke
-    // Bahasa Indonesia dilakukan belakangan oleh Gemma di generate-draft,
+    // Bahasa Indonesia dilakukan belakangan oleh Qwen3-Next di generate-draft,
     // bukan di tahap pencarian ini.
     body: JSON.stringify({ q: query, gl: "us", hl: "en", num }),
     signal: AbortSignal.timeout(10_000),
@@ -193,7 +193,7 @@ async function serperSearch(apiKey: string, query: string, num: number): Promise
 
 // Judul + ringkasan singkat per media (snippet Google sudah pendek, tidak perlu dipotong lagi).
 // NEWv2: snippet/judul TETAP disimpan dalam bahasa Inggris asli — TIDAK
-// diterjemahkan di sini. Penerjemahan terjadi di tahap Gemma (lihat
+// diterjemahkan di sini. Penerjemahan terjadi di tahap Qwen3-Next (lihat
 // TRANSLATION_NOTE di fetchSerperContext) supaya konteks & nuansa asli tidak
 // hilang karena terjemahan otomatis ganda (sekali di sini, sekali lagi nanti).
 function formatResult(r: SerperOrganicResult, index: number): string {
@@ -209,10 +209,10 @@ function formatResult(r: SerperOrganicResult, index: number): string {
 }
 
 // NEWv4 (update dari catatan v2): TRANSLATION_NOTE ini TIDAK LAGI dibaca
-// oleh Gemma secara langsung. Sejak lib/ai/translation.ts ditambahkan,
+// oleh Qwen3-Next secara langsung. Sejak lib/ai/translation.ts ditambahkan,
 // kutipan & fakta media diterjemahkan terlebih dahulu di brief-builder.ts
-// SEBELUM masuk ke EditorialBrief — Gemma hanya menerima hasil yang sudah
-// dalam Bahasa Indonesia (lihat aturan mutlak #15 di gemma-writer-prompt.ts:
+// SEBELUM masuk ke EditorialBrief — Qwen3-Next hanya menerima hasil yang sudah
+// dalam Bahasa Indonesia (lihat aturan mutlak #15 di qwen-writer-prompt.ts:
 // "DILARANG menerjemahkan ulang"). contextText mentah di bawah ini (dengan
 // TRANSLATION_NOTE-nya) hanya dikonsumsi oleh:
 //   1. extractSerperData() (regex parser, bukan LLM) di media-extractor.ts

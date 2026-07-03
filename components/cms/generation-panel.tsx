@@ -1,6 +1,25 @@
 "use client"
 
-// components/cms/generation-panel.tsx — v3 (PIPELINE BARU)
+// components/cms/generation-panel.tsx — v5 (PIPELINE BARU — Juli 2026)
+//
+// PERUBAHAN DARI v4:
+// - STEP 1 (Editorial Brief) sekarang memakai GPT-5 Mini (OpenAI API),
+//   bukan lagi OpenRouter Nemotron 3 Ultra/Super. Label UI ("Nemotron 3
+//   Ultra" di Brief Inspector, StepIndicator step 1) diupdate ke "GPT-5
+//   Mini", sesuai lib/ai/gpt5-mini-brief-editor.ts.
+// - STEP 2 (Draft) sekarang memanggil Anthropic API (Claude Sonnet), bukan
+//   lagi Ollama Cloud (Qwen3-Next:80B-Cloud). Semua label UI ("Draft
+//   artikel", tombol Generate Draft, status "sedang menulis") diupdate ke
+//   "Claude Sonnet", sesuai app/api/generate-draft/route.ts.
+// - Pipeline final: "Bzzoiro + Serper + Tavily → Normalizer → Exact Dedup →
+//   Semantic Dedup → Fact Merging → GPT-5 Mini Brief → Validator → Claude
+//   Sonnet".
+//
+// PERUBAHAN DARI v3:
+// - STEP 2 sekarang memanggil Ollama Cloud (Qwen3-Next:80B-Cloud), bukan lagi
+//   OpenRouter Gemma 4 31B. Semua label UI ("Draft artikel", tombol Generate
+//   Draft, status "sedang menulis") diupdate untuk menampilkan nama model
+//   yang benar, sesuai app/api/generate-draft/route.ts.
 //
 // PERUBAHAN DARI v2:
 // - STEP 3 ("Polish dengan Editor — GPT OSS 120B") DIHAPUS TOTAL.
@@ -8,15 +27,12 @@
 //   per-paragraf (lihat components/editor/AIRewritePopup.tsx +
 //   app/api/rewrite-selection/route.ts). Panel ini sekarang HANYA mengurus
 //   2 step: Editorial Brief dan Draft.
-// - Step 1 sekarang menyebut "OpenRouter Nemotron 3 Ultra + Validator",
-//   bukan lagi "tanpa AI" — brief tetap grounded di fakta (divalidasi),
-//   tapi arah editorialnya sekarang dibantu AI.
-// - onFinalReady DIHAPUS dari props — begitu draft Gemma 4 31B selesai, draft itu
-//   sudah final dari sisi pipeline ini (revisi lanjutan terjadi inline di
-//   editor, bukan lewat panel).
-// - STEP 2 sekarang memanggil OpenRouter Gemma 4 31B (bukan lagi Llama 4 Scout
-//   via Cloudflare Workers AI), sesuai pipeline final di PDF Data Mapping
-//   HalfSpace: "Bzzoiro + Serper + Tavily → Nemotron 3 Ultra Brief → Gemma 4 31B".
+// - Step 1 sekarang menyebut "GPT-5 Mini + Validator", bukan lagi "tanpa
+//   AI" — brief tetap grounded di fakta (divalidasi), tapi arah
+//   editorialnya sekarang dibantu AI.
+// - onFinalReady DIHAPUS dari props — begitu draft Claude Sonnet selesai,
+//   draft itu sudah final dari sisi pipeline ini (revisi lanjutan terjadi
+//   inline di editor, bukan lewat panel).
 
 import { useState } from "react"
 import { Button }   from "@/components/ui/button"
@@ -36,8 +52,8 @@ import type { BriefValidationReport } from "@/lib/editorial/brief-validator"
 interface GenerationPanelProps {
   newsType:     NewsType
   topic:        string
-  // NEWv4: parameter ke-3 metaDescription opsional — diisi dari hasil
-  // generate-draft (Gemma 4 31B sekarang selalu menghasilkan field ini).
+  // metaDescription opsional — diisi dari hasil generate-draft (Claude
+  // Sonnet sekarang selalu menghasilkan field ini).
   onDraftReady: (title: string, content: string, metaDescription?: string) => void
 }
 
@@ -163,7 +179,7 @@ function BriefInspector({ brief, aiValidation }: { brief: EditorialBrief; aiVali
           <Badge variant="outline" className="text-xs capitalize">{brief.angle.primary.replace(/_/g, " ")}</Badge>
           {aiValidation?.aiUsed && (
             <Badge className="text-xs bg-[#39FF14]/10 text-[#39FF14] border-[#39FF14]/30 gap-1">
-              <Sparkles className="w-3 h-3" />Nemotron 3 Ultra
+              <Sparkles className="w-3 h-3" />GPT-5 Mini
             </Badge>
           )}
           {hasWarnings && <Badge className="text-xs bg-amber-500/15 text-amber-700 border-amber-500/30">⚠ Data warning</Badge>}
@@ -309,7 +325,7 @@ export function GenerationPanel({ newsType, topic, onDraftReady }: GenerationPan
     if (full) { setBrief(null); setAiValidation(null); setGenerationId(null) }
   }
 
-  // ── STEP 1: Editorial Brief — OpenRouter Nemotron 3 Ultra + Validator ──────
+  // ── STEP 1: Editorial Brief — GPT-5 Mini + Validator ──────────────────────
   async function handleGenerateBrief() {
     if (!topic.trim()) return
     reset(true)
@@ -346,7 +362,7 @@ export function GenerationPanel({ newsType, topic, onDraftReady }: GenerationPan
     }
   }
 
-  // ── STEP 2: Draft artikel — OpenRouter Gemma 4 31B ──────────────────────────
+  // ── STEP 2: Draft artikel — Claude Sonnet (Anthropic API) ────────────────
   async function handleGenerateDraft() {
     if (!generationId) return
     reset()
@@ -395,8 +411,8 @@ export function GenerationPanel({ newsType, topic, onDraftReady }: GenerationPan
 
       {/* Step indicators */}
       <div className="flex flex-col gap-2 p-3 bg-muted/30 rounded-lg border">
-        <StepIndicator step={1} label="Editorial Brief — OpenRouter Nemotron 3 Ultra + Validator" status={step1Status()} />
-        <StepIndicator step={2} label="Draft artikel — OpenRouter Gemma 4 31B" status={step2Status()} />
+        <StepIndicator step={1} label="Editorial Brief — GPT-5 Mini + Validator" status={step1Status()} />
+        <StepIndicator step={2} label="Draft artikel — Claude Sonnet" status={step2Status()} />
       </div>
       <p className="text-xs text-muted-foreground -mt-2">
         Setelah draft siap, revisi dilakukan langsung di editor: highlight paragraf →
@@ -463,12 +479,12 @@ export function GenerationPanel({ newsType, topic, onDraftReady }: GenerationPan
 
           {status === "brief_ready" && (
             <Button onClick={handleGenerateDraft} className="w-full gap-2">
-              <PenLine className="w-4 h-4" />Generate Draft — OpenRouter Gemma 4 31B
+              <PenLine className="w-4 h-4" />Generate Draft — Claude Sonnet
             </Button>
           )}
           {status === "generating_draft" && (
             <Button disabled className="w-full gap-2">
-              <Loader2 className="w-4 h-4 animate-spin" />Gemma 4 31B sedang menulis...
+              <Loader2 className="w-4 h-4 animate-spin" />Claude Sonnet sedang menulis...
             </Button>
           )}
         </div>

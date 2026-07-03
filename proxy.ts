@@ -1,7 +1,15 @@
 import { createServerClient } from '@supabase/ssr'
 import { NextResponse, type NextRequest } from 'next/server'
 
-export async function middleware(request: NextRequest) {
+// proxy.ts — pengganti middleware.ts
+//
+// Next.js 16 men-deprecate konvensi file "middleware.ts" dan menggantinya
+// dengan "proxy.ts" (nama fungsi juga berubah dari `middleware` menjadi
+// `proxy`). Logic auth-guard di bawah ini TIDAK berubah sama sekali dari
+// middleware.ts sebelumnya — hanya nama file & nama fungsi yang disesuaikan
+// dengan konvensi baru. Lihat: https://nextjs.org/docs/messages/middleware-to-proxy
+
+export async function proxy(request: NextRequest) {
   let supabaseResponse = NextResponse.next({ request })
 
   const supabase = createServerClient(

@@ -1,4 +1,16 @@
-// lib/editorial/brief-builder.ts — v3
+// lib/editorial/brief-builder.ts — v4
+//
+// PERUBAHAN DARI v3 (Juli 2026):
+// ✓ buildH2s(): untuk newsType "hasil" dan "preview", struktur H2 TIDAK LAGI
+//   dinamis berdasarkan angle — SELALU 4 section dengan judul BAKU (lihat
+//   FIXED_SECTION_STRUCTURE di lib/editorial/types.ts), atas permintaan
+//   eksplisit pengguna:
+//     hasil:   Jalannya Babak Pertama → Jalannya Babak Kedua → Momen Penentu → Dampak Hasil
+//     preview: Kondisi Skuad Tuan Rumah → Kondisi Skuad Tim Tamu →
+//              Pertarungan Kunci dan Prediksi Starting Lineup → Prediksi Jalannya Pertandingan
+//   Tipe lain (transfer/konpers/cedera/trivia) TIDAK berubah — tetap angle-based.
+// ✓ buildParagraphGuide(): teks panduan alur untuk hasil & preview disesuaikan
+//   supaya merujuk ke 4 section baku di atas (bukan lagi placeholder [H1]/[H2]/[H3]).
 //
 // PERUBAHAN DARI v2 (disesuaikan dengan PDF Data Mapping HalfSpace):
 // ✓ [PDF Preview]   parseBzzoiroPreview: tambah predicted_lineup, oddsComparison
@@ -33,6 +45,7 @@ import {
   type NewsType,
   WORD_TARGETS,
   DEFAULT_QUALITY_GATE,
+  FIXED_SECTION_STRUCTURE,
   estimateTokens,
 } from "./types"
 import {
@@ -261,7 +274,7 @@ function parseBzzoiroTrivia(bzzoiroText: string, manualContext: string): Bzzoiro
 // NEWv3: tambah parameter `mustUse` — golden standard SELALU menulis meta
 // description sebagai 1 kalimat ringkas berisi fakta inti (skor, tanggal,
 // venue/kompetisi, nama kunci), bukan kalimat generik. Field ini diteruskan
-// ke Gemma sebagai daftar fakta WAJIB masuk meta description, supaya hasilnya
+// ke Qwen3-Next sebagai daftar fakta WAJIB masuk meta description, supaya hasilnya
 // konsisten konkret seperti "Brasil menang 3-0 atas Haiti di Stadion
 // Philadelphia pada laga Piala Dunia, Sabtu (20/6/2026)..." — bukan kalimat
 // kosong seperti "Simak ulasan lengkap pertandingan ini di artikel berikut."
@@ -379,7 +392,7 @@ function buildDataWarnings(
     warnings.push({
       field: "quote_translation",
       status: "partial",
-      instruction: `${quoteTranslationFailureCount} kutipan GAGAL diterjemahkan otomatis ke Bahasa Indonesia (API error/timeout) dan memakai fallback teks asli. WAJIB cek manual sebelum publish — kutipan ini mungkin masih berbahasa Inggris atau kurang natural. Jangan biarkan Gemma menerjemahkan ulang kutipan ini sendiri.`,
+      instruction: `${quoteTranslationFailureCount} kutipan GAGAL diterjemahkan otomatis ke Bahasa Indonesia (API error/timeout) dan memakai fallback teks asli. WAJIB cek manual sebelum publish — kutipan ini mungkin masih berbahasa Inggris atau kurang natural. Jangan biarkan Qwen3-Next menerjemahkan ulang kutipan ini sendiri.`,
     })
   }
   // NEWv4: Warning jika terjemahan fakta media (transferStatus/
@@ -608,49 +621,80 @@ function buildH2s(
 ): EditorialBrief["structureHints"]["suggestedH2s"] {
   const facts = mustUseFacts ?? []
 
+  // BARU (Juli 2026): struktur H2 BAKU untuk "hasil" — SELALU 4 section
+  // dengan judul persis dari FIXED_SECTION_STRUCTURE, TIDAK LAGI bergantung
+  // pada angle seperti sebelumnya (angle tetap dipakai untuk narasi/lead,
+  // bukan untuk menentukan judul H2). Ini keputusan eksplisit pengguna —
+  // lihat catatan header brief-builder.ts.
   if (newsType === "hasil" && hasilData) {
+    const [firstHalfHeading, secondHalfHeading, decisiveMomentHeading, impactHeading] = FIXED_SECTION_STRUCTURE.hasil
     const { home, away } = hasilData
-    const redCard   = hasilData.keyIncidents.find((i) => i.type.toLowerCase().includes("red"))
     const incidents = hasilData.keyIncidents
 
-    if (angle === "controversy" && redCard) return [
-      { text: `Menit ${redCard.minute}' dan Dua Pertandingan Berbeda`, focus: `Situasi sebelum kartu merah vs setelahnya — bagaimana dinamika berubah`, mustMentionFacts: facts.filter((f) => f.includes(redCard.player) || f.includes("merah") || f.includes("red")) },
-      { text: `Membaca Angka yang Sebenarnya`, focus: `Statistik pertandingan — apa yang diungkapkan dan apa yang disembunyikan`, mustMentionFacts: facts.filter((f) => f.includes("%") || f.includes("xG") || f.includes("tembakan")) },
-      { text: `Implikasinya Melampaui Tiga Poin`, focus: `Konsekuensi hasil ini untuk kompetisi, posisi klasemen, dan laga berikutnya`, mustMentionFacts: [] },
-    ]
+    const firstHalfIncidents  = incidents.filter((i) => Number(i.minute) <= 45)
+    const secondHalfIncidents = incidents.filter((i) => Number(i.minute) > 45)
+    // Momen penentu: insiden dengan dampak terbesar (kartu merah dulu, lalu gol
+    // penentu/terakhir) — fallback ke insiden terakhir kalau tidak ada gol/kartu merah.
+    const redCard = incidents.find((i) => i.type.toLowerCase().includes("red") || i.type.toLowerCase().includes("merah"))
+    const decisiveIncident = redCard ?? incidents[incidents.length - 1]
 
-    if (angle === "upset_result") return [
-      { text: `Apa yang Dikatakan Data Sebelum Kick-Off`, focus: `Win probability dan kondisi kedua tim — mengapa ${away} tidak diunggulkan`, mustMentionFacts: facts.filter((f) => f.includes("%") || f.includes("probabilitas") || f.includes("form")) },
-      { text: `Bagaimana Itu Bisa Terjadi`, focus: `Kronologi momen krusial dan keputusan taktis yang membalikkan prediksi`, mustMentionFacts: facts.filter((f) => f.includes("Menit") || f.includes("gol") || f.includes("kartu")) },
-      { text: `Artinya untuk Kedua Tim`, focus: `Dampak ke klasemen dan apa yang perlu dievaluasi oleh tim yang kalah`, mustMentionFacts: [] },
-    ]
+    const firstHalfFacts  = facts.filter((f) => firstHalfIncidents.some((i) => f.includes(`Menit ${i.minute}`)))
+    const secondHalfFacts = facts.filter((f) => secondHalfIncidents.some((i) => f.includes(`Menit ${i.minute}`)))
+    const decisiveFacts   = decisiveIncident
+      ? facts.filter((f) => f.includes(`Menit ${decisiveIncident.minute}`) || f.includes(decisiveIncident.player))
+      : []
 
-    if (angle === "comeback") return [
-      { text: `Ketika Semua Terlihat Sudah Ditentukan`, focus: `Situasi tim yang akhirnya menang saat tertinggal — tekanan dan konteks`, mustMentionFacts: facts.filter((f) => f.includes("Menit") && parseInt((f.match(/Menit (\d+)/)?.[1] ?? "99")) < 46) },
-      { text: `Babak Kedua yang Berbeda`, focus: `Pergeseran taktis atau momentum di babak kedua yang memungkinkan comeback`, mustMentionFacts: facts.filter((f) => f.includes("Menit") && parseInt((f.match(/Menit (\d+)/)?.[1] ?? "0")) >= 46) },
-      { text: `Pelajaran dari Malam Itu`, focus: `Apa yang dapat dipelajari dari comeback ini — tentang tim, pelatih, atau mentalitas`, mustMentionFacts: [] },
-    ]
-
-    if (angle === "individual_brilliance") return [
-      { text: `Malam Milik Satu Orang`, focus: `Siapa pemain itu dan bagaimana performanya mendefinisikan laga`, mustMentionFacts: facts.filter((f) => facts.findIndex((ff) => ff === f) < 4) },
-      { text: `Detail yang Membuat Perbedaan`, focus: `Kualitas gol atau aksi individual — bukan hanya jumlahnya`, mustMentionFacts: facts.filter((f) => f.includes("Menit")) },
-      { text: `Apa Artinya untuk Tim`, focus: `Bagaimana performa individual ini berdampak ke tim secara keseluruhan dan ke depan`, mustMentionFacts: [] },
-    ]
-
-    // Default tactical breakdown
     return [
-      { text: `Yang Terjadi di Lapangan`, focus: `Kronologi dan dinamika laga berdasarkan insiden kunci`, mustMentionFacts: facts.filter((f) => f.includes("Menit") || f.includes("gol")).slice(0, 3) },
-      { text: `Membaca Statistik dengan Benar`, focus: `Apa yang dikatakan statistik dan apa yang tidak — xG, penguasaan, efisiensi`, mustMentionFacts: facts.filter((f) => f.includes("%") || f.includes("xG") || f.includes("tembakan")) },
-      { text: `Implikasi ke Depan`, focus: `Apa artinya hasil ini untuk klasemen, perjalanan kompetisi, dan evaluasi taktis`, mustMentionFacts: [] },
+      {
+        text: firstHalfHeading,
+        focus: `Kronologi babak pertama ${home} vs ${away} — insiden kunci dan bagaimana momentum terbentuk sebelum turun minum`,
+        mustMentionFacts: firstHalfFacts.length > 0 ? firstHalfFacts : facts.filter((f) => f.includes("Skor akhir")),
+      },
+      {
+        text: secondHalfHeading,
+        focus: `Kronologi babak kedua — perubahan taktis, insiden kunci, dan bagaimana laga bergerak menuju hasil akhir`,
+        mustMentionFacts: secondHalfFacts,
+      },
+      {
+        text: decisiveMomentHeading,
+        focus: `Momen tunggal yang paling menentukan jalannya laga — jelaskan konteksnya dan mengapa momen ini mengubah segalanya, didukung statistik terkait jika relevan`,
+        mustMentionFacts: decisiveFacts.length > 0 ? decisiveFacts : facts.filter((f) => f.includes("%") || f.includes("xG")),
+      },
+      {
+        text: impactHeading,
+        focus: `Konsekuensi hasil ini untuk klasemen, posisi di kompetisi, dan laga berikutnya kedua tim`,
+        mustMentionFacts: facts.filter((f) => f.includes("Kompetisi")),
+      },
     ]
   }
 
+  // BARU (Juli 2026): struktur H2 BAKU untuk "preview" — SELALU 4 section
+  // dengan judul persis dari FIXED_SECTION_STRUCTURE, sama alasannya seperti "hasil" di atas.
   if (newsType === "preview" && previewData) {
+    const [homeSquadHeading, awaySquadHeading, keyBattleHeading, matchPredictionHeading] = FIXED_SECTION_STRUCTURE.preview
     const { home, away } = previewData
+
     return [
-      { text: `Kondisi Menuju Kick-Off`, focus: `Form, absen, dan kondisi kedua tim — ${home} dan ${away} datang dengan apa`, mustMentionFacts: facts.filter((f) => f.includes("Form") || f.includes("H2H") || f.includes("absen") || f.includes("cedera")) },
-      { text: `Pertarungan yang Akan Menentukan`, focus: `Duel taktis spesifik di lapangan yang akan mempengaruhi hasil laga`, mustMentionFacts: [] },
-      { text: `Apa yang Angka Belum Bisa Jawab`, focus: `Win probability sebagai konteks, bukan jawaban — dan kenapa laga ini terbuka`, mustMentionFacts: facts.filter((f) => f.includes("probability") || f.includes("%")) },
+      {
+        text: homeSquadHeading,
+        focus: `Form terkini, pemain absen/cedera, dan proyeksi susunan pemain ${home}`,
+        mustMentionFacts: facts.filter((f) => f.includes(`Form ${home}`) || f.includes(`Prediksi XI ${home}`)),
+      },
+      {
+        text: awaySquadHeading,
+        focus: `Form terkini, pemain absen/cedera, dan proyeksi susunan pemain ${away}`,
+        mustMentionFacts: facts.filter((f) => f.includes(`Form ${away}`) || f.includes(`Prediksi XI ${away}`)),
+      },
+      {
+        text: keyBattleHeading,
+        focus: `Duel taktis spesifik yang akan menentukan laga, dipadukan dengan prediksi starting XI kedua tim dari data lineup`,
+        mustMentionFacts: facts.filter((f) => f.includes("Prediksi XI")),
+      },
+      {
+        text: matchPredictionHeading,
+        focus: `Proyeksi jalannya pertandingan — win probability dan H2H sebagai konteks (bukan kesimpulan siapa menang), skenario yang mungkin terjadi`,
+        mustMentionFacts: facts.filter((f) => f.includes("Win probability") || f.includes("H2H") || f.includes("Pertandingan:")),
+      },
     ]
   }
 
@@ -696,8 +740,10 @@ function buildH2s(
 // ─────────────────────────────────────────────────────────────────────────────
 function buildParagraphGuide(newsType: NewsType, angle: ArticleAngle): string {
   const guides: Record<NewsType, string> = {
-    hasil:    "Lead (1-2 paragraf dari leadExample, adaptasi ke data nyata) → [H1]: 2-3 paragraf sesuai focus H1 → [H2]: 2 paragraf sesuai focus H2, sertakan statistik jika ada → [H3]: 1-2 paragraf penutup dengan perspektif ke depan. JANGAN sebut ulang fakta yang sudah ada di paragraf sebelumnya.",
-    preview:  "Lead (1-2 paragraf dari leadExample) → [H1]: 2 paragraf kondisi tim pertama + kondisi tim kedua → [H2]: 2 paragraf pertarungan taktis spesifik → [H3]: 1-2 paragraf data probabilitas sebagai konteks + kalimat penutup yang membuka rasa ingin tahu. Jangan simpulkan siapa yang menang.",
+    // BARU (Juli 2026): disesuaikan dengan struktur H2 BAKU 4 section (lihat
+    // FIXED_SECTION_STRUCTURE di lib/editorial/types.ts dan buildH2s di atas).
+    hasil:    "Lead (1-2 paragraf dari leadExample, adaptasi ke data nyata) → [Jalannya Babak Pertama]: 2 paragraf kronologi babak pertama → [Jalannya Babak Kedua]: 2 paragraf kronologi babak kedua → [Momen Penentu]: 1-2 paragraf fokus ke satu momen paling menentukan, boleh sertakan statistik pendukung → [Dampak Hasil]: 1-2 paragraf penutup soal implikasi ke klasemen/kompetisi dengan perspektif ke depan. JANGAN sebut ulang fakta yang sudah ada di paragraf sebelumnya.",
+    preview:  "Lead (1-2 paragraf dari leadExample) → [Kondisi Skuad Tuan Rumah]: 2 paragraf form & absen tim tuan rumah → [Kondisi Skuad Tim Tamu]: 2 paragraf form & absen tim tamu → [Pertarungan Kunci dan Prediksi Starting Lineup]: 2 paragraf duel taktis + prediksi XI kedua tim → [Prediksi Jalannya Pertandingan]: 1-2 paragraf skenario laga dengan win probability/H2H sebagai konteks, kalimat penutup yang membuka rasa ingin tahu. Jangan simpulkan siapa yang menang.",
     cedera:   "Lead (1-2 paragraf dari leadExample, fokus pada ukuran kehilangan) → [H1]: 2 paragraf statistik sebagai narasi, bukan daftar angka → [H2]: 2 paragraf dampak taktis konkret, opsi pengganti → [H3]: 1-2 paragraf timeline dan implikasi ke jadwal kompetisi.",
     konpers:  "Lead (masuk langsung dengan kutipan TERKUAT atau suasana ruangan, 1-2 kalimat) → 1 paragraf konteks pre-konpers → [H1]: 2 paragraf analisis pernyataan utama → [H2]: 2 paragraf pernyataan pendukung + apa yang tidak dikatakan → [H3]: 1-2 paragraf implikasi.",
     transfer: "Lead (1-2 paragraf dari leadExample dengan fakta paling kuat) → [H1]: 2 paragraf latar belakang dan alasan → [H2]: 2 paragraf detail finansial dan kontraktual (jika tersedia) → [H3]: 2 paragraf dampak ke kedua klub. Jangan spekulasi angka yang tidak ada di brief.",
@@ -724,14 +770,15 @@ export async function buildEditorialBrief(input: BuildBriefInput): Promise<Edito
   // NEWv4: TERJEMAHAN KUTIPAN TERKONTROL — lihat lib/ai/quote-translator.ts.
   // serper.quotes hasil extractSerperData() masih berbahasa Inggris (karena
   // serper.ts/tavily.ts sekarang diarahkan ke ESPN/Sky Sports/Goal.com).
-  // Sebelumnya rencana awal membiarkan Gemma menerjemahkan kutipan sambil
+  // Sebelumnya rencana awal membiarkan Qwen3-Next menerjemahkan kutipan sambil
   // menulis draft — RISIKO TINGGI karena kutipan adalah ucapan langsung
   // seseorang, idiom bisa melenceng maknanya, dan tidak ada tahap verifikasi
   // terpisah. Sekarang kutipan diterjemahkan SEBELUM masuk ke brief lewat
   // pemanggilan LLM kecil & terkontrol (temperature 0.1, tugas tunggal),
-  // supaya saat sampai ke Gemma, kutipan SUDAH final dalam Bahasa Indonesia
-  // dan Gemma tinggal menyalinnya apa adanya (tidak boleh diterjemahkan/
-  // diparafrase ulang — lihat aturan mutlak baru di gemma-writer-prompt.ts).
+  // supaya saat sampai ke Claude Sonnet, kutipan SUDAH final dalam Bahasa
+  // Indonesia dan Claude Sonnet tinggal menyalin/mengadaptasikannya apa
+  // adanya (tidak boleh diterjemahkan/diparafrase ulang — lihat aturan
+  // mutlak #3 di lib/ai/claude-sonnet-writer-prompt.ts).
   // translatedQuotes.translationOk:false menandai kutipan yang GAGAL
   // diterjemahkan (API error/timeout) — brief-validator memakai flag ini
   // untuk menambahkan dataQualityWarnings (lihat brief-validator.ts).
@@ -754,7 +801,7 @@ export async function buildEditorialBrief(input: BuildBriefInput): Promise<Edito
   // additionalFacts dari Tavily) — lihat catatan lengkap di
   // lib/ai/translation.ts (translateMediaFacts). Field-field ini sebelumnya
   // langsung dimasukkan apa adanya (Bahasa Inggris) ke mustUse/canUse, dengan
-  // risiko Gemma mencampur Inggris-Indonesia dalam draft.
+  // risiko Qwen3-Next mencampur Inggris-Indonesia dalam draft.
   const translatedMediaFacts = await translateMediaFacts({
     transferStatus:   serper.transferStatus,
     injuryStatement:  serper.injuryStatement,

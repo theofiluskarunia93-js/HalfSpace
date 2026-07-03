@@ -51,7 +51,7 @@ export interface DataQualityWarning {
 // NEWv3: + metaDescriptionTemplate dan metaDescriptionFacts — golden standard
 // SELALU menyertakan "Meta description" terpisah dari judul (1 kalimat ringkas
 // berisi skor/tanggal/venue/hook utama, ~140-160 karakter). Field ini dipush
-// eksplisit ke brief supaya Gemma WAJIB generate metaDescription di output,
+// eksplisit ke brief supaya Qwen3-Next WAJIB generate metaDescription di output,
 // bukan cuma title+content seperti sebelumnya.
 export interface SeoMeta {
   primaryKeyword: string    // keyword utama — WAJIB ada di judul
@@ -117,6 +117,29 @@ export interface EditorialBrief {
     requiresMetaDescription: boolean // NEWv3: golden standard selalu punya meta description terpisah dari title
     forbiddenPhrases: string[]  // frasa yang menunjukkan artikel generik/AI
   }
+}
+
+// BARU (Juli 2026): struktur H2 BAKU khusus tipe "preview" dan "hasil", atas
+// permintaan eksplisit pengguna — judul H2 untuk dua tipe ini TIDAK LAGI
+// dinamis berdasarkan angle seperti tipe lain, tapi SELALU 4 section dengan
+// judul persis seperti di bawah (urutan tetap). Dipakai oleh:
+//   - lib/editorial/brief-builder.ts (buildH2s) — sumber kebenaran deterministik
+//   - lib/ai/gpt5-mini-brief-editor.ts — instruksi ke Editor Brief AI
+//   - lib/editorial/brief-validator.ts — validasi hasil AI (heading harus
+//     match persis salah satu dari daftar ini, tidak boleh diubah AI)
+export const FIXED_SECTION_STRUCTURE: Record<"preview" | "hasil", string[]> = {
+  preview: [
+    "Kondisi Skuad Tuan Rumah",
+    "Kondisi Skuad Tim Tamu",
+    "Pertarungan Kunci dan Prediksi Starting Lineup",
+    "Prediksi Jalannya Pertandingan",
+  ],
+  hasil: [
+    "Jalannya Babak Pertama",
+    "Jalannya Babak Kedua",
+    "Momen Penentu",
+    "Dampak Hasil",
+  ],
 }
 
 // Word targets per tipe — DISESUAIKAN ke golden standard nyata:

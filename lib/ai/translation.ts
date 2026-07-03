@@ -29,7 +29,7 @@
 // MASALAH YANG DIPECAHKAN:
 // Sejak serper.ts & tavily.ts diarahkan ke sumber Inggris (ESPN/Sky
 // Sports/Goal.com), kutipan pelatih/pemain yang diekstrak SerperExtracted.quotes
-// masih dalam Bahasa Inggris. Sebelumnya rencana awal adalah membiarkan Gemma
+// masih dalam Bahasa Inggris. Sebelumnya rencana awal adalah membiarkan Qwen3-Next
 // menerjemahkan kutipan ini sambil menulis draft (lewat instruksi
 // TRANSLATION_NOTE) — tapi ini RISIKO TINGGI:
 //   1. Kutipan adalah ucapan langsung seseorang. Kalau diterjemahkan bebas/
@@ -39,14 +39,14 @@
 //      makna dalam Bahasa Indonesia.
 //   2. Tidak ada tahap verifikasi terpisah — terjemahan kutipan bercampur
 //      dengan tugas lain (parafrase naratif, structuring H2, dst) yang
-//      dikerjakan Gemma 4 31B, model yang relatif kecil untuk tugas gabungan
+//      dikerjakan Qwen3-Next 80B (Ollama Cloud) bersamaan dengan tugas gabungan
 //      seberat itu sekaligus.
 //
 // SOLUSI:
 // Modul ini menerjemahkan SETIAP kutipan secara terpisah & terkontrol SEBELUM
-// masuk ke brief — jadi saat sampai ke Gemma, kutipan SUDAH dalam Bahasa
+// masuk ke brief — jadi saat sampai ke Qwen3-Next, kutipan SUDAH dalam Bahasa
 // Indonesia final yang tinggal di-quote langsung (tidak boleh diterjemahkan
-// ulang/diparafrase lagi). Ini memecah beban: Gemma cuma perlu menyalin
+// ulang/diparafrase lagi). Ini memecah beban: Qwen3-Next cuma perlu menyalin
 // kutipan apa adanya, bukan menerjemahkan + menulis draft sekaligus.
 //
 // Pendekatan: 1 pemanggilan LLM ringan per kutipan (bukan diborongkan jadi
@@ -66,7 +66,7 @@ interface TranslatedQuote {
   text: string         // hasil terjemahan Bahasa Indonesia
   speaker: string
   source: string
-  original: string     // teks asli Inggris — disimpan untuk audit/debug, TIDAK dikirim ke Gemma
+  original: string     // teks asli Inggris — disimpan untuk audit/debug, TIDAK dikirim ke Qwen3-Next
   translationOk: boolean // false kalau fallback dipakai (API gagal) — brief-validator bisa pakai ini untuk warning
 }
 
@@ -228,7 +228,7 @@ export type { TranslatedQuote }
 // (ESPN/Sky Sports/Goal.com), BUKAN kutipan langsung — tapi tetap masuk ke
 // brief.mustUse/canUse sebagai teks Inggris apa adanya. Risikonya berbeda
 // dari kutipan: bukan soal makna ucapan seseorang yang harus presisi
-// legal/etis, tapi risiko Gemma mencampur Inggris-Indonesia dalam draft atau
+// legal/etis, tapi risiko Qwen3-Next mencampur Inggris-Indonesia dalam draft atau
 // menerjemahkan asal-asalan di tengah menulis (sama-sama tidak diinginkan).
 //
 // SOLUSI: terjemahkan semua field ini SEKALIGUS dalam satu pemanggilan LLM

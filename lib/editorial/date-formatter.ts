@@ -4,7 +4,7 @@
 // event_date dari Bzzoiro API dipakai mentah apa adanya di seluruh pipeline
 // (lihat lib/news-context/bzzoiro.ts) — tanpa normalisasi format. Risikonya:
 //   1. Kalau format aslinya ambigu (mis. "06/27/2026" — bisa dibaca 27 Juni
-//      ATAU 6 Februari tergantung locale), tanggal yang ditulis Gemma di
+//      ATAU 6 Februari tergantung locale), tanggal yang ditulis Qwen3-Next di
 //      draft artikel bisa SALAH tanpa terdeteksi sama sekali.
 //   2. Format ISO mentah (mis. "2026-06-27T18:00:00Z") kalau ditulis apa
 //      adanya di draft akan terasa aneh/tidak jurnalistik dalam Bahasa
@@ -27,7 +27,7 @@
 // di paragraf artikel (dateline hasil, blok pertandingan terkait konpers) —
 // bukan untuk seluruh 19 titik pakai event_date di bzzoiro.ts (banyak di
 // antaranya hanya referensi sekunder/internal seperti form 5 laga terakhir,
-// bukan fakta utama yang langsung ditulis Gemma di body artikel).
+// bukan fakta utama yang langsung ditulis Qwen3-Next di body artikel).
 
 const HARI_ID = ["Minggu", "Senin", "Selasa", "Rabu", "Kamis", "Jumat", "Sabtu"]
 const BULAN_ID = [

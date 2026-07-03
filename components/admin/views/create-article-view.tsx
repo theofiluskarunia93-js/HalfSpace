@@ -26,8 +26,9 @@ import { applyInternalLinks, fetchLinkCandidates } from "@/lib/internal-linking"
 // ── INTEGRASI PIPELINE BARU ───────────────────────────────────────────────────
 // GenerationPanel menggantikan modal AI Generate lama (handleAiGenerate + aiModalOpen).
 // Pipeline baru:
-//   STEP 1: /api/generate-brief    → OpenRouter Nemotron 3 Ultra + Validator (Editorial Brief)
-//   STEP 2: /api/generate-draft    → OpenRouter Gemma 4 31B
+//   STEP 1: /api/generate-brief    → Normalizer → Exact Dedup → Semantic Dedup →
+//           Fact Merging → GPT-5 Mini + Validator (Editorial Brief)
+//   STEP 2: /api/generate-draft    → Claude Sonnet (Anthropic API)
 //   Revisi: highlight paragraf di editor → /api/rewrite-selection (Groq GPT OSS 120B)
 // Tombol ✨ di toolbar sekarang membuka panel samping (bukan modal overlay).
 // Step "Polish dengan Editor" lama sudah dihapus — diganti popup AI-native
@@ -807,7 +808,7 @@ export function CreateArticleView({ onBack, articleId }: CreateArticleViewProps)
   }, [editor])
 
   // ── GenerationPanel callback ──────────────────────────────────────────────
-  // Dipanggil oleh GenerationPanel setelah STEP 2 (Gemma 4 31B draft) selesai.
+  // Dipanggil oleh GenerationPanel setelah STEP 2 (draft Claude Sonnet) selesai.
   // Tidak ada lagi handleFinalReady — revisi lanjutan terjadi inline di
   // editor lewat AIRewritePopup (highlight paragraf → Tulis Ulang dengan AI).
   const handleDraftReady = useCallback((draftTitle: string, draftContent: string) => {
@@ -1549,7 +1550,7 @@ export function CreateArticleView({ onBack, articleId }: CreateArticleViewProps)
                 </p>
               </div>
 
-              {/* GenerationPanel — pipeline baru: Brief (OpenRouter Nemotron 3 Ultra + Validator) + Draft (OpenRouter Gemma 4 31B) */}
+              {/* GenerationPanel — pipeline baru: Brief (GPT-5 Mini + Validator) + Draft (Claude Sonnet) */}
               <div className="px-4 pb-4">
                 <GenerationPanel
                   newsType={genNewsType}
@@ -1561,7 +1562,7 @@ export function CreateArticleView({ onBack, articleId }: CreateArticleViewProps)
               {/* Footer info */}
               <div className="border-t border-border px-4 py-3">
                 <p className="text-[10px] text-muted-foreground leading-relaxed">
-                  Step 1: Editorial Brief — OpenRouter Nemotron 3 Ultra + Validator · Step 2: OpenRouter Gemma 4 31B · Revisi: highlight paragraf di editor → ✨ Tulis Ulang dengan AI (Groq GPT OSS 120B)
+                  Step 1: Editorial Brief — GPT-5 Mini + Validator · Step 2: Claude Sonnet · Revisi: highlight paragraf di editor → ✨ Tulis Ulang dengan AI (Groq GPT OSS 120B)
                 </p>
               </div>
             </div>

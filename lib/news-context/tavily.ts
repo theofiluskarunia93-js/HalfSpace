@@ -12,7 +12,7 @@
 //   Indonesia, yang kurang match dengan domain Inggris bahkan saat domain
 //   filter sudah benar.
 // ✓ Tambah TRANSLATION_NOTE yang sama seperti di serper.ts — menandai
-//   eksplisit ke prompt Gemma bahwa konteks di bawah berbahasa Inggris dan
+//   eksplisit ke prompt Qwen3-Next bahwa konteks di bawah berbahasa Inggris dan
 //   wajib diterjemahkan/diparafrasakan, bukan disalin verbatim.
 // ✓ Tambah parameter extraTerms opsional di fetchTavilyContext (khusus
 //   KONPERS) — supaya query bisa disisipi skor/tanggal laga dari Bzzoiro,
@@ -187,7 +187,7 @@ function buildQuery(newsType: TavilyNewsType, topic: string, extraTerms?: string
 
 // ─── Format sumber — ringkas, 3 kalimat per sumber ───────────────────────────
 // NEWv2: konten TETAP disimpan dalam bahasa Inggris asli di sini — tidak
-// diterjemahkan. Penerjemahan terjadi di tahap Gemma (lihat TRANSLATION_NOTE).
+// diterjemahkan. Penerjemahan terjadi di tahap Qwen3-Next (lihat TRANSLATION_NOTE).
 function formatSource(r: TavilyRawResult, index: number, maxSentences = 3): string {
   const sentences = r.content
     .split(/(?<=[.!?])\s+/)
@@ -205,7 +205,7 @@ ${bulletPoints}`
 }
 
 // NEWv4 (update dari catatan v2): TRANSLATION_NOTE ini TIDAK LAGI dibaca
-// Gemma secara langsung — lihat catatan lengkap di lib/news-context/serper.ts
+// Qwen3-Next secara langsung — lihat catatan lengkap di lib/news-context/serper.ts
 // (TRANSLATION_NOTE). Sejak lib/ai/translation.ts ditambahkan, terjemahan
 // kutipan & fakta media terjadi SEBELUM masuk ke EditorialBrief.
 const TRANSLATION_NOTE =

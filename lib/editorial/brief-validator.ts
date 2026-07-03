@@ -1,24 +1,38 @@
-// lib/editorial/brief-validator.ts — BARU
+// lib/editorial/brief-validator.ts — v2
 //
-// STEP 3 dari pipeline baru: "Validator Editor (Next.js)".
+// STEP dalam pipeline: "Validator Editor (Next.js)" — berjalan SETELAH GPT-5
+// Mini (Editor Brief) dan SEBELUM Claude Sonnet (Generate Draft).
 //
 // Ini adalah kode TypeScript murni — TIDAK ADA AI di sini. Tugasnya
-// memeriksa usulan dari OpenRouter Nemotron 3 Ultra (lib/ai/openrouter-brief-editor.ts)
+// memeriksa usulan dari GPT-5 Mini (lib/ai/gpt5-mini-brief-editor.ts)
 // sebelum diizinkan menimpa brief rule-based yang sudah grounded di fakta
 // nyata (dari lib/editorial/brief-builder.ts).
 //
-// Pipeline per PDF Data Mapping HalfSpace:
-//   Bzzoiro + Serper + Tavily → Nemotron 3 Ultra Brief → Gemma 4 31B
+// Pipeline (per Juli 2026):
+//   Bzzoiro+Serper+Tavily → Normalizer → Exact Dedup → Semantic Dedup →
+//   Fact Merging → Editor Brief (GPT-5 Mini) → Validator (file ini) →
+//   Generate Draft (Claude Sonnet)
 //
 // Prinsip: AI boleh menentukan ARAH editorial (angle, judul, narasi, lead),
 // tapi tidak boleh menyelundupkan fakta baru. Setiap kalimat dari AI yang
 // mengandung angka, atau nama pemain/tim yang TIDAK muncul di teks sumber
 // mentah (bzzoiro + serper + tavily + mustUse/canUse), akan DITOLAK dan
 // field tersebut otomatis jatuh kembali (fallback) ke versi rule-based.
+//
+// BARU (v2): validasi field "sectionFocus" — khusus newsType "preview"/
+// "hasil", yang sekarang memakai struktur H2 BAKU (lihat
+// FIXED_SECTION_STRUCTURE di ./types dan buildH2s di ./brief-builder). GPT-5
+// Mini HANYA boleh menyarankan teks "focus" baru untuk tiap section — heading
+// section TIDAK BOLEH diubah AI. Validasi di sini: (1) heading harus match
+// PERSIS salah satu dari FIXED_SECTION_STRUCTURE[newsType], (2) focus harus
+// grounded (tidak ada angka/nama yang tidak ada di sumber). Item yang gagal
+// salah satu syarat DITOLAK per-item (fallback ke focus rule-based untuk
+// section itu saja), bukan all-or-nothing.
 
-import type { ArticleAngle, EditorialBrief } from "./types"
-import type { AiBriefSuggestion } from "@/lib/ai/openrouter-brief-editor"
-import { ALLOWED_ANGLES } from "@/lib/ai/openrouter-brief-editor"
+import type { ArticleAngle, EditorialBrief, NewsType } from "./types"
+import { FIXED_SECTION_STRUCTURE } from "./types"
+import type { AiBriefSuggestion } from "@/lib/ai/gpt5-mini-brief-editor"
+import { ALLOWED_ANGLES } from "@/lib/ai/gpt5-mini-brief-editor"
 
 export interface BriefValidationReport {
   aiUsed: boolean
@@ -150,6 +164,44 @@ export function validateAndMergeAiBrief(
   if (aiSuggestion.transitionHints.length > 0) {
     brief.storylines.transitionHints = aiSuggestion.transitionHints
     report.acceptedFields.push("storylines.transitionHints")
+  }
+
+  // ── sectionFocus (BARU) — hanya untuk "preview"/"hasil", heading H2 BAKU ──
+  const newsType = deterministicBrief.meta.newsType
+  if ((newsType === "preview" || newsType === "hasil") && aiSuggestion.sectionFocus && aiSuggestion.sectionFocus.length > 0) {
+    const allowedHeadings = FIXED_SECTION_STRUCTURE[newsType]
+    brief.structureHints = {
+      ...deterministicBrief.structureHints,
+      suggestedH2s: deterministicBrief.structureHints.suggestedH2s.map((h) => ({ ...h })),
+    }
+
+    let acceptedCount = 0
+    let rejectedCount = 0
+
+    for (const item of aiSuggestion.sectionFocus) {
+      const headingMatch = allowedHeadings.find((h) => h.toLowerCase() === item.heading.trim().toLowerCase())
+      if (!headingMatch) {
+        rejectedCount++
+        continue // heading tidak dikenali/diubah AI — abaikan, biarkan rule-based
+      }
+      if (!item.focus.trim() || !allNumbersGrounded(item.focus, groundingPool)) {
+        rejectedCount++
+        continue // focus mengandung angka yang tidak grounded, atau kosong
+      }
+      const target = brief.structureHints.suggestedH2s.find((h) => h.text === headingMatch)
+      if (target) {
+        target.focus = item.focus.trim()
+        acceptedCount++
+      }
+    }
+
+    if (acceptedCount > 0) report.acceptedFields.push("structureHints.suggestedH2s[].focus")
+    if (rejectedCount > 0) {
+      report.rejectedFields.push({
+        field: "structureHints.suggestedH2s[].focus",
+        reason: `${rejectedCount} dari ${aiSuggestion.sectionFocus.length} sectionFocus ditolak (heading tidak match struktur baku, atau focus mengandung angka tidak grounded) — section tersebut tetap memakai focus rule-based.`,
+      })
+    }
   }
 
   return { brief, validation: report }

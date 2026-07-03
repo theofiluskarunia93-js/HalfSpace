@@ -1,14 +1,33 @@
-// app/api/generate-draft/route.ts — v3
+// app/api/generate-draft/route.ts — v5
+//
+// PERUBAHAN DARI v4 (Juli 2026):
+// ✓ Ganti Ollama Cloud (Qwen3-Next:80B-Cloud) → Anthropic API (Claude Sonnet)
+// ✓ Model: claude-sonnet-5 via endpoint resmi Anthropic
+//   (https://api.anthropic.com/v1/messages), auth pakai ANTHROPIC_API_KEY
+// ✓ Import prompt builder dari claude-sonnet-writer-prompt (menggantikan
+//   qwen-writer-prompt) — prompt DILONGGARKAN (aturan gaya menulis kaku
+//   dilepas, fakta/struktur/target kata TETAP ketat) karena Claude Sonnet
+//   jauh lebih mampu menulis prosa natural tanpa perlu dituntun sedetail
+//   model sebelumnya — lihat catatan lengkap di header
+//   lib/ai/claude-sonnet-writer-prompt.ts
+// ✓ Semua referensi "Qwen3-Next 80B (Ollama Cloud)" di label progress &
+//   draft_model diupdate ke "Claude Sonnet"
+// ✓ Kalau generate draft gagal TOTAL (semua percobaan gagal), route ini
+//   sekarang mencoba mengembalikan draft yang sudah pernah berhasil
+//   tersimpan untuk topik+tipe yang sama sebelum menyerah dan mengirim
+//   error — supaya pengguna tidak perlu mengulang dari awal (generate
+//   brief lagi) hanya karena satu kali generate draft gagal. Lihat blok
+//   "FALLBACK: draft existing" di bawah.
+//
+// PERUBAHAN DARI v3:
+// ✓ Ganti OpenRouter (Google Gemma 4 31B IT) → Ollama Cloud (Qwen3-Next:80B-Cloud)
 //
 // PERUBAHAN DARI v2:
 // ✓ Ganti Cloudflare Workers AI (Llama 4 Scout) → OpenRouter (Google Gemma 4 31B IT)
-// ✓ Model: google/gemma-4-31b-it:free via api.openrouter.ai
-// ✓ Import prompt builder dari gemma-writer-prompt (rename dari llama-writer-prompt)
-// ✓ Semua referensi "Llama" di label progress & draft_model diupdate ke Gemma
 
 import { NextRequest } from "next/server"
 import { createClient } from "@/lib/supabase/server"
-import { buildGemmaWriterSystem, buildGemmaWriterUser, estimatePromptTokens } from "@/lib/ai/gemma-writer-prompt"
+import { buildClaudeWriterSystem, buildClaudeWriterUser, estimatePromptTokens } from "@/lib/ai/claude-sonnet-writer-prompt"
 import { checkQuality } from "@/lib/editorial/types"
 import type { EditorialBrief } from "@/lib/editorial/types"
 
@@ -153,41 +172,63 @@ function normalizeAiText(value: unknown): string {
   return ""
 }
 
-// ── Panggil OpenRouter (Google Gemma 4 31B IT) ────────────────────────────────
-async function callOpenRouter(
+// ── Nama model & label tampilan — dipakai konsisten di progress/UI/DB ────────
+// Model string mengikuti penamaan resmi Anthropic terbaru. Override via env
+// ANTHROPIC_DRAFT_MODEL kalau nama model berubah di masa depan.
+const DRAFT_MODEL_ID    = process.env.ANTHROPIC_DRAFT_MODEL || "claude-sonnet-5"
+const DRAFT_MODEL_LABEL = "Claude Sonnet"
+
+// ── Panggil Anthropic API (Claude Sonnet) ─────────────────────────────────
+// Endpoint resmi /v1/messages — beda bentuk request dari endpoint OpenAI-
+// compatible yang dipakai model sebelumnya: system prompt adalah field
+// top-level terpisah (bukan message role "system"), dan max_tokens WAJIB
+// diisi. Auth pakai ANTHROPIC_API_KEY + header anthropic-version.
+//
+// CATATAN (dicek ulang Juli 2026 setelah error langsung dari API):
+// Model Claude generasi baru (termasuk claude-sonnet-5) MENOLAK parameter
+// "temperature" sama sekali — API mengembalikan error 400
+// "`temperature` is deprecated for this model." kalau parameter ini
+// dikirim, walau dengan nilai default sekalipun. Jadi TIDAK dikirim sama
+// sekali di bawah (bukan diset ke nilai tertentu) — sama seperti kasus
+// GPT-5 Mini di lib/ai/gpt5-mini-brief-editor.ts. Variasi gaya tulisan
+// sepenuhnya diserahkan ke instruksi system prompt (lihat "SOAL GAYA
+// MENULIS" di lib/ai/claude-sonnet-writer-prompt.ts), bukan lewat
+// parameter sampling.
+async function callClaudeSonnet(
   apiKey: string,
-  messages: Array<{ role: string; content: string }>,
+  system: string,
+  messages: Array<{ role: "user" | "assistant"; content: string }>,
 ): Promise<string> {
-  const res = await fetch("https://openrouter.ai/api/v1/chat/completions", {
+  const res = await fetch("https://api.anthropic.com/v1/messages", {
     method: "POST",
     headers: {
-      "Authorization": `Bearer ${apiKey}`,
+      "x-api-key": apiKey,
+      "anthropic-version": "2023-06-01",
       "Content-Type": "application/json",
-      "HTTP-Referer": process.env.NEXT_PUBLIC_BASE_URL ?? "https://halfspace.id",
-      "X-Title": "HalfSpace Draft Generator",
     },
     body: JSON.stringify({
-      model: "google/gemma-4-31b-it:free",
+      model: DRAFT_MODEL_ID,
+      system,
       messages,
-      max_tokens:  4096,
-      temperature: 0.4,
+      max_tokens: 4096,
+      // TIDAK mengirim "temperature" — lihat catatan di atas.
     }),
     signal: AbortSignal.timeout(120_000),
   })
 
   if (!res.ok) {
     const body = await res.text().catch(() => "")
-    throw new Error(`OpenRouter error ${res.status}: ${body.slice(0, 200)}`)
+    throw new Error(`Anthropic API error ${res.status}: ${body.slice(0, 200)}`)
   }
 
   const json = await res.json()
-  const rawValue = json?.choices?.[0]?.message?.content
+  const rawValue = json?.content
   const raw = normalizeAiText(rawValue)
 
   if (!raw.trim()) {
     throw new Error(
-      `OpenRouter tidak mengembalikan teks dari Gemma 4 31B. ` +
-      `Raw shape: ${JSON.stringify(rawValue)?.slice(0, 300)}`
+      `Anthropic API tidak mengembalikan teks dari ${DRAFT_MODEL_LABEL}. ` +
+      `stop_reason: ${json?.stop_reason ?? "?"}. Raw shape: ${JSON.stringify(rawValue)?.slice(0, 300)}`
     )
   }
 
@@ -231,25 +272,68 @@ export async function POST(req: NextRequest) {
         const tokenEst = estimatePromptTokens(brief)
         send("progress", {
           step: 2, total: 5,
-          label: `Brief siap (estimasi ${tokenEst.totalTokens} token). Mengirim ke Gemma 4 31B...`,
+          label: `Brief siap (estimasi ${tokenEst.totalTokens} token). Mengirim ke ${DRAFT_MODEL_LABEL}...`,
           tokenEstimate: tokenEst,
         })
 
-        const openRouterKey = process.env.OPENROUTER_API_KEY
-        if (!openRouterKey) throw new Error("OPENROUTER_API_KEY tidak ditemukan di environment")
+        const anthropicApiKey = process.env.ANTHROPIC_API_KEY
+        if (!anthropicApiKey) throw new Error("ANTHROPIC_API_KEY tidak ditemukan di environment")
 
-        const systemPrompt = buildGemmaWriterSystem()
-        const userPrompt   = buildGemmaWriterUser(brief)
+        const systemPrompt = buildClaudeWriterSystem()
+        const userPrompt   = buildClaudeWriterUser(brief)
 
         // ── 3. Generate pertama ──────────────────────────────────────────
-        send("progress", { step: 3, total: 5, label: "Gemma 4 31B menulis artikel..." })
+        send("progress", { step: 3, total: 5, label: `${DRAFT_MODEL_LABEL} menulis artikel...` })
 
-        const rawFirst = await callOpenRouter(openRouterKey, [
-          { role: "system", content: systemPrompt },
-          { role: "user",   content: userPrompt   },
-        ])
+        let rawFirst: string
+        let parsed: { title: string; metaDescription: string; content: string }
+        try {
+          rawFirst = await callClaudeSonnet(anthropicApiKey, systemPrompt, [
+            { role: "user", content: userPrompt },
+          ])
+          parsed = extractJsonFromResponse(rawFirst)
+        } catch (generateErr) {
+          // BARU: kalau generate GAGAL TOTAL (bukan cuma kualitas rendah, tapi
+          // panggilan API-nya sendiri gagal/hasilnya tidak bisa diparse sama
+          // sekali), daripada langsung error dan memaksa pengguna mengulang
+          // dari generate-brief, coba tampilkan draft yang SUDAH PERNAH
+          // berhasil untuk topik+tipe yang sama (dari percobaan sebelumnya —
+          // termasuk generationId yang sama kalau pernah retry manual, atau
+          // generationId lain untuk topik identik).
+          const reason = generateErr instanceof Error ? generateErr.message : String(generateErr)
+          send("progress", { step: 3, total: 5, label: `Generate draft gagal (${reason.slice(0, 120)}). Mencari draft existing untuk topik yang sama...` })
 
-        let parsed = extractJsonFromResponse(rawFirst)
+          const { data: existing } = await supabase
+            .from("article_generations")
+            .select("draft_title, draft_meta_description, draft_content, draft_word_count, draft_quality_score, draft_quality_data, status, draft_generated_at")
+            .eq("news_type", generation.news_type)
+            .eq("topic", generation.topic)
+            .not("draft_content", "is", null)
+            .order("draft_generated_at", { ascending: false })
+            .limit(1)
+            .maybeSingle()
+
+          if (existing?.draft_content) {
+            send("done", {
+              title:           existing.draft_title,
+              metaDescription: existing.draft_meta_description,
+              content:         existing.draft_content,
+              wordCount:       existing.draft_word_count,
+              qualityScore:    existing.draft_quality_score,
+              qualityDetails:  existing.draft_quality_data,
+              draftStatus:     existing.status,
+              tokenUsed:       tokenEst.totalTokens,
+              reusedExisting:  true,
+              warning: `Generate draft baru gagal (${reason}). Menampilkan draft existing untuk topik yang sama dari percobaan sebelumnya (${existing.draft_generated_at ?? "tanggal tidak diketahui"}) — bukan hasil generate baru.`,
+            })
+            controller.close()
+            return
+          }
+
+          // Tidak ada draft existing yang bisa dipakai — lempar error asli
+          // supaya ditangani outer catch seperti biasa (tidak ada fallback lagi).
+          throw generateErr
+        }
 
         // ── 4. Quality check ─────────────────────────────────────────────
         let qc = checkQuality(
@@ -269,8 +353,7 @@ export async function POST(req: NextRequest) {
           })
 
           try {
-            const rawRetry = await callOpenRouter(openRouterKey, [
-              { role: "system",    content: systemPrompt },
+            const rawRetry = await callClaudeSonnet(anthropicApiKey, systemPrompt, [
               { role: "user",      content: userPrompt   },
               { role: "assistant", content: rawFirst      },
               { role: "user",      content: retryInstruction },
@@ -313,7 +396,7 @@ export async function POST(req: NextRequest) {
             draft_word_count:      qc.wordCount,
             draft_quality_score:   qc.score,
             draft_quality_data:    qc,
-            draft_model:           "google/gemma-4-31b-it",
+            draft_model:           DRAFT_MODEL_ID,
             draft_generated_at:    new Date().toISOString(),
             status:                draftStatus,
           })
@@ -366,6 +449,7 @@ export async function POST(req: NextRequest) {
 //     add column if not exists draft_meta_description text;
 //
 // Field ini berisi meta description SEO (1-2 kalimat, ~120-180 karakter)
-// yang dihasilkan Gemma 4 31B bersamaan dengan title+content — sebelumnya
-// pipeline tidak punya field ini sama sekali, padahal golden standard
-// editorial selalu menyertakan "Meta description" terpisah dari judul.
+// yang dihasilkan bersamaan dengan title+content (sekarang oleh Claude
+// Sonnet) — pipeline sebelumnya tidak punya field ini sama sekali, padahal
+// golden standard editorial selalu menyertakan "Meta description" terpisah
+// dari judul.
